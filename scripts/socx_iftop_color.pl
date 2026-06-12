@@ -85,11 +85,21 @@ sub endpoint_label {
     return $text;
 }
 
-sub conversation_label {
+sub flow_sides {
     my ($a, $b) = @_;
-    return "$a ⇄ $b" if $a =~ /^(pfSense|LAN\.)/;
-    return "$b ⇄ $a" if $b =~ /^(pfSense|LAN\.)/;
-    return "$a ⇄ $b";
+    return ($a, $b) if $a =~ /^(pfSense|LAN\.)/;
+    return ($b, $a) if $b =~ /^(pfSense|LAN\.)/;
+    return ($a, $b);
+}
+
+sub flow_tag {
+    my ($asset, $peer) = @_;
+    return 'broadcast' if $asset eq 'BCAST' || $peer eq 'BCAST';
+    return 'multicast' if $asset =~ /^(MULTI|mDNS|SSDP)$/ || $peer =~ /^(MULTI|mDNS|SSDP)$/;
+    return 'firewall' if $asset eq 'pfSense' || $peer eq 'pfSense';
+    return 'east-west' if $asset =~ /^LAN\./ && $peer =~ /^LAN\./;
+    return 'internet' if $asset =~ /^LAN\./ || $peer =~ /^LAN\./;
+    return 'transit';
 }
 
 sub is_routine_flow {
@@ -160,12 +170,11 @@ sub colorize_line {
     }
 
     $line =~ s/(SOCX iftop.*)/paint('cyan', $1)/e;
-    $line =~ s/(IFTOPX.*|live conversations|top talkers|TX upload.*|routine broadcast|refresh.*|pulse.*)/paint('cyan', $1)/e;
+    $line =~ s/(IFTOPX.*|asset peer map|top talkers|TX upload.*|routine broadcast|refresh.*|pulse.*)/paint('cyan', $1)/e;
     $line =~ s/(\[[#.]+\])/paint('green', $1)/ge;
     $line =~ s/(=>)/paint('green', $1)/ge;
     $line =~ s/(<=)/paint('cyan', $1)/ge;
-    $line =~ s/(⇄)/paint('white', $1)/ge;
-    $line =~ s/\b(Total|Peak|Cumulative|send|receive|rates?|TX|RX|TOTAL|PEAK|Listening on|interface|upload|download|both|up|down|trend|heat|now)\b/paint('yellow', $1)/ge;
+    $line =~ s/\b(Total|Peak|Cumulative|send|receive|rates?|TX|RX|TOTAL|PEAK|Listening on|interface|upload|download|both|up|down|trend|heat|now|asset|peer|tag|internet|firewall|broadcast|multicast|east-west|transit)\b/paint('yellow', $1)/ge;
     $line =~ s/\b(192\.168\.\d+\.\d+)\b/paint('green', $1)/ge;
     $line =~ s/\b(10\.\d+\.\d+\.\d+)\b/paint('cyan', $1)/ge;
     $line =~ s/\b(74\.46\.\d+\.\d+)\b/paint('green', $1)/ge;
@@ -253,10 +262,12 @@ sub render_compact {
     my $refresh = $ENV{'SOCX_IFTOP_SECONDS'} || '2';
     my $pulse = pulse_char();
     if ($wall) {
-        my $flow_w = $w - 40;
-        $flow_w = 32 if $flow_w < 32;
-        emit(sprintf('IFTOPX %-3s | %s live conversations  refresh %ss  pulse %s', $iface, $clock, $refresh, $pulse));
-        emit(sprintf('%-3s %-*s %7s %7s %7s %s', '#', $flow_w, 'conversation', 'up', 'down', 'trend', 'heat'));
+        my $asset_w = 14;
+        my $peer_w = $w - 73;
+        $peer_w = 18 if $peer_w < 18;
+        emit(sprintf('IFTOPX %-3s | %s asset peer map  refresh %ss  pulse %s', $iface, $clock, $refresh, $pulse));
+        emit(sprintf('%-3s %-*s %-*s %7s %7s %7s %7s %-10s %s',
+            '#', $asset_w, 'asset', $peer_w, 'peer', 'up', 'down', '10s', '40s', 'tag', 'heat'));
     } else {
         emit(sprintf('IFTOPX %s  %s  top talkers  %s  refresh %ss pulse %s', $iface, endpoint_label($ip, 0), $clock, $refresh, $pulse));
         emit(sprintf('%-3s %-*s %1s %-*s %8s %8s %8s %8s', '#', $epw, 'source', '>', $epw, 'destination', 'TX 2s', 'RX 2s', '40s', 'activity'));
@@ -292,14 +303,19 @@ sub render_compact {
         my $a = $wall ? endpoint_label($f->{a} // '?', 1) : endpoint_fit(endpoint_label($f->{a} // '?', 0), $epw);
         my $b = $wall ? endpoint_label($f->{b} // '?', 1) : endpoint_fit(endpoint_label($f->{b} // '?', 0), $epw);
         if ($wall) {
-            my $flow_w = $w - 40;
-            $flow_w = 32 if $flow_w < 32;
-            my $flow = endpoint_fit(conversation_label($a, $b), $flow_w);
+            my $asset_w = 14;
+            my $peer_w = $w - 73;
+            $peer_w = 18 if $peer_w < 18;
+            my ($asset, $peer) = flow_sides($a, $b);
+            my $tag = flow_tag($asset, $peer);
+            my $ten = rate_value($f->{a10s}) >= rate_value($f->{b10s}) ? rate_narrow($f->{a10s}) : rate_narrow($f->{b10s});
             my $trend = rate_value($f->{a40s}) >= rate_value($f->{b40s}) ? rate_narrow($f->{a40s}) : rate_narrow($f->{b40s});
             my $activity = bar_plain(percent_of(rate_value($f->{a2s}) + rate_value($f->{b2s}), $max_total_rate), 7);
-            emit(sprintf('%02d  %-*s %7s %7s %7s %s',
-                $count, $flow_w, $flow,
-                rate_narrow($f->{a2s}), rate_narrow($f->{b2s}), $trend, $activity));
+            emit(sprintf('%02d  %-*s %-*s %7s %7s %7s %7s %-10s %s',
+                $count,
+                $asset_w, endpoint_fit($asset, $asset_w),
+                $peer_w, endpoint_fit($peer, $peer_w),
+                rate_narrow($f->{a2s}), rate_narrow($f->{b2s}), $ten, $trend, $tag, $activity));
         } else {
             my $activity = bar_plain(percent_of(rate_value($f->{a2s}) + rate_value($f->{b2s}), $max_total_rate), 6);
             emit(sprintf('%02d  %-*s %1s %-*s %8s %8s %8s %8s',

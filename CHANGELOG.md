@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.9
+
+- Reworked IFTop wall rows into `asset` and `peer` columns.
+- Added `10s` and SOC `tag` fields to use horizontal space more effectively.
+- Removed relationship symbols from IFTop wall rows.
+
 ## v0.1.8
 
 - Replaced IFTop `talks with` labels with a compact SOC-style `⇄` relationship marker.
