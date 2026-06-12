@@ -230,9 +230,9 @@ sub render_compact {
         $epw = 12 if $epw < 12;
         $epw = 30 if $epw > 30;
     }
-    my $max_flows = $wall ? ($h - 4) : $h - 7;
+    my $max_flows = $wall ? ($h - 3) : $h - 7;
     $max_flows = 3 if $max_flows < 3;
-    $max_flows = 12 if $wall && $max_flows > 12;
+    $max_flows = 20 if $wall && $max_flows > 20;
     $max_flows = 18 if !$wall && $max_flows > 18;
 
     my @send = split /\s+/, ($totals{send} // '?');
@@ -247,19 +247,24 @@ sub render_compact {
     if ($wall) {
         my $flow_w = $w - 32;
         $flow_w = 32 if $flow_w < 32;
-        emit(sprintf('IFTOPX %-3s FLOW RADAR  %s  refresh %ss  pulse %s', $iface, $clock, $refresh, $pulse));
-        emit(sprintf('%-3s %-*s %7s %7s %s', '#', $flow_w, 'flow', 'TX', 'RX', 'activity'));
+        emit(sprintf('IFTOPX %-3s | %s FLOW RADAR  refresh %ss  pulse %s', $iface, $clock, $refresh, $pulse));
+        emit(sprintf('%-3s %-*s %7s %7s %s', '#', $flow_w, 'flow', 'tx', 'rx', 'activity'));
     } else {
         emit(sprintf('IFTOPX %s  %s  top talkers  %s  refresh %ss pulse %s', $iface, endpoint_label($ip, 0), $clock, $refresh, $pulse));
         emit(sprintf('%-3s %-*s %1s %-*s %8s %8s %8s %8s', '#', $epw, 'source', '>', $epw, 'destination', 'TX 2s', 'RX 2s', '40s', 'activity'));
     }
-    my @display_flows = @flows;
     my @nonroutine = grep { !is_routine_flow($_) } @flows;
-    my $hidden_routine = 0;
-    if (scalar(@nonroutine) >= 3) {
-        $hidden_routine = scalar(@flows) - scalar(@nonroutine);
-        @display_flows = @nonroutine;
+    my @routine = grep { is_routine_flow($_) } @flows;
+    my @display_flows;
+    if ($wall) {
+        @display_flows = (@nonroutine, @routine);
+    } else {
+        @display_flows = scalar(@nonroutine) >= 3 ? @nonroutine : @flows;
     }
+    my $hidden_routine = 0;
+    $hidden_routine = @routine if !$wall && scalar(@nonroutine) >= 3;
+    $hidden_routine = @display_flows - $max_flows if $wall && @display_flows > $max_flows;
+    $hidden_routine = 0 if $hidden_routine < 0;
 
     my $max_rate = 1;
     for my $f (@display_flows) {

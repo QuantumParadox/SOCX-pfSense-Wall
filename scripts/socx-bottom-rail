@@ -20,9 +20,7 @@ right=$((win_width - left - 3))
 [ "$right" -lt 1 ] && right=1
 
 awk -v l="$left" -v r="$right" 'BEGIN {
-    printf "╚";
-    for (i = 0; i < l; i++) printf "═";
+    for (i = 0; i <= l; i++) printf "═";
     printf "╩";
-    for (i = 0; i < r; i++) printf "═";
-    printf "╝";
+    for (i = 0; i <= r; i++) printf "═";
 }'

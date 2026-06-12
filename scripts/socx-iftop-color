@@ -14,7 +14,7 @@ fi
 export SOCX_WIDTH SOCX_HEIGHT SOCX_IFTOP_SECONDS
 
 if [ -z "${SOCX_IFTOP_LINES:-}" ] && [ "${SOCX_HEIGHT:-0}" -gt 6 ] 2>/dev/null; then
-    LINES_PER_SAMPLE=$((SOCX_HEIGHT - 4))
+    LINES_PER_SAMPLE=$((SOCX_HEIGHT * 2))
 fi
 
 if [ "${1:-}" = "--demo" ]; then

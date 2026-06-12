@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.5
+
+- Flattened the lower SOCX rail so the far left/right edges no longer curl upward.
+- Let IFTop fill the available pane height before hiding lower-priority traffic rows.
+- Increased IFTop sampling depth so the lower-left pane shows more rows and better matches TCPDump density.
+
 ## v0.1.4
 
 - Reworked the lower SOCX wall into two matched panels with one-line data rows.
