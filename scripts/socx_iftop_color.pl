@@ -245,10 +245,10 @@ sub render_compact {
     my $refresh = $ENV{'SOCX_IFTOP_SECONDS'} || '2';
     my $pulse = pulse_char();
     if ($wall) {
-        my $flow_w = $w - 32;
+        my $flow_w = $w - 40;
         $flow_w = 32 if $flow_w < 32;
         emit(sprintf('IFTOPX %-3s | %s FLOW RADAR  refresh %ss  pulse %s', $iface, $clock, $refresh, $pulse));
-        emit(sprintf('%-3s %-*s %7s %7s %s', '#', $flow_w, 'flow', 'tx', 'rx', 'activity'));
+        emit(sprintf('%-3s %-*s %7s %7s %7s %s', '#', $flow_w, 'flow', 'tx', 'rx', '40s', 'activity'));
     } else {
         emit(sprintf('IFTOPX %s  %s  top talkers  %s  refresh %ss pulse %s', $iface, endpoint_label($ip, 0), $clock, $refresh, $pulse));
         emit(sprintf('%-3s %-*s %1s %-*s %8s %8s %8s %8s', '#', $epw, 'source', '>', $epw, 'destination', 'TX 2s', 'RX 2s', '40s', 'activity'));
@@ -284,13 +284,14 @@ sub render_compact {
         my $a = $wall ? endpoint_label($f->{a} // '?', 1) : endpoint_fit(endpoint_label($f->{a} // '?', 0), $epw);
         my $b = $wall ? endpoint_label($f->{b} // '?', 1) : endpoint_fit(endpoint_label($f->{b} // '?', 0), $epw);
         if ($wall) {
-            my $flow_w = $w - 32;
+            my $flow_w = $w - 40;
             $flow_w = 32 if $flow_w < 32;
             my $flow = endpoint_fit("$a -> $b", $flow_w);
+            my $trend = rate_value($f->{a40s}) >= rate_value($f->{b40s}) ? rate_narrow($f->{a40s}) : rate_narrow($f->{b40s});
             my $activity = bar_plain(percent_of(rate_value($f->{a2s}) + rate_value($f->{b2s}), $max_total_rate), 7);
-            emit(sprintf('%02d  %-*s %7s %7s %s',
+            emit(sprintf('%02d  %-*s %7s %7s %7s %s',
                 $count, $flow_w, $flow,
-                rate_narrow($f->{a2s}), rate_narrow($f->{b2s}), $activity));
+                rate_narrow($f->{a2s}), rate_narrow($f->{b2s}), $trend, $activity));
         } else {
             my $activity = bar_plain(percent_of(rate_value($f->{a2s}) + rate_value($f->{b2s}), $max_total_rate), 6);
             emit(sprintf('%02d  %-*s %1s %-*s %8s %8s %8s %8s',

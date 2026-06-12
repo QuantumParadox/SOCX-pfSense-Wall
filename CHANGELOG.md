@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.6
+
+- Widened the IFTop lower pane by giving TCPDump a narrower 44% split.
+- Added a compact `40s` trend column to IFTop so the wider pane uses space more evenly.
+
 ## v0.1.5
 
 - Flattened the lower SOCX rail so the far left/right edges no longer curl upward.
