@@ -1,0 +1,49 @@
+#!/bin/sh
+# PROVIDE: socx
+# REQUIRE: LOGIN
+# KEYWORD: shutdown
+
+name="socx"
+log_file="/var/log/socx-autoboot.log"
+PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+export PATH
+
+case "$1" in
+start)
+    if command -v tmux >/dev/null 2>&1 && tmux has-session -t socx 2>/dev/null; then
+        echo "SOCX already running."
+        exit 0
+    fi
+
+    (
+        sleep 35
+        export TMUX_TMPDIR=/tmp
+        /bin/sh /root/socxboard.sh >>"$log_file" 2>&1
+    ) &
+    echo "SOCX scheduled to start detached."
+    ;;
+stop)
+    if command -v tmux >/dev/null 2>&1; then
+        tmux kill-session -t socx 2>/dev/null || true
+    fi
+    echo "SOCX stopped."
+    ;;
+restart)
+    "$0" stop
+    "$0" start
+    ;;
+status)
+    if command -v tmux >/dev/null 2>&1 && tmux has-session -t socx 2>/dev/null; then
+        echo "SOCX is running."
+    else
+        echo "SOCX is not running."
+        exit 1
+    fi
+    ;;
+*)
+    echo "Usage: $0 {start|stop|restart|status}"
+    exit 1
+    ;;
+esac
+
+exit 0

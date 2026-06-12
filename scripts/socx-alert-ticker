@@ -1,0 +1,215 @@
+#!/bin/sh
+# SOCX bottom-bar alert ticker.
+# Reads recent Suricata and pfBlockerNG events, then emits one scrolling line.
+
+WIDTH="${1:-82}"
+case "$WIDTH" in
+    ''|*[!0-9]*) WIDTH=82 ;;
+esac
+[ "$WIDTH" -lt 24 ] && WIDTH=24
+[ "$WIDTH" -gt 140 ] && WIDTH=140
+
+STEP="${SOCX_TICKER_STEP:-4}"
+case "$STEP" in
+    ''|*[!0-9]*) STEP=4 ;;
+esac
+[ "$STEP" -lt 1 ] && STEP=1
+[ "$STEP" -gt 24 ] && STEP=24
+
+BASE=/tmp/socx-alert-ticker
+CACHE="$BASE.msg"
+STAMP="$BASE.stamp"
+POSFILE="$BASE.pos"
+TTL=5
+
+sanitize() {
+    /usr/bin/sed \
+        -e 's/[][{}()<>#]/ /g' \
+        -e 's/[[:cntrl:]]/ /g' \
+        -e 's/[[:space:]][[:space:]]*/ /g' \
+        -e 's/^ *//' \
+        -e 's/ *$//' \
+        -e 's/"/'\''/g'
+}
+
+shorten() {
+    /usr/bin/awk -v max="${1:-90}" '{
+        if (length($0) > max) {
+            s = substr($0, 1, max - 3)
+            if (s ~ / /) sub(/[[:space:]][^[:space:]]*$/, "", s)
+            if (length(s) < 12) s = substr($0, 1, max - 3)
+            print s "..."
+        } else {
+            print
+        }
+    }'
+}
+
+latest_suricata_alert_log() {
+    for dir in $(/bin/ls -dt /var/log/suricata/suricata_* 2>/dev/null); do
+        [ -f "$dir/alerts.log" ] && {
+            printf '%s\n' "$dir/alerts.log"
+            return
+        }
+    done
+}
+
+format_suricata() {
+    log=$(latest_suricata_alert_log)
+    [ -n "$log" ] && [ -f "$log" ] || return
+    /usr/bin/tail -n 120 "$log" 2>/dev/null |
+        /usr/bin/grep -Ev 'SURICATA STREAM|SURICATA QUIC failed decrypt|SURICATA Applayer|SURICATA (UDPv[46]|TCPv[46]|ICMPv[46]) invalid checksum' |
+        /usr/bin/sed -E \
+            -e 's/.*\[\*\*\] \[[^]]+\] ([^[]+) \[\*\*\].*\{([^}]+)\} ([^ ]+) -> ([^ ]+).*/IDS alert: \1 using \2 from \3 to \4./' \
+            -e 's/\[Classification: ([^]]+)\]/classification \1/g' \
+            -e 's/^IDS alert: SURICATA STREAM Packet with invalid ack using TCP/IDS notice: unusual TCP ack/' \
+            -e 's/^IDS alert: SURICATA STREAM Packet with invalid timestamp using TCP/IDS notice: odd TCP timestamp/' \
+            -e 's/^IDS alert: SURICATA STREAM bad window update using TCP/IDS notice: odd TCP window update/' \
+            -e 's/^IDS alert: SURICATA STREAM 3way handshake wrong seq wrong ack using TCP/IDS notice: odd TCP handshake/' \
+            -e 's/^IDS alert: SURICATA STREAM excessive retransmissions using TCP/IDS notice: heavy TCP retransmits/' \
+            -e 's/^IDS alert: SURICATA IKE invalid proposal using UDP/Internet scan: VPN\/IKE probe/' \
+            -e 's/^Internet scan: VPN\/IKE probe from ([0-9.]+):[0-9]+ to 74\.46\.[0-9]+\.[0-9]+:500\./Internet scan: VPN\/IKE probe from \1 to WAN:500./' \
+            -e 's/^IDS alert: /IDS: /' |
+        sanitize |
+        /usr/bin/tail -n 2
+}
+
+format_dnsbl() {
+    dnsbl=$1
+    [ -f "$dnsbl" ] || return
+    /usr/bin/tail -n 60 "$dnsbl" 2>/dev/null |
+        /usr/bin/awk -F, '
+            NF >= 9 {
+                time=$2; domain=$3; device=$4; category=$7; feed=$9
+                if (domain == "" || device == "") next
+                msg = "DNS block: " device " -> " domain " was blocked."
+                print msg
+            }
+        ' |
+        /usr/bin/awk '!seen[$0]++' |
+        /usr/bin/tail -n 2
+}
+
+format_dns_reply() {
+    dnslog=$1
+    [ -f "$dnslog" ] || return
+    /usr/bin/tail -n 40 "$dnslog" 2>/dev/null |
+        /usr/bin/awk -F, '
+            NF >= 9 && $9 != "SOA" && $9 != "NXDOMAIN" {
+                domain=$7; device=$8; answer=$9
+                if (domain == "" || device == "") next
+                print "DNS lookup: device " device " resolved " domain " to " answer "."
+            }
+        ' |
+        /usr/bin/awk '!seen[$0]++' |
+        /usr/bin/tail -n 1
+}
+
+format_ipblock() {
+    iplog=/var/log/pfblockerng/ip_block.log
+    [ -f "$iplog" ] || return
+    /usr/bin/tail -n 50 "$iplog" 2>/dev/null |
+        /usr/bin/awk -F, '
+            NF >= 17 && $5 == "block" {
+                src=$9; dst=$10; sport=$11; dport=$12; dir=$13; country=$14; list=$17; host=$19
+                if (src == "" || dst == "") next
+                gsub(/_/, " ", list)
+                if (host != "" && host != "Unknown") {
+                    device = host " at " src
+                } else {
+                    device = "device " src
+                }
+                dest = dst
+                if (dport != "") dest = dest ":" dport
+                note = "Firewall block: " device " -> " dest
+                details = ""
+                if (country != "" && country != "unk") details = country
+                if (list != "") {
+                    sub(/Spamhaus Drop v4/, "Spamhaus", list)
+                    if (details != "") details = details ", " list
+                    else details = list
+                }
+                if (details != "") note = note " (" details ")"
+                print note "."
+            }
+        ' |
+        /usr/bin/awk '!seen[$0]++' |
+        /usr/bin/tail -n 2
+}
+
+build_cache() {
+    dnsbl=/var/log/pfblockerng/dnsbl.log
+    [ -f "$dnsbl" ] || dnsbl=/var/log/pfblockerng/dns_reply.log
+
+    alerts=$(format_suricata | shorten 110)
+    [ -n "$alerts" ] || alerts="IDS: no high-confidence alert; routine TCP noise is hidden."
+    if [ -f "$dnsbl" ]; then
+        if [ "$(basename "$dnsbl")" = "dnsbl.log" ]; then
+            dns=$(format_dnsbl "$dnsbl" | shorten 110)
+        else
+            dns=$(format_dns_reply "$dnsbl" | shorten 110)
+        fi
+    fi
+    ipblocks=$(format_ipblock | shorten 110)
+
+    items=$(
+        {
+            [ -n "$alerts" ] && printf '%s\n' "$alerts"
+            [ -n "$dns" ] && printf '%s\n' "$dns"
+            [ -n "$ipblocks" ] && printf '%s\n' "$ipblocks"
+        } | /usr/bin/awk 'NF'
+    )
+
+    if [ -z "$items" ]; then
+        items="All quiet: IDS has no high-confidence alerts. DNS filtering and firewall blocks are live."
+    fi
+
+    printf '%s\n' "$items" > "$CACHE"
+    /bin/date +%s > "$STAMP"
+}
+
+now=$(/bin/date +%s)
+last=0
+[ -r "$STAMP" ] && last=$(/bin/cat "$STAMP" 2>/dev/null)
+case "$last" in
+    ''|*[!0-9]*) last=0 ;;
+esac
+
+if [ ! -s "$CACHE" ] || [ $((now - last)) -ge "$TTL" ]; then
+    build_cache
+fi
+
+count=$(/usr/bin/awk 'NF { c++ } END { print c + 0 }' "$CACHE" 2>/dev/null)
+case "$count" in
+    ''|*[!0-9]*) count=0 ;;
+esac
+[ "$count" -gt 0 ] || {
+    printf '%s' "SOCX: alert ticker warming up"
+    exit 0
+}
+
+pos=0
+[ -r "$POSFILE" ] && pos=$(/bin/cat "$POSFILE" 2>/dev/null)
+case "$pos" in
+    ''|*[!0-9]*) pos=0 ;;
+esac
+
+pos=$((pos % count))
+line=$(/usr/bin/awk -v want="$((pos + 1))" 'NF { c++; if (c == want) { print; exit } }' "$CACHE")
+[ -n "$line" ] || line="SOCX: alert ticker warming up"
+
+out=$(printf '%s' "$line" | /usr/bin/awk -v w="$WIDTH" '{
+    s = "SOCX: " $0
+    if (length(s) > w) {
+        s = substr(s, 1, w - 3)
+        if (s ~ / /) sub(/[[:space:]][^[:space:]]*$/, "", s)
+        if (length(s) < 12) s = substr("SOCX: " $0, 1, w - 3)
+        s = s "..."
+    }
+    while (length(s) < w) s = s " "
+    print s
+}')
+
+next=$(((pos + 1) % count))
+printf '%s\n' "$next" > "$POSFILE"
+printf '%s' "$out"

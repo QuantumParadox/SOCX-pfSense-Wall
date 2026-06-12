@@ -1,0 +1,53 @@
+#!/bin/sh
+# Colorized iftop text-mode loop for SOCX. Original iftop is untouched.
+SECONDS_PER_SAMPLE="${SOCX_IFTOP_SECONDS:-2}"
+LINES_PER_SAMPLE="${SOCX_IFTOP_LINES:-12}"
+
+if [ -n "${TMUX_PANE:-}" ] && command -v tmux >/dev/null 2>&1; then
+    dims="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_width} #{pane_height}' 2>/dev/null || echo '0 0')"
+    SOCX_WIDTH="${dims%% *}"
+    SOCX_HEIGHT="${dims##* }"
+else
+    SOCX_WIDTH="$(tput cols 2>/dev/null || echo 0)"
+    SOCX_HEIGHT="$(tput lines 2>/dev/null || echo 0)"
+fi
+export SOCX_WIDTH SOCX_HEIGHT SOCX_IFTOP_SECONDS
+
+if [ -z "${SOCX_IFTOP_LINES:-}" ] && [ "${SOCX_HEIGHT:-0}" -gt 6 ] 2>/dev/null; then
+    LINES_PER_SAMPLE=$((SOCX_HEIGHT - 4))
+fi
+
+if [ "${1:-}" = "--demo" ]; then
+    cat <<'EOF' | /usr/local/sbin/socx_iftop_color.pl
+SOCX iftop | ix0 | 2s refresh
+192.168.1.121          => 74.46.12.1             1.62 KiB/s
+                         <=                      112 KiB/s
+Total send rate:                                13.8 MiB/s
+Total receive rate:                             11.3 MiB/s
+EOF
+    exit 0
+fi
+
+if [ "$#" -eq 0 ]; then
+    set -- -i ix0 -n -N
+fi
+
+while :; do
+    iface="auto"
+    prev=""
+    for arg in "$@"; do
+        if [ "$prev" = "-i" ]; then
+            iface="$arg"
+            break
+        fi
+        prev="$arg"
+    done
+    tmp="/tmp/socx-iftopx.$$"
+    trap 'rm -f "$tmp"' INT TERM EXIT
+    /usr/local/sbin/iftop -t -s "$SECONDS_PER_SAMPLE" -L "$LINES_PER_SAMPLE" "$@" > "$tmp" 2>&1
+    printf '\033[H\033[2J'
+    SOCX_IFTOP_COMPACT=1 /usr/local/sbin/socx_iftop_color.pl < "$tmp"
+    rm -f "$tmp"
+    trap - INT TERM EXIT
+    sleep 0.2
+done

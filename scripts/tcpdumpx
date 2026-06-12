@@ -1,0 +1,4 @@
+#!/bin/sh
+# tcpdumpx: colored tcpdump clone for pfSense/SOCX.
+# The original /usr/sbin/tcpdump is untouched.
+exec /usr/local/sbin/socx-tcpdump-color "$@"

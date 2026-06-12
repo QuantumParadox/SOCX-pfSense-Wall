@@ -1,0 +1,4 @@
+#!/bin/sh
+# iftopx: colored iftop clone for pfSense/SOCX.
+# The original /usr/local/sbin/iftop is untouched.
+exec /usr/local/sbin/socx-iftop-color "$@"

@@ -1,0 +1,26 @@
+#!/bin/sh
+# Print a one-line floor rail for the SOCX bottom panes.
+target=${1:-socx:NETX}
+win_width=$(tmux display-message -p -t "$target" '#{window_width}' 2>/dev/null || printf '180')
+pane_right=$(tmux display-message -p -t "$target.1" '#{pane_right}' 2>/dev/null || printf '')
+
+case "$win_width" in
+    ''|*[!0-9]*) win_width=180 ;;
+esac
+case "$pane_right" in
+    ''|*[!0-9]*) pane_right=$((win_width / 2 - 1)) ;;
+esac
+
+[ "$win_width" -lt 12 ] && win_width=12
+[ "$pane_right" -lt 2 ] && pane_right=$((win_width / 2 - 1))
+[ "$pane_right" -gt $((win_width - 4)) ] && pane_right=$((win_width / 2 - 1))
+
+left=$pane_right
+right=$((win_width - left - 3))
+[ "$right" -lt 1 ] && right=1
+
+awk -v l="$left" -v r="$right" 'BEGIN {
+    for (i = 0; i < l; i++) printf "=";
+    printf "=+=";
+    for (i = 0; i < r; i++) printf "=";
+}'
