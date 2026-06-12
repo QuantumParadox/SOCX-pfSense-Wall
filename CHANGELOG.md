@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.3
+
+- Removed the two internal IFTop separator rules so the lower pane reads cleaner with the tmux pane-border floor.
+
 ## v0.1.2
 
 - Moved the lower IFTop/TCPDump floor from a separate tmux status rail into the tmux pane-border layer.

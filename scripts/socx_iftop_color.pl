@@ -137,12 +137,6 @@ sub bar_plain {
     return '[' . ('#' x $filled) . ('.' x ($wide - $filled)) . ']';
 }
 
-sub rule_plain {
-    my ($wide) = @_;
-    $wide = 1 if !$wide || $wide < 1;
-    return '─' x $wide;
-}
-
 sub pulse_char {
     my @chars = ('|', '/', '-', '\\');
     return $chars[time() % @chars];
@@ -260,8 +254,6 @@ sub render_compact {
     } else {
         emit(sprintf('%-3s %-*s %1s %-*s %8s %8s %8s %8s', '#', $epw, 'source', '>', $epw, 'destination', 'TX 2s', 'RX 2s', '40s', 'activity'));
     }
-    emit(rule_plain($w));
-
     my @display_flows = @flows;
     my @nonroutine = grep { !is_routine_flow($_) } @flows;
     my $hidden_routine = 0;
@@ -306,7 +298,6 @@ sub render_compact {
         }
     }
 
-    emit(rule_plain($w));
     if ($narrow) {
         my $summary = 'TOTAL tx ' . rate_narrow($send[0]) . ' rx ' . rate_narrow($recv[0]) . ' both ' . rate_narrow($both[0]);
         $summary .= ' hid ' . $hidden_routine if $hidden_routine > 0;
