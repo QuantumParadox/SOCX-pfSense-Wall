@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.11
+
+- Added a `NUT UPS` tmux status-bar widget so UPS watts, load, battery, and runtime are visible below the traffic panes.
+- Updated SOCX startup to clear stale legacy `soc` tmux sessions before launching the current `socx` wall.
+
 ## v0.1.10
 
 - Added NUT/APC Smart-UPS telemetry to the SOCX top cockpit.

@@ -17,6 +17,7 @@ Suggested topics:
 - Starts a full-screen tmux dashboard called `socx`.
 - Shows pfSense CPU, memory, ARC, firewall state, interface traffic, pf search rate, and top processes.
 - Shows NUT/APC Smart-UPS state, watts, load, battery, runtime remaining, and input voltage in the main cockpit.
+- Shows a compact `NUT UPS` watts/battery/runtime widget in the bottom SOCX bar.
 - Adds `iftopx`, a readable color flow radar for live LAN/WAN traffic.
 - Adds `tcpdumpx`, a readable color packet story view that explains traffic direction, service, size, and flow.
 - Adds a SOC ticker for firewall blocks, DNS blocks, IDS-style alerts, and other useful events.
@@ -30,6 +31,7 @@ Suggested topics:
 - `scripts/socxboard.sh` - tmux layout and SOCX session launcher.
 - `scripts/socx-bottom-rail` - dynamically draws the lower frame rail and center join.
 - `scripts/socx-alert-ticker` - bottom status ticker for readable firewall/security events.
+- `scripts/socx-ups-status` - compact NUT/APC UPS status widget for the tmux status bar.
 - `scripts/socx-iftop-color` and `scripts/socx_iftop_color.pl` - color flow radar wrapper and renderer.
 - `scripts/socx-tcpdump-color` and `scripts/socx_tcpdump_color.pl` - color packet story wrapper and renderer.
 - `scripts/iftopx`, `scripts/tcpdumpx`, `scripts/socx` - convenience launchers.

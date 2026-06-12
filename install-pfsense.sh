@@ -7,6 +7,7 @@ install -m 0755 "$ROOT/scripts/pfsense-btop.php" /usr/local/sbin/pfsense-btop
 install -m 0755 "$ROOT/scripts/socxboard.sh" /root/socxboard.sh
 install -m 0755 "$ROOT/scripts/socx-bottom-rail" /usr/local/sbin/socx-bottom-rail
 install -m 0755 "$ROOT/scripts/socx-alert-ticker" /usr/local/sbin/socx-alert-ticker
+install -m 0755 "$ROOT/scripts/socx-ups-status" /usr/local/sbin/socx-ups-status
 install -m 0755 "$ROOT/scripts/socx-iftop-color" /usr/local/sbin/socx-iftop-color
 install -m 0755 "$ROOT/scripts/socx-tcpdump-color" /usr/local/sbin/socx-tcpdump-color
 install -m 0755 "$ROOT/scripts/socx_iftop_color.pl" /usr/local/sbin/socx_iftop_color.pl

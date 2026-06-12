@@ -1,0 +1,54 @@
+#!/bin/sh
+# Compact NUT/APC UPS widget for the SOCX tmux status bar.
+
+UPSC=${UPSC:-/usr/local/bin/upsc}
+[ -x "$UPSC" ] || exit 0
+
+fmt_runtime() {
+    awk -v s="$1" 'BEGIN {
+        if (s == "" || s < 0) { print "?"; exit }
+        s = int(s + 0.5)
+        h = int(s / 3600)
+        m = int((s % 3600) / 60)
+        if (h > 0) printf "%dh%02dm", h, m
+        else printf "%dm", m
+    }'
+}
+
+status_word() {
+    case " $1 " in
+        *" LB "*) printf 'LOW-BATT' ;;
+        *" RB "*) printf 'REPLACE' ;;
+        *" OB "*) printf 'BATTERY' ;;
+        *" OL "*) printf 'ONLINE' ;;
+        *) [ -n "$1" ] && printf '%s' "$1" || printf '?' ;;
+    esac
+}
+
+for ups in $("$UPSC" -l 2>/dev/null); do
+    raw=$("$UPSC" "$ups" 2>/dev/null) || continue
+    [ -n "$raw" ] || continue
+
+    status=$(printf '%s\n' "$raw" | awk -F': ' '$1=="ups.status"{print $2; exit}')
+    charge=$(printf '%s\n' "$raw" | awk -F': ' '$1=="battery.charge"{print int($2 + 0.5); exit}')
+    runtime=$(printf '%s\n' "$raw" | awk -F': ' '$1=="battery.runtime"{print $2; exit}')
+    load=$(printf '%s\n' "$raw" | awk -F': ' '$1=="ups.load"{print int($2 + 0.5); exit}')
+    watts=$(printf '%s\n' "$raw" | awk -F': ' '
+        $1=="ups.realpower"{w=$2}
+        $1=="ups.power" && w==""{w=$2}
+        $1=="output.voltage"{v=$2}
+        $1=="output.current"{c=$2}
+        END {
+            if (w != "") printf "%d", w + 0.5
+            else if (v != "" && c != "") printf "%d", (v * c) + 0.5
+        }')
+
+    [ -n "$watts" ] || watts='?'
+    [ -n "$load" ] || load='?'
+    [ -n "$charge" ] || charge='?'
+    runtime_fmt=$(fmt_runtime "$runtime")
+    printf 'NUT UPS %s %sW load %s%% batt %s%% run %s' "$(status_word "$status")" "$watts" "$load" "$charge" "$runtime_fmt"
+    exit 0
+done
+
+printf 'NUT UPS unavailable'
