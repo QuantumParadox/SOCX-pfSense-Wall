@@ -85,6 +85,13 @@ sub endpoint_label {
     return $text;
 }
 
+sub conversation_label {
+    my ($a, $b) = @_;
+    return "$a talks with $b" if $a =~ /^(pfSense|LAN\.)/;
+    return "$b talks with $a" if $b =~ /^(pfSense|LAN\.)/;
+    return "$a with $b";
+}
+
 sub is_routine_flow {
     my ($flow) = @_;
     for my $ep (($flow->{a} // ''), ($flow->{b} // '')) {
@@ -153,11 +160,11 @@ sub colorize_line {
     }
 
     $line =~ s/(SOCX iftop.*)/paint('cyan', $1)/e;
-    $line =~ s/(IFTOPX.*|flow radar|top talkers|TX upload.*|routine broadcast|refresh.*|pulse.*)/paint('cyan', $1)/e;
+    $line =~ s/(IFTOPX.*|live conversations|top talkers|TX upload.*|routine broadcast|refresh.*|pulse.*)/paint('cyan', $1)/e;
     $line =~ s/(\[[#.]+\])/paint('green', $1)/ge;
     $line =~ s/(=>)/paint('green', $1)/ge;
     $line =~ s/(<=)/paint('cyan', $1)/ge;
-    $line =~ s/\b(Total|Peak|Cumulative|send|receive|rates?|TX|RX|TOTAL|PEAK|Listening on|interface|upload|download|both)\b/paint('yellow', $1)/ge;
+    $line =~ s/\b(Total|Peak|Cumulative|send|receive|rates?|TX|RX|TOTAL|PEAK|Listening on|interface|upload|download|both|up|down|trend|heat|now)\b/paint('yellow', $1)/ge;
     $line =~ s/\b(192\.168\.\d+\.\d+)\b/paint('green', $1)/ge;
     $line =~ s/\b(10\.\d+\.\d+\.\d+)\b/paint('cyan', $1)/ge;
     $line =~ s/\b(74\.46\.\d+\.\d+)\b/paint('green', $1)/ge;
@@ -247,8 +254,8 @@ sub render_compact {
     if ($wall) {
         my $flow_w = $w - 40;
         $flow_w = 32 if $flow_w < 32;
-        emit(sprintf('IFTOPX %-3s | %s FLOW RADAR  refresh %ss  pulse %s', $iface, $clock, $refresh, $pulse));
-        emit(sprintf('%-3s %-*s %7s %7s %7s %s', '#', $flow_w, 'flow', 'tx', 'rx', '40s', 'activity'));
+        emit(sprintf('IFTOPX %-3s | %s live conversations  refresh %ss  pulse %s', $iface, $clock, $refresh, $pulse));
+        emit(sprintf('%-3s %-*s %7s %7s %7s %s', '#', $flow_w, 'conversation', 'up', 'down', 'trend', 'heat'));
     } else {
         emit(sprintf('IFTOPX %s  %s  top talkers  %s  refresh %ss pulse %s', $iface, endpoint_label($ip, 0), $clock, $refresh, $pulse));
         emit(sprintf('%-3s %-*s %1s %-*s %8s %8s %8s %8s', '#', $epw, 'source', '>', $epw, 'destination', 'TX 2s', 'RX 2s', '40s', 'activity'));
@@ -286,7 +293,7 @@ sub render_compact {
         if ($wall) {
             my $flow_w = $w - 40;
             $flow_w = 32 if $flow_w < 32;
-            my $flow = endpoint_fit("$a -> $b", $flow_w);
+            my $flow = endpoint_fit(conversation_label($a, $b), $flow_w);
             my $trend = rate_value($f->{a40s}) >= rate_value($f->{b40s}) ? rate_narrow($f->{a40s}) : rate_narrow($f->{b40s});
             my $activity = bar_plain(percent_of(rate_value($f->{a2s}) + rate_value($f->{b2s}), $max_total_rate), 7);
             emit(sprintf('%02d  %-*s %7s %7s %7s %s',
@@ -301,8 +308,8 @@ sub render_compact {
     }
 
     if ($wall) {
-        my $summary = 'TOTAL tx ' . rate_narrow($send[0]) . ' rx ' . rate_narrow($recv[0]) . ' both ' . rate_narrow($both[0]);
-        $summary .= ' hid ' . $hidden_routine if $hidden_routine > 0;
+        my $summary = 'TOTAL up ' . rate_narrow($send[0]) . ' down ' . rate_narrow($recv[0]) . ' both ' . rate_narrow($both[0]);
+        $summary .= ' extra ' . $hidden_routine if $hidden_routine > 0;
         emit($summary);
     } else {
         emit('routine broadcast hidden: ' . $hidden_routine) if $hidden_routine > 0;

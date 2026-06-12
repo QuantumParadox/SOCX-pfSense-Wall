@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.7
+
+- Reworded IFTop as a human-readable live-conversations panel.
+- Removed `>`/arrow-style flow text from the IFTop wall view.
+- Renamed IFTop columns to `up`, `down`, `trend`, and `heat`.
+
 ## v0.1.6
 
 - Widened the IFTop lower pane by giving TCPDump a narrower 44% split.
