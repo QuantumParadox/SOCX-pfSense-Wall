@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.12
+
+- Restored the wide btop-style SOC cockpit layout for 24-row wall panes.
+- Kept CPU core rows dedicated to CPU/load while preserving the live NUT/APC UPS line.
+- Removed the clipped duplicate UPS text from the small `mem net pf` panel.
+
 ## v0.1.11
 
 - Added a `NUT UPS` tmux status-bar widget so UPS watts, load, battery, and runtime are visible below the traffic panes.

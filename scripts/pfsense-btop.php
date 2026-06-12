@@ -8,7 +8,7 @@ declare(strict_types=1);
  */
 
 const APP_NAME = 'pfsense-btop';
-const APP_VERSION = '0.4.0';
+const APP_VERSION = '0.4.1';
 
 $opts = parse_args($argv);
 if ($opts['help']) {
@@ -527,7 +527,7 @@ function render_frame(array $f, int $cols, int $rows, bool $color): string
     $cols = max(20, $cols);
     $rows = max(8, $rows);
 
-    if ($cols >= 100 && $rows >= 28) {
+    if ($cols >= 100 && $rows >= 22) {
         return render_full_frame($f, $cols, $rows, $color);
     }
     if ($cols >= 70 && $rows >= 12) {
@@ -538,7 +538,7 @@ function render_frame(array $f, int $cols, int $rows, bool $color): string
 
 function render_full_frame(array $f, int $cols, int $rows, bool $color): string
 {
-    $topH = min(11, max(8, (int)floor($rows * 0.30)));
+    $topH = min(11, max(9, (int)ceil($rows * 0.44)));
     $bottomH = max(8, $rows - $topH);
     $rightW = min(max(52, (int)floor($cols * 0.54)), $cols - 44);
     $leftW = $cols - $rightW;
@@ -628,7 +628,7 @@ function cpu_panel(array $f, int $width, int $height, bool $color): array
     $rightW = ($width >= 72 && $bodyH >= 6) ? min(44, max(30, (int)floor($inner * 0.36))) : 0;
     $leftW = $rightW > 0 ? max(10, $inner - $rightW - 1) : $inner;
     $glance = glance_lines($f, $leftW, $color);
-    $glanceH = min(count($glance), max(0, $bodyH - 3));
+    $glanceH = min(count($glance), max(0, $bodyH - 3), 4);
     $graphH = max(1, $bodyH - $glanceH - 2);
     $left = array_slice($glance, 0, $glanceH);
     $left = array_merge($left, cpu_graph($f['cpu_history'], $leftW, $graphH, $color, level_color($f['cpu']['used'])));
@@ -636,7 +636,7 @@ function cpu_panel(array $f, int $width, int $height, bool $color): array
     $left[] = fit($f['load']['processes'], $leftW);
 
     if ($rightW <= 0) {
-        return panel('SOCX WALL  cpu  preset NEON  ' . date('H:i:s'), $left, $width, $height, $color, 'cyan');
+        return panel('SOCX WALL  cpu  preset LCARS  ' . date('H:i:s'), $left, $width, $height, $color, 'cyan');
     }
 
     $right = cpu_detail_lines($f, $rightW, $bodyH, $color);
@@ -644,7 +644,7 @@ function cpu_panel(array $f, int $width, int $height, bool $color): array
     for ($i = 0; $i < $bodyH; $i++) {
         $body[] = pad_visible($left[$i] ?? '', $leftW) . ' ' . pad_visible($right[$i] ?? '', $rightW);
     }
-    $title = 'SOCX WALL  cpu  preset NEON  ' . date('H:i:s') . '  ' . (int)(($GLOBALS['interval'] ?? 1.5) * 1000) . 'ms  THREAT-INTEL LIVE';
+    $title = 'SOCX WALL  cpu  preset LCARS  ' . date('H:i:s') . '  ' . (int)(($GLOBALS['interval'] ?? 1.5) * 1000) . 'ms  THREAT-INTEL LIVE';
     return panel($title, $body, $width, $height, $color, 'cyan');
 }
 
@@ -677,6 +677,9 @@ function glance_lines(array $f, int $width, bool $color): array
         ansi(level_color($cpu['used']), 'CPU', $color),
         $cpu['used']
     ), $width);
+    if (($f['ups']['present'] ?? false) === true) {
+        $lines[] = ups_line($f['ups'], $width, $color);
+    }
     $lines[] = fit(sprintf(
         '%s %s  %s %s  %s %s',
         ansi('green', 'search', $color),
@@ -686,9 +689,6 @@ function glance_lines(array $f, int $width, bool $color): array
         ansi('green', 'passed', $color),
         fmt_compact_int((int)$pf['passed'])
     ), $width);
-    if (($f['ups']['present'] ?? false) === true) {
-        $lines[] = ups_line($f['ups'], $width, $color);
-    }
     $lines[] = fit(ansi(health_color($health), 'HEALTH', $color) . ' ' . implode('  ', $health), $width);
 
     return $lines;
@@ -874,8 +874,7 @@ function cpu_detail_lines(array $f, int $width, int $height, bool $color): array
         $temp === '' ? '' : $temp
     ), $width);
 
-    $hasUps = ($f['ups']['present'] ?? false) === true;
-    $maxCores = max(0, $height - ($hasUps ? 3 : 2));
+    $maxCores = max(0, $height - 2);
     foreach (array_slice($cpu['cores'] ?? [], 0, $maxCores) as $core) {
         $lines[] = fit(sprintf(
             'C%-2d %s %4.0f%%',
@@ -883,9 +882,6 @@ function cpu_detail_lines(array $f, int $width, int $height, bool $color): array
             bar($core['used'], max(4, $width - 14), $color, level_color($core['used'])),
             $core['used']
         ), $width);
-    }
-    if ($hasUps) {
-        $lines[] = ups_detail_line($f['ups'], $width, $color);
     }
     $lines[] = fit('Load AVG: ' . $f['load']['1'] . '  ' . $f['load']['5'] . '  ' . $f['load']['15'], $width);
     return fit_block($lines, $width, $height);
@@ -967,9 +963,6 @@ function mini_stats_panel(array $f, int $width, int $height, bool $color): array
         'pf states ' . $p['states'],
         'pf searches ' . $p['searches_rate'],
     ];
-    if (($f['ups']['present'] ?? false) === true) {
-        $body[] = ups_line($f['ups'], max(1, $width - 2), $color);
-    }
     foreach (array_slice($f['net'], 0, max(1, $height - count($body) - 3)) as $n) {
         $body[] = fit(sprintf('%-7s D %8s', $n['name'], $n['rx'] === null ? 'sampling' : fmt_bytes($n['rx']) . '/s'), max(1, $width - 2));
         $body[] = fit(sprintf('%-7s U %8s', '', $n['tx'] === null ? 'sampling' : fmt_bytes($n['tx']) . '/s'), max(1, $width - 2));
