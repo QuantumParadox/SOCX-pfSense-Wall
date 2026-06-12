@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.8
+
+- Replaced IFTop `talks with` labels with a compact SOC-style `⇄` relationship marker.
+- Removed IFTop `>` truncation markers and replaced them with ellipses.
+
 ## v0.1.7
 
 - Reworded IFTop as a human-readable live-conversations panel.

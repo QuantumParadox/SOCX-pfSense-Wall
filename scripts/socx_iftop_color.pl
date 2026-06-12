@@ -30,7 +30,7 @@ sub paint {
 sub fit_plain {
     my ($text, $max) = @_;
     return $text if !$max || length($text) <= $max;
-    return substr($text, 0, $max - 1) . '>';
+    return substr($text, 0, $max - 1) . '…';
 }
 
 sub pad_plain {
@@ -87,9 +87,9 @@ sub endpoint_label {
 
 sub conversation_label {
     my ($a, $b) = @_;
-    return "$a talks with $b" if $a =~ /^(pfSense|LAN\.)/;
-    return "$b talks with $a" if $b =~ /^(pfSense|LAN\.)/;
-    return "$a with $b";
+    return "$a ⇄ $b" if $a =~ /^(pfSense|LAN\.)/;
+    return "$b ⇄ $a" if $b =~ /^(pfSense|LAN\.)/;
+    return "$a ⇄ $b";
 }
 
 sub is_routine_flow {
@@ -156,7 +156,7 @@ sub colorize_line {
     $line =~ s/^IP address is:\s*/IP /i if $width && $width < 70;
     $line =~ s/=+/-/g if $width && $width < 70;
     if ($width && length($line) > $width) {
-        $line = substr($line, 0, $width - 1) . '>';
+        $line = substr($line, 0, $width - 1) . '…';
     }
 
     $line =~ s/(SOCX iftop.*)/paint('cyan', $1)/e;
@@ -164,6 +164,7 @@ sub colorize_line {
     $line =~ s/(\[[#.]+\])/paint('green', $1)/ge;
     $line =~ s/(=>)/paint('green', $1)/ge;
     $line =~ s/(<=)/paint('cyan', $1)/ge;
+    $line =~ s/(⇄)/paint('white', $1)/ge;
     $line =~ s/\b(Total|Peak|Cumulative|send|receive|rates?|TX|RX|TOTAL|PEAK|Listening on|interface|upload|download|both|up|down|trend|heat|now)\b/paint('yellow', $1)/ge;
     $line =~ s/\b(192\.168\.\d+\.\d+)\b/paint('green', $1)/ge;
     $line =~ s/\b(10\.\d+\.\d+\.\d+)\b/paint('cyan', $1)/ge;
