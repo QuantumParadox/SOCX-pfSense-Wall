@@ -1,7 +1,7 @@
 #!/bin/sh
 # SOCX: colorized SOC console dashboard.
 IFLAN=ix0; IFWAN=ix1
-TOPR="pfbtop --interval 1 --top 24"
+TOPR="pfbtop --interval 0.5 --top 24"
 ZK=/var/spool/zeek/zeek
 SURI=$(ls -d /var/log/suricata/suricata_* 2>/dev/null | head -1)
 ALERTS="$SURI/alerts.log"

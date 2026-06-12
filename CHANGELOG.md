@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.10
+
+- Added NUT/APC Smart-UPS telemetry to the SOCX top cockpit.
+- Shows UPS state, live wattage, load percent, battery percent, runtime remaining, and input voltage.
+- Changed the SOCX cockpit refresh to `0.5s` so UPS wattage and system health repaint faster.
+
 ## v0.1.9
 
 - Reworked IFTop wall rows into `asset` and `peer` columns.

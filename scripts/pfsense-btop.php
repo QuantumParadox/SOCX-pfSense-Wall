@@ -8,7 +8,7 @@ declare(strict_types=1);
  */
 
 const APP_NAME = 'pfsense-btop';
-const APP_VERSION = '0.3.1';
+const APP_VERSION = '0.4.0';
 
 $opts = parse_args($argv);
 if ($opts['help']) {
@@ -162,6 +162,7 @@ function collect_frame(array &$state, int $topCount): array
     $procs = parse_processes(run_cmd('/bin/ps auxww'), $topCount);
     $temps = parse_temps(run_cmd("/sbin/sysctl -a | /usr/bin/grep -E 'dev.cpu\\.[0-9]+\\.temperature|hw.acpi.thermal.*temperature' | /usr/bin/head -8"));
     $freq = trim(run_cmd('/sbin/sysctl -n dev.cpu.0.freq'));
+    $ups = collect_ups();
 
     $state['time'] = $now;
 
@@ -178,7 +179,98 @@ function collect_frame(array &$state, int $topCount): array
         'disks' => $disks,
         'procs' => $procs,
         'temps' => $temps,
+        'ups' => $ups,
     ];
+}
+
+function collect_ups(): array
+{
+    $empty = [
+        'present' => false,
+        'name' => '',
+        'model' => '',
+        'status' => '',
+        'charge_pct' => null,
+        'runtime_s' => null,
+        'load_pct' => null,
+        'power_w' => null,
+        'input_v' => null,
+        'output_v' => null,
+        'temp_c' => null,
+    ];
+
+    $upsc = trim(run_cmd('/bin/sh -c "command -v upsc || true"'));
+    if ($upsc === '') {
+        return $empty;
+    }
+
+    $names = preg_split('/\s+/', trim(run_cmd($upsc . ' -l')));
+    if (!$names) {
+        return $empty;
+    }
+
+    foreach ($names as $name) {
+        $name = trim($name);
+        if ($name === '' || !preg_match('/^[A-Za-z0-9_.:@-]+$/', $name)) {
+            continue;
+        }
+        $raw = run_cmd($upsc . ' ' . escapeshellarg($name));
+        if (trim($raw) === '') {
+            continue;
+        }
+        $ups = parse_ups($name, $raw);
+        if ($ups['present']) {
+            return $ups;
+        }
+    }
+
+    return $empty;
+}
+
+function parse_ups(string $name, string $raw): array
+{
+    $data = [];
+    foreach (explode("\n", $raw) as $line) {
+        if (preg_match('/^([^:]+):\s*(.*)$/', trim($line), $m)) {
+            $data[strtolower($m[1])] = trim($m[2]);
+        }
+    }
+
+    $inputV = num_or_null($data['input.voltage'] ?? null);
+    $outputV = num_or_null($data['output.voltage'] ?? null);
+    $current = num_or_null($data['output.current'] ?? null);
+    $power = num_or_null($data['ups.realpower'] ?? null);
+    if ($power === null) {
+        $power = num_or_null($data['ups.power'] ?? null);
+    }
+    if ($power === null && $outputV !== null && $current !== null) {
+        $power = $outputV * $current;
+    }
+
+    return [
+        'present' => true,
+        'name' => $name,
+        'model' => $data['device.model'] ?? $data['ups.model'] ?? $name,
+        'status' => strtoupper($data['ups.status'] ?? ''),
+        'charge_pct' => num_or_null($data['battery.charge'] ?? null),
+        'runtime_s' => num_or_null($data['battery.runtime'] ?? null),
+        'load_pct' => num_or_null($data['ups.load'] ?? null),
+        'power_w' => $power,
+        'input_v' => $inputV,
+        'output_v' => $outputV,
+        'temp_c' => num_or_null($data['ups.temperature'] ?? null),
+    ];
+}
+
+function num_or_null(?string $value): ?float
+{
+    if ($value === null || trim($value) === '') {
+        return null;
+    }
+    if (preg_match('/-?[0-9.]+/', $value, $m)) {
+        return (float)$m[0];
+    }
+    return null;
 }
 
 function parse_load(string $top): array
@@ -508,6 +600,9 @@ function render_compact_frame(array $f, int $cols, int $rows, bool $color): stri
     ), $cols);
     $out[] = fit('ARC ' . fmt_bytes($mem['arc_total']) . ' | Free ' . fmt_bytes($mem['free']) . ' | Swap ' . sprintf('%.0f%%', $mem['swap_pct']), $cols);
     $out[] = fit('pf states ' . $pf['states'] . ' | ' . $pf['searches_rate'] . ' searches', $cols);
+    if (($f['ups']['present'] ?? false) === true) {
+        $out[] = ups_line($f['ups'], $cols, $color);
+    }
 
     foreach (array_slice($f['net'], 0, 3) as $n) {
         $out[] = fit(sprintf(
@@ -591,6 +686,9 @@ function glance_lines(array $f, int $width, bool $color): array
         ansi('green', 'passed', $color),
         fmt_compact_int((int)$pf['passed'])
     ), $width);
+    if (($f['ups']['present'] ?? false) === true) {
+        $lines[] = ups_line($f['ups'], $width, $color);
+    }
     $lines[] = fit(ansi(health_color($health), 'HEALTH', $color) . ' ' . implode('  ', $health), $width);
 
     return $lines;
@@ -616,6 +714,116 @@ function rate_pair(?array $row, int $maxLen): string
     return fit('D ' . $rx . ' U ' . $tx, $maxLen);
 }
 
+function ups_line(array $ups, int $width, bool $color): string
+{
+    $tone = ups_color($ups);
+    $parts = [
+        ansi($tone, 'UPS ' . ups_status_word($ups), $color),
+        ansi('white', fmt_watts($ups['power_w'] ?? null), $color),
+        'load ' . fmt_pct($ups['load_pct'] ?? null),
+        'batt ' . fmt_pct($ups['charge_pct'] ?? null),
+        'run ' . fmt_runtime($ups['runtime_s'] ?? null),
+    ];
+    if (($ups['input_v'] ?? null) !== null) {
+        $parts[] = 'in ' . fmt_volts($ups['input_v']);
+    }
+    return fit(implode('  ', $parts), $width);
+}
+
+function ups_detail_line(array $ups, int $width, bool $color): string
+{
+    $load = $ups['load_pct'] ?? null;
+    $barW = max(4, $width - 31);
+    $tone = ups_color($ups);
+    return fit(sprintf(
+        'UPS %s %s %s %s %s',
+        fmt_watts($ups['power_w'] ?? null),
+        bar($load === null ? 0.0 : (float)$load, $barW, $color, $tone),
+        fmt_pct($load),
+        fmt_pct($ups['charge_pct'] ?? null),
+        fmt_runtime($ups['runtime_s'] ?? null)
+    ), $width);
+}
+
+function ups_color(array $ups): string
+{
+    $status = strtoupper((string)($ups['status'] ?? ''));
+    $charge = $ups['charge_pct'] ?? null;
+    $runtime = $ups['runtime_s'] ?? null;
+    if (str_contains($status, 'LB') || str_contains($status, 'RB') || str_contains($status, 'OVER')) {
+        return 'red';
+    }
+    if (str_contains($status, 'OB') || str_contains($status, 'DISCHRG')) {
+        return 'orange';
+    }
+    if (($charge !== null && (float)$charge < 50.0) || ($runtime !== null && (float)$runtime < 900.0)) {
+        return 'yellow';
+    }
+    if (str_contains($status, 'OL')) {
+        return 'green';
+    }
+    return 'yellow';
+}
+
+function ups_status_word(array $ups): string
+{
+    $status = strtoupper((string)($ups['status'] ?? ''));
+    if (str_contains($status, 'LB')) {
+        return 'LOW-BATT';
+    }
+    if (str_contains($status, 'RB')) {
+        return 'REPLACE';
+    }
+    if (str_contains($status, 'OVER')) {
+        return 'OVERLOAD';
+    }
+    if (str_contains($status, 'OB')) {
+        return 'BATTERY';
+    }
+    if (str_contains($status, 'OL')) {
+        return 'ONLINE';
+    }
+    return $status !== '' ? $status : '?';
+}
+
+function fmt_watts(?float $watts): string
+{
+    if ($watts === null) {
+        return '?W';
+    }
+    return sprintf('%.0fW', $watts);
+}
+
+function fmt_pct(?float $pct): string
+{
+    if ($pct === null) {
+        return '?%';
+    }
+    return sprintf('%.0f%%', $pct);
+}
+
+function fmt_volts(?float $volts): string
+{
+    if ($volts === null) {
+        return '?V';
+    }
+    return sprintf('%.1fV', $volts);
+}
+
+function fmt_runtime(?float $seconds): string
+{
+    if ($seconds === null || $seconds < 0) {
+        return '?';
+    }
+    $seconds = (int)round($seconds);
+    $hours = intdiv($seconds, 3600);
+    $minutes = intdiv($seconds % 3600, 60);
+    if ($hours > 0) {
+        return sprintf('%dh%02dm', $hours, $minutes);
+    }
+    return sprintf('%dm', $minutes);
+}
+
 function health_words(array $f): array
 {
     $words = [];
@@ -631,6 +839,16 @@ function health_words(array $f): array
         $words[] = $tempNum >= 75.0 ? 'temp high ' . $temp : 'temp ' . $temp;
     }
     $words[] = $pfStates > 50000 ? 'states high' : 'states ok';
+    if (($f['ups']['present'] ?? false) === true) {
+        $upsTone = ups_color($f['ups']);
+        if ($upsTone === 'red') {
+            $words[] = 'ups critical';
+        } elseif ($upsTone === 'orange') {
+            $words[] = 'ups battery';
+        } else {
+            $words[] = 'ups online';
+        }
+    }
     return $words;
 }
 
@@ -656,7 +874,8 @@ function cpu_detail_lines(array $f, int $width, int $height, bool $color): array
         $temp === '' ? '' : $temp
     ), $width);
 
-    $maxCores = max(0, $height - 2);
+    $hasUps = ($f['ups']['present'] ?? false) === true;
+    $maxCores = max(0, $height - ($hasUps ? 3 : 2));
     foreach (array_slice($cpu['cores'] ?? [], 0, $maxCores) as $core) {
         $lines[] = fit(sprintf(
             'C%-2d %s %4.0f%%',
@@ -664,6 +883,9 @@ function cpu_detail_lines(array $f, int $width, int $height, bool $color): array
             bar($core['used'], max(4, $width - 14), $color, level_color($core['used'])),
             $core['used']
         ), $width);
+    }
+    if ($hasUps) {
+        $lines[] = ups_detail_line($f['ups'], $width, $color);
     }
     $lines[] = fit('Load AVG: ' . $f['load']['1'] . '  ' . $f['load']['5'] . '  ' . $f['load']['15'], $width);
     return fit_block($lines, $width, $height);
@@ -745,6 +967,9 @@ function mini_stats_panel(array $f, int $width, int $height, bool $color): array
         'pf states ' . $p['states'],
         'pf searches ' . $p['searches_rate'],
     ];
+    if (($f['ups']['present'] ?? false) === true) {
+        $body[] = ups_line($f['ups'], max(1, $width - 2), $color);
+    }
     foreach (array_slice($f['net'], 0, max(1, $height - count($body) - 3)) as $n) {
         $body[] = fit(sprintf('%-7s D %8s', $n['name'], $n['rx'] === null ? 'sampling' : fmt_bytes($n['rx']) . '/s'), max(1, $width - 2));
         $body[] = fit(sprintf('%-7s U %8s', '', $n['tx'] === null ? 'sampling' : fmt_bytes($n['tx']) . '/s'), max(1, $width - 2));

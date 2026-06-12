@@ -16,6 +16,7 @@ Suggested topics:
 
 - Starts a full-screen tmux dashboard called `socx`.
 - Shows pfSense CPU, memory, ARC, firewall state, interface traffic, pf search rate, and top processes.
+- Shows NUT/APC Smart-UPS state, watts, load, battery, runtime remaining, and input voltage in the main cockpit.
 - Adds `iftopx`, a readable color flow radar for live LAN/WAN traffic.
 - Adds `tcpdumpx`, a readable color packet story view that explains traffic direction, service, size, and flow.
 - Adds a SOC ticker for firewall blocks, DNS blocks, IDS-style alerts, and other useful events.
