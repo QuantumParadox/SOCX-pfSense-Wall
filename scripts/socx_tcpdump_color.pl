@@ -1,8 +1,10 @@
 #!/usr/local/bin/perl
 use strict;
 use warnings;
+use utf8;
 
 $| = 1;
+binmode STDOUT, ':encoding(UTF-8)';
 
 my $no_color = $ENV{'NO_COLOR'} || $ENV{'SOCX_NO_COLOR'};
 my $width = ($ENV{'SOCX_WIDTH'} && $ENV{'SOCX_WIDTH'} =~ /^\d+$/) ? int($ENV{'SOCX_WIDTH'}) : 0;
@@ -26,6 +28,12 @@ my %C = (
     cyan   => "\e[38;5;51;1m",
     white  => "\e[38;5;255;1m",
 );
+
+sub rule_plain {
+    my ($wide) = @_;
+    $wide = 1 if !$wide || $wide < 1;
+    return '─' x $wide;
+}
 
 sub paint {
     my ($tone, $text) = @_;
@@ -180,13 +188,13 @@ sub header_lines {
         return (
             fit_words("TCPDUMPX $name packet story", $width || 40),
             fit_words("dir service size pings/bcast hidden", $width || 40),
-            '-' x (($width && $width < 60) ? $width : 40),
+            rule_plain(($width && $width < 60) ? $width : 40),
         );
     }
     return (
         fit_words("TCPDUMPX $name packet story - routine pings/broadcast hidden", $width || 90),
         fit_words("time     proto dir  flow                                   detail", $width || 90),
-        '-' x (($width && $width < 120) ? $width : 90),
+        rule_plain(($width && $width < 120) ? $width : 90),
     );
 }
 
@@ -240,7 +248,7 @@ sub format_packet {
 sub colorize {
     my ($line) = @_;
     $line =~ s/^(TCPDUMPX.*)/paint('cyan', $1)/e;
-    $line =~ s/^(time\s+.*|-{3,})/paint('dim', $1)/e;
+    $line =~ s/^(time\s+.*|[─═╩]{3,}|-{3,})/paint('cyan', $1)/e;
     $line =~ s/^(tcpdump:.*|listening on .*)/paint('dim', $1)/e;
     $line =~ s/^(\d{2}:\d{2}(?::\d{2})?)/paint('dim', $1)/e;
     $line =~ s/\b(ARP|ICMP6|ICMP|IP6|IP|UDP|TCP)\b/paint('green', $1)/ge;

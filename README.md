@@ -19,7 +19,7 @@ Suggested topics:
 - Adds `iftopx`, a readable color flow radar for live LAN/WAN traffic.
 - Adds `tcpdumpx`, a readable color packet story view that explains traffic direction, service, size, and flow.
 - Adds a SOC ticker for firewall blocks, DNS blocks, IDS-style alerts, and other useful events.
-- Adds a bottom rail so the IFTop/TCPDump panes look boxed-in above the SOCX wall status bar.
+- Adds a solid bottom rail so the IFTop/TCPDump panes look boxed-in above the SOCX wall status bar.
 - Leaves the original `htop`, `tcpdump`, and `iftop` tools untouched.
 - Includes a pfSense boot script so SOCX can start automatically after reboot.
 
