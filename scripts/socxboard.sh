@@ -20,13 +20,12 @@ tmux kill-session -t socx 2>/dev/null
 tmux new-session -d -s socx -n NETX "$TOPR"
 tmux set-option -t socx -g mouse off
 tmux set-option -t socx -g status on
-tmux set-option -t socx -g status 2
 tmux set-option -t socx -g status-interval 1
 tmux set-option -t socx -g status-position bottom
 tmux set-option -t socx -g status-justify centre
 tmux set-option -t socx -g status-style 'fg=colour51,bg=black,bold'
-tmux set-option -t socx -g status-format[0] '#[fg=colour51,bg=black,bold]#(/usr/local/sbin/socx-bottom-rail socx:NETX)'
-tmux set-option -t socx -g status-format[1] '#[align=left]#[fg=colour16,bg=colour51,bold] SOCX WALL #[fg=colour231,bg=colour54,bold] JupiterLXI #[fg=colour119,bg=black,bold] LIVE #[fg=colour245,bg=black]| #[fg=colour226,bg=black]#(SOCX_TICKER_STEP=18 /usr/local/sbin/socx-alert-ticker 88) #[align=right]#[fg=colour51,bg=black]tcpdumpx #[fg=colour245,bg=black]| #[fg=colour226,bg=black,bold]%Y-%m-%d #[fg=colour51,bg=black,bold]%H:%M:%S '
+tmux set-option -t socx -g status-format[0] '#[align=left]#[fg=colour16,bg=colour51,bold] SOCX WALL #[fg=colour231,bg=colour54,bold] JupiterLXI #[fg=colour119,bg=black,bold] LIVE #[fg=colour245,bg=black]| #[fg=colour226,bg=black]#(SOCX_TICKER_STEP=18 /usr/local/sbin/socx-alert-ticker 88) #[align=right]#[fg=colour51,bg=black]tcpdumpx #[fg=colour245,bg=black]| #[fg=colour226,bg=black,bold]%Y-%m-%d #[fg=colour51,bg=black,bold]%H:%M:%S '
+tmux set-option -t socx -gu status-format[1] 2>/dev/null || true
 tmux set-option -t socx -g pane-border-lines double
 tmux set-option -t socx -g pane-border-style 'fg=colour51'
 tmux set-option -t socx -g pane-active-border-style 'fg=colour51,bold'
@@ -46,8 +45,8 @@ tmux split-window -h -t socx:NETX.1 "tcpdumpx -i $IFWAN -nn -q"
 tmux select-pane -t socx:NETX.0 -T 'PF TOP'
 tmux select-pane -t socx:NETX.1 -T 'IFTOPX FLOW RADAR'
 tmux select-pane -t socx:NETX.2 -T 'TCPDUMPX PACKET STORY'
-tmux set-window-option -t socx:NETX pane-border-status off
-tmux set-window-option -t socx:NETX pane-border-format '#[fg=colour51,bold]-- #[fg=colour119,bold]#{pane_title} #[fg=colour51,bold]--'
+tmux set-window-option -t socx:NETX pane-border-status bottom
+tmux set-window-option -t socx:NETX pane-border-format '#[fg=colour51,bold]#(/usr/local/sbin/socx-pane-floor #{pane_width} #{pane_index})'
 tmux select-pane -t socx:NETX.0
 
 # W2 THREATX: retain the existing alert views, but with brighter grep color.

@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.2
+
+- Moved the lower IFTop/TCPDump floor from a separate tmux status rail into the tmux pane-border layer.
+- Added `socx-pane-floor` so the lower horizontal line is drawn on the same row/layer as the vertical pane divider.
+- Reduced SOCX back to one status row for the ticker while keeping the lower panes boxed in.
+
 ## v0.1.1
 
 - Replaced ASCII dash/equal divider lines with solid box-drawing rules.

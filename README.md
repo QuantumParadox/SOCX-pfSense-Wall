@@ -19,7 +19,7 @@ Suggested topics:
 - Adds `iftopx`, a readable color flow radar for live LAN/WAN traffic.
 - Adds `tcpdumpx`, a readable color packet story view that explains traffic direction, service, size, and flow.
 - Adds a SOC ticker for firewall blocks, DNS blocks, IDS-style alerts, and other useful events.
-- Adds a solid bottom rail so the IFTop/TCPDump panes look boxed-in above the SOCX wall status bar.
+- Adds a solid pane-border floor so the IFTop/TCPDump divider meets the bottom frame cleanly.
 - Leaves the original `htop`, `tcpdump`, and `iftop` tools untouched.
 - Includes a pfSense boot script so SOCX can start automatically after reboot.
 
@@ -28,6 +28,7 @@ Suggested topics:
 - `scripts/pfsense-btop.php` - btop-style read-only pfSense monitor.
 - `scripts/socxboard.sh` - tmux layout and SOCX session launcher.
 - `scripts/socx-bottom-rail` - dynamically draws the lower pane connector line.
+- `scripts/socx-pane-floor` - draws the lower pane floor inside tmux's pane-border layer.
 - `scripts/socx-alert-ticker` - bottom status ticker for readable firewall/security events.
 - `scripts/socx-iftop-color` and `scripts/socx_iftop_color.pl` - color flow radar wrapper and renderer.
 - `scripts/socx-tcpdump-color` and `scripts/socx_tcpdump_color.pl` - color packet story wrapper and renderer.
