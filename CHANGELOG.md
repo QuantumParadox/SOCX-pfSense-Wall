@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.4
+
+- Reworked the lower SOCX wall into two matched panels with one-line data rows.
+- Restored the bottom frame as a dedicated rail above the ticker and changed it to `╚════╩════╝`.
+- Removed the unused pane-border floor helper after standardizing on the unified lower frame rail.
+
 ## v0.1.3
 
 - Removed the two internal IFTop separator rules so the lower pane reads cleaner with the tmux pane-border floor.

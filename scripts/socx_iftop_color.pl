@@ -221,6 +221,7 @@ sub render_compact {
     }
 
     my $narrow = $w < 70;
+    my $wall = $w <= 100;
     my $epw = int(($w - ($narrow ? 18 : 44)) / 2);
     if ($narrow) {
         $epw = 7 if $epw < 7;
@@ -229,11 +230,10 @@ sub render_compact {
         $epw = 12 if $epw < 12;
         $epw = 30 if $epw > 30;
     }
-    my $max_flows = $narrow ? int(($h - 5) / 2) : $h - 7;
-    $max_flows = 2 if $narrow && $max_flows < 2;
-    $max_flows = 3 if !$narrow && $max_flows < 3;
-    $max_flows = 5 if $narrow && $max_flows > 5;
-    $max_flows = 18 if !$narrow && $max_flows > 18;
+    my $max_flows = $wall ? ($h - 4) : $h - 7;
+    $max_flows = 3 if $max_flows < 3;
+    $max_flows = 12 if $wall && $max_flows > 12;
+    $max_flows = 18 if !$wall && $max_flows > 18;
 
     my @send = split /\s+/, ($totals{send} // '?');
     my @recv = split /\s+/, ($totals{recv} // '?');
@@ -244,14 +244,13 @@ sub render_compact {
     my $clock = sprintf('%02d:%02d:%02d', $now[2], $now[1], $now[0]);
     my $refresh = $ENV{'SOCX_IFTOP_SECONDS'} || '2';
     my $pulse = pulse_char();
-    if ($narrow) {
-        emit(sprintf('IFTOPX %s radar %s pulse %s', $iface, $clock, $pulse));
-        emit(sprintf('refresh %ss  TX/RX activity bars', $refresh));
+    if ($wall) {
+        my $flow_w = $w - 32;
+        $flow_w = 32 if $flow_w < 32;
+        emit(sprintf('IFTOPX %-3s FLOW RADAR  %s  refresh %ss  pulse %s', $iface, $clock, $refresh, $pulse));
+        emit(sprintf('%-3s %-*s %7s %7s %s', '#', $flow_w, 'flow', 'TX', 'RX', 'activity'));
     } else {
         emit(sprintf('IFTOPX %s  %s  top talkers  %s  refresh %ss pulse %s', $iface, endpoint_label($ip, 0), $clock, $refresh, $pulse));
-    }
-    if ($narrow) {
-    } else {
         emit(sprintf('%-3s %-*s %1s %-*s %8s %8s %8s %8s', '#', $epw, 'source', '>', $epw, 'destination', 'TX 2s', 'RX 2s', '40s', 'activity'));
     }
     my @display_flows = @flows;
@@ -277,19 +276,16 @@ sub render_compact {
     for my $f (@display_flows) {
         last if $count >= $max_flows;
         $count++;
-        my $a = $narrow ? endpoint_label($f->{a} // '?', 1) : endpoint_fit(endpoint_label($f->{a} // '?', 0), $epw);
-        my $b = $narrow ? endpoint_label($f->{b} // '?', 1) : endpoint_fit(endpoint_label($f->{b} // '?', 0), $epw);
-        if ($narrow) {
-            my $flow = sprintf('%02d %s -> %s', $count, $a, $b);
-            emit($flow);
-            my $barw = int(($w - 30) / 2);
-            $barw = 4 if $barw < 4;
-            $barw = 7 if $barw > 7;
-            my $txbar = bar_plain(percent_of(rate_value($f->{a2s}), $max_rate), $barw);
-            my $rxbar = bar_plain(percent_of(rate_value($f->{b2s}), $max_rate), $barw);
-            emit(sprintf('   TX %s %-6s RX %s %-6s',
-                $txbar, rate_narrow($f->{a2s}),
-                $rxbar, rate_narrow($f->{b2s})));
+        my $a = $wall ? endpoint_label($f->{a} // '?', 1) : endpoint_fit(endpoint_label($f->{a} // '?', 0), $epw);
+        my $b = $wall ? endpoint_label($f->{b} // '?', 1) : endpoint_fit(endpoint_label($f->{b} // '?', 0), $epw);
+        if ($wall) {
+            my $flow_w = $w - 32;
+            $flow_w = 32 if $flow_w < 32;
+            my $flow = endpoint_fit("$a -> $b", $flow_w);
+            my $activity = bar_plain(percent_of(rate_value($f->{a2s}) + rate_value($f->{b2s}), $max_total_rate), 7);
+            emit(sprintf('%02d  %-*s %7s %7s %s',
+                $count, $flow_w, $flow,
+                rate_narrow($f->{a2s}), rate_narrow($f->{b2s}), $activity));
         } else {
             my $activity = bar_plain(percent_of(rate_value($f->{a2s}) + rate_value($f->{b2s}), $max_total_rate), 6);
             emit(sprintf('%02d  %-*s %1s %-*s %8s %8s %8s %8s',
@@ -298,7 +294,7 @@ sub render_compact {
         }
     }
 
-    if ($narrow) {
+    if ($wall) {
         my $summary = 'TOTAL tx ' . rate_narrow($send[0]) . ' rx ' . rate_narrow($recv[0]) . ' both ' . rate_narrow($both[0]);
         $summary .= ' hid ' . $hidden_routine if $hidden_routine > 0;
         emit($summary);

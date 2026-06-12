@@ -2,12 +2,14 @@
 use strict;
 use warnings;
 use utf8;
+use Time::HiRes qw(time);
 
 $| = 1;
 binmode STDOUT, ':encoding(UTF-8)';
 
 my $no_color = $ENV{'NO_COLOR'} || $ENV{'SOCX_NO_COLOR'};
 my $width = ($ENV{'SOCX_WIDTH'} && $ENV{'SOCX_WIDTH'} =~ /^\d+$/) ? int($ENV{'SOCX_WIDTH'}) : 0;
+my $height = ($ENV{'SOCX_HEIGHT'} && $ENV{'SOCX_HEIGHT'} =~ /^\d+$/) ? int($ENV{'SOCX_HEIGHT'}) : 0;
 my $iface = $ENV{'SOCX_TCPDUMP_IFACE'} || '';
 my $wan_ip = $ENV{'SOCX_WAN_ADDR'} || '';
 my $show_health_pings = $ENV{'SOCX_SHOW_HEALTH_PINGS'} || '';
@@ -15,6 +17,7 @@ my $show_broadcast = $ENV{'SOCX_SHOW_BROADCAST'} || '';
 my $structured = $ENV{'SOCX_COMPACT'} || ($width > 0 && $width < 120);
 my $narrow = $width && $width < 58;
 my $mid = $width && $width < 95;
+my $wall = $width && $width <= 100;
 my $packet_count = 0;
 
 my %C = (
@@ -88,7 +91,7 @@ sub ip_label {
     return 'ISP-GW' if $ip eq '74.46.12.1';
     return "LAN.$1" if $ip =~ /^192\.168\.1\.(\d+)$/;
     return "ISP.$1.$2" if $ip =~ /^74\.46\.(\d+)\.(\d+)$/;
-    return "EXT.$1.$2" if $narrow && $ip =~ /^\d+\.\d+\.(\d+)\.(\d+)$/;
+    return "EXT.$1.$2" if ($narrow || $wall) && $ip =~ /^\d+\.\d+\.(\d+)\.(\d+)$/;
     return $ip;
 }
 
@@ -184,11 +187,13 @@ sub compact_action {
 
 sub header_lines {
     my $name = $iface ? $iface : 'wan';
-    if ($narrow) {
+    if ($wall) {
+        my $flow_w = ($width || 90) - 38;
+        $flow_w = 34 if $flow_w < 34;
         return (
-            fit_words("TCPDUMPX $name packet story", $width || 40),
-            fit_words("dir service size pings/bcast hidden", $width || 40),
-            rule_plain(($width && $width < 60) ? $width : 40),
+            fit_words("TCPDUMPX $name PACKET STORY  routine pings/bcast hidden", $width || 90),
+            fit_words(sprintf('TCPDUMPX %-3s | %-5s %-4s %-3s %-*s %s',
+                $name, 'time', 'type', 'dir', $flow_w - 15, 'flow', 'service size activity'), $width || 90),
         );
     }
     return (
@@ -207,6 +212,14 @@ sub format_packet {
         $rest =~ s/, length \d+//;
         if ($rest =~ /Request who-has (\S+) tell (\S+)/) {
             $rest = 'who has ' . (endpoint_label($1))[0] . ' tell ' . (endpoint_label($2))[0];
+        }
+        if ($wall) {
+            $ts = substr($ts, 3, 5);
+            my $flow_w = ($width || 90) - 38;
+            $flow_w = 34 if $flow_w < 34;
+            my $flow = fit_words($rest, $flow_w);
+            return (fit_words(sprintf('%-5s %-4s %-3s %-*s %s',
+                $ts, 'ARP', 'LCL', $flow_w, $flow, 'link lookup'), $width || 90));
         }
         return $narrow
             ? (fit_words("$ts ARP", $width || 40), fit_words("     $rest", $width || 40))
@@ -233,11 +246,13 @@ sub format_packet {
     return () if !$show_broadcast && $dir eq 'BCAST';
     my $detail = compact_action($proto, $svc, $flag, $len, $src_svc, $dst_svc);
 
-    if ($narrow) {
+    if ($wall) {
         $ts = substr($ts, 3, 5);
-        my $flow = fit_words("$ts $proto $dir $src_label -> $dst_label", $width || 40);
-        my $detail_line = fit_words("     $detail", $width || 40);
-        return ($flow, $detail_line);
+        my $flow_w = ($width || 90) - 38;
+        $flow_w = 34 if $flow_w < 34;
+        my $flow = fit_words("$src_label -> $dst_label", $flow_w);
+        return (fit_words(sprintf('%-5s %-4s %-3s %-*s %s',
+            $ts, $proto, $dir, $flow_w, $flow, $detail), $width || 90));
     }
 
     my $left = sprintf('%s %-4s %-3s  %s -> %s', $ts, $proto, $dir, $src_label, $dst_label);
@@ -255,7 +270,7 @@ sub colorize {
     $line =~ s/\b(IN|OUT|LCL|FLOW|BCAST)\b/paint('yellow', $1)/ge;
     $line =~ s/(\[[#.]+\])/paint('green', $1)/ge;
     $line =~ s/\b(WAN|ISP-GW|ISP\.\d+\.\d+|LAN\.\d+)\b/paint('green', $1)/ge;
-    $line =~ s/\b(Cloudflare|GoogleDNS|Quad9|mDNS|SSDP|BCAST)\b/paint('cyan', $1)/ge;
+    $line =~ s/\b(EXT\.\d+\.\d+|Cloudflare|GoogleDNS|Quad9|mDNS|SSDP|BCAST)\b/paint('cyan', $1)/ge;
     $line =~ s/\b(dns|mdns|ssdp|health ping)\b/paint('cyan', $1)/ge;
     $line =~ s/\b(https|web|ssh|vpn|ntp)\b/paint('blue', $1)/ge;
     $line =~ s/\b(new connection|connect reply|data|closing|ack)\b/paint('yellow', $1)/ge;
@@ -272,7 +287,31 @@ sub print_line {
     print $no_color ? "\n" : "$C{reset}\n";
 }
 
-if ($structured) {
+sub max_wall_rows {
+    my $max_rows = $height ? ($height - 2) : 18;
+    $max_rows = 4 if $max_rows < 4;
+    return $max_rows;
+}
+
+sub redraw_wall {
+    my (@rows) = @_;
+    my $max_rows = max_wall_rows();
+    while (@rows > $max_rows) {
+        shift @rows;
+    }
+
+    print "\033[H\033[2J\033[H";
+    print_line($_) for header_lines();
+    print_line($_) for @rows;
+}
+
+my @wall_rows;
+my $last_wall_draw = 0;
+
+if ($wall) {
+    redraw_wall();
+    $last_wall_draw = time();
+} elsif ($structured) {
     print_line($_) for header_lines();
 }
 
@@ -280,9 +319,23 @@ while (my $line = <STDIN>) {
     chomp $line;
     my @out = $structured ? format_packet($line) : ($line);
     next if !@out;
+    if ($wall) {
+        push @wall_rows, @out;
+        while (@wall_rows > max_wall_rows()) {
+            shift @wall_rows;
+        }
+        if (time() - $last_wall_draw >= 0.20) {
+            redraw_wall(@wall_rows);
+            $last_wall_draw = time();
+        }
+        $packet_count++;
+        next;
+    }
     if ($structured && $packet_count && (($narrow && $packet_count % 5 == 0) || (!$narrow && $packet_count % 10 == 0))) {
         print_line($_) for header_lines();
     }
     print_line($_) for @out;
     $packet_count++;
 }
+
+redraw_wall(@wall_rows) if $wall && @wall_rows;
