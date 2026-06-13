@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.15
+
+- Rebuilt `NETX` as a SOC-specific btop wall: compute/process, live network traffic, firewall/power, and bottom IFTop/TCPDump panes.
+- Added RAM history tracking so the compute panel shows both CPU and RAM traces at the 0.5s cockpit refresh.
+- Replaced the static bottom `SOCX WALL` / `JupiterLXI` labels with a live `NUT APC UPS` widget plus the firewall ticker.
+
 ## v0.1.14
 
 - Converted the primary `NETX` wall into a full-screen btop-style SOC cockpit.

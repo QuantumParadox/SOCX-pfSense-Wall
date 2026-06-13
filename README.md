@@ -15,13 +15,14 @@ Suggested topics:
 ## What It Does
 
 - Starts a full-screen tmux dashboard called `socx`.
-- Shows a full-screen btop-style pfSense SOC cockpit on the primary `NETX` window.
-- Shows pfSense CPU, memory, ARC, firewall state, interface traffic, pf search rate, disks, and top processes.
+- Shows a SOC-specific btop-style cockpit on the primary `NETX` window.
+- Groups CPU, RAM traces, CPU cores, and top running processes into one compute section.
+- Shows live network traffic and pf firewall/power telemetry in separate sections.
 - Shows NUT/APC Smart-UPS state, watts, load, battery, runtime remaining, and input voltage in the main cockpit.
-- Shows a compact `NUT UPS` watts/battery/runtime widget in the bottom SOCX bar.
+- Shows a compact `NUT APC UPS` watts/battery/runtime widget in the bottom SOCX bar.
 - Adds `iftopx`, a readable color flow radar for live LAN/WAN traffic.
 - Adds `tcpdumpx`, a readable color packet story view that explains traffic direction, service, size, and flow.
-- Keeps IFTop/TCPDump together in the separate `TRAFFICX` window so the primary wall stays btop-like.
+- Keeps IFTop/TCPDump visible in the bottom of the primary `NETX` wall.
 - Adds a SOC ticker for firewall blocks, DNS blocks, IDS-style alerts, and other useful events.
 - Adds a solid `╚════╩════╝` lower frame above the SOC ticker so the IFTop/TCPDump divider lands cleanly.
 - Leaves the original `htop`, `tcpdump`, and `iftop` tools untouched.

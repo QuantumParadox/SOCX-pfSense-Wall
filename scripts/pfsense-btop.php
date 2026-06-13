@@ -8,7 +8,7 @@ declare(strict_types=1);
  */
 
 const APP_NAME = 'pfsense-btop';
-const APP_VERSION = '0.6.0';
+const APP_VERSION = '0.7.0';
 
 $opts = parse_args($argv);
 if ($opts['help']) {
@@ -23,6 +23,7 @@ $once = (bool)$opts['once'];
 $state = [
     'net' => [],
     'cpu_history' => [],
+    'ram_history' => [],
     'time' => microtime(true),
     'static' => static_info(),
 ];
@@ -155,6 +156,10 @@ function collect_frame(array &$state, int $topCount): array
     }
 
     $mem = parse_mem($top, $state['static']['physmem']);
+    $state['ram_history'][] = $mem['used_pct'];
+    if (count($state['ram_history']) > 240) {
+        $state['ram_history'] = array_slice($state['ram_history'], -240);
+    }
     $load = parse_load($top);
     $pf = parse_pf(run_cmd('/sbin/pfctl -si'));
     $net = parse_net(run_cmd('/usr/bin/netstat -ibn'), $state, $now);
@@ -172,6 +177,7 @@ function collect_frame(array &$state, int $topCount): array
         'load' => $load,
         'cpu' => $cpu,
         'cpu_history' => $state['cpu_history'],
+        'ram_history' => $state['ram_history'],
         'freq_mhz' => is_numeric($freq) ? (int)$freq : 0,
         'mem' => $mem,
         'pf' => $pf,
@@ -527,6 +533,9 @@ function render_frame(array $f, int $cols, int $rows, bool $color): string
     $cols = max(20, $cols);
     $rows = max(8, $rows);
 
+    if ($cols >= 120 && $rows >= 20 && $rows <= 32) {
+        return render_soc_center_frame($f, $cols, $rows, $color);
+    }
     if ($cols >= 100 && $rows >= 22) {
         return render_full_frame($f, $cols, $rows, $color);
     }
@@ -534,6 +543,25 @@ function render_frame(array $f, int $cols, int $rows, bool $color): string
         return render_medium_frame($f, $cols, $rows, $color);
     }
     return render_compact_frame($f, $cols, $rows, $color);
+}
+
+function render_soc_center_frame(array $f, int $cols, int $rows, bool $color): string
+{
+    $topH = min(15, max(11, (int)ceil($rows * 0.52)));
+    $bottomH = max(7, $rows - $topH);
+    if ($topH + $bottomH > $rows) {
+        $topH = max(10, $rows - $bottomH);
+    }
+    $netW = (int)floor($cols * 0.52);
+    $fireW = $cols - $netW;
+
+    $top = compute_process_panel($f, $cols, $topH, $color);
+    $bottom = hjoin_blocks([
+        soc_network_panel($f, $netW, $bottomH, $color),
+        firewall_panel($f, $fireW, $bottomH, $color),
+    ]);
+
+    return lines_to_screen(array_merge($top, $bottom), $rows, $cols);
 }
 
 function render_full_frame(array $f, int $cols, int $rows, bool $color): string
@@ -885,6 +913,101 @@ function cpu_detail_lines(array $f, int $width, int $height, bool $color): array
     }
     $lines[] = fit('Load AVG: ' . $f['load']['1'] . '  ' . $f['load']['5'] . '  ' . $f['load']['15'], $width);
     return fit_block($lines, $width, $height);
+}
+
+function compute_process_panel(array $f, int $width, int $height, bool $color): array
+{
+    $inner = max(1, $width - 2);
+    $bodyH = max(1, $height - 2);
+    $coreW = min(50, max(36, (int)floor($inner * 0.28)));
+    $procW = min(62, max(42, (int)floor($inner * 0.32)));
+    $leftW = $inner - $coreW - $procW - 2;
+    if ($leftW < 34) {
+        $procW = max(36, $procW - (34 - $leftW));
+        $leftW = $inner - $coreW - $procW - 2;
+    }
+
+    $cpu = $f['cpu'];
+    $mem = $f['mem'];
+    $temp = max_temp($f['temps']);
+    $cpuGraphH = max(2, (int)floor(($bodyH - 5) / 2));
+    $ramGraphH = max(2, $bodyH - $cpuGraphH - 5);
+
+    $left = [
+        fit(sprintf('CPU %4.0f%% %s %s', $cpu['used'], fmt_freq($f['freq_mhz']), $temp), $leftW),
+        fit('RAM ' . fmt_bytes($mem['used']) . '/' . fmt_bytes($mem['total']) . '  ARC ' . fmt_bytes($mem['arc_total']), $leftW),
+        fit('CPU trace', $leftW),
+    ];
+    $left = array_merge($left, cpu_graph($f['cpu_history'], $leftW, $cpuGraphH, $color, level_color($cpu['used'])));
+    $left[] = fit('RAM trace', $leftW);
+    $left = array_merge($left, cpu_graph($f['ram_history'] ?? [], $leftW, $ramGraphH, $color, level_color($mem['used_pct'])));
+    $left[] = fit('up ' . $f['load']['uptime'] . '  load ' . $f['load']['1'] . ' ' . $f['load']['5'] . ' ' . $f['load']['15'], $leftW);
+
+    $proc = [fit(sprintf('%6s %-12s %5s %7s %s', 'Pid', 'Process', 'Cpu%', 'Mem', 'User'), $procW)];
+    foreach (array_slice($f['procs'], 0, max(1, $bodyH - 1)) as $p) {
+        $proc[] = fit(sprintf(
+            '%6s %-12s %5.1f %7s %s',
+            $p['pid'],
+            trunc(proc_name($p['cmd']), 12),
+            $p['cpu'],
+            fmt_bytes($p['rss']),
+            trunc($p['user'], max(4, $procW - 35))
+        ), $procW);
+    }
+
+    $core = cpu_detail_lines($f, $coreW, $bodyH, $color);
+    $body = [];
+    for ($i = 0; $i < $bodyH; $i++) {
+        $body[] = pad_visible($left[$i] ?? '', $leftW) . ' ' .
+            pad_visible($proc[$i] ?? '', $procW) . ' ' .
+            pad_visible($core[$i] ?? '', $coreW);
+    }
+
+    $title = '1 compute  cpu + ram traces  top processes  cores  ' . date('H:i:s') . '  ' . (int)(($GLOBALS['interval'] ?? 1.5) * 1000) . 'ms';
+    return panel($title, $body, $width, $height, $color, 'cyan');
+}
+
+function soc_network_panel(array $f, int $width, int $height, bool $color): array
+{
+    $maxRate = 1;
+    foreach ($f['net'] as $n) {
+        $maxRate = max($maxRate, (int)($n['rx'] ?? 0), (int)($n['tx'] ?? 0));
+    }
+    $barW = max(6, $width - 35);
+    $body = [];
+    foreach (array_slice($f['net'], 0, max(1, (int)floor(($height - 2) / 2))) as $n) {
+        $rx = $n['rx'] === null ? 'sampling' : fmt_bytes($n['rx']) . '/s';
+        $tx = $n['tx'] === null ? 'sampling' : fmt_bytes($n['tx']) . '/s';
+        $rxPct = percent((int)($n['rx'] ?? 0), $maxRate);
+        $txPct = percent((int)($n['tx'] ?? 0), $maxRate);
+        $body[] = fit(sprintf('%-8s down %-9s %s', $n['name'], $rx, bar($rxPct, $barW, $color, 'cyan')), max(1, $width - 2));
+        $body[] = fit(sprintf('%-8s up   %-9s %s', '', $tx, bar($txPct, $barW, $color, 'magenta')), max(1, $width - 2));
+    }
+    return panel('2 live network traffic  wan lan vpn', $body, $width, $height, $color, 'magenta');
+}
+
+function firewall_panel(array $f, int $width, int $height, bool $color): array
+{
+    $pf = $f['pf'];
+    $states = is_numeric($pf['states']) ? (int)$pf['states'] : 0;
+    $blocked = (int)$pf['blocked'];
+    $passed = (int)$pf['passed'];
+    $total = max(1, $blocked + $passed);
+    $statePct = min(100.0, ($states / 50000.0) * 100.0);
+    $body = [
+        fit('pf status ' . $pf['status'] . '  states ' . $pf['states'], max(1, $width - 2)),
+        stat_bar('state', $statePct, (string)$states, max(4, $width - 22), $color),
+        fit('searches ' . $pf['searches_rate'] . '  inserts ' . $pf['inserts_rate'] . '  removals ' . $pf['removals_rate'], max(1, $width - 2)),
+        stat_bar('block', min(100.0, ($blocked / 200000.0) * 100.0), fmt_compact_int($blocked), max(4, $width - 22), $color),
+        stat_bar('pass', min(100.0, ($passed / max(1, $passed)) * 100.0), fmt_compact_int($passed), max(4, $width - 22), $color),
+        fit('decision mix block ' . sprintf('%.3f%%', ($blocked / $total) * 100.0) . '  pass ' . sprintf('%.3f%%', ($passed / $total) * 100.0), max(1, $width - 2)),
+    ];
+    if (($f['ups']['present'] ?? false) === true) {
+        $body[] = ups_line($f['ups'], max(1, $width - 2), $color);
+    }
+    $body[] = fit('bottom feed: live firewall blocks, DNSBL, IDS events', max(1, $width - 2));
+    $body[] = fit(ansi(health_color(health_words($f)), 'health', $color) . ' ' . implode('  ', health_words($f)), max(1, $width - 2));
+    return panel('3 firewall + power  pf decisions', $body, $width, $height, $color, 'orange');
 }
 
 function memory_panel(array $f, int $width, int $height, bool $color): array

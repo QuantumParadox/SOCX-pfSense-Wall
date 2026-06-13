@@ -47,8 +47,8 @@ for ups in $("$UPSC" -l 2>/dev/null); do
     [ -n "$load" ] || load='?'
     [ -n "$charge" ] || charge='?'
     runtime_fmt=$(fmt_runtime "$runtime")
-    printf 'NUT UPS %s %sW load %s%% batt %s%% run %s' "$(status_word "$status")" "$watts" "$load" "$charge" "$runtime_fmt"
+    printf 'NUT APC UPS %s %sW load %s%% batt %s%% run %s' "$(status_word "$status")" "$watts" "$load" "$charge" "$runtime_fmt"
     exit 0
 done
 
-printf 'NUT UPS unavailable'
+printf 'NUT APC UPS unavailable'

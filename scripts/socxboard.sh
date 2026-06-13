@@ -1,7 +1,7 @@
 #!/bin/sh
 # SOCX: colorized SOC console dashboard.
 IFLAN=ix0; IFWAN=ix1
-TOPR="pfbtop --interval 0.5 --top 32"
+TOPR="pfbtop --interval 0.5 --top 18"
 ZK=/var/spool/zeek/zeek
 SURI=$(ls -d /var/log/suricata/suricata_* 2>/dev/null | head -1)
 ALERTS="$SURI/alerts.log"
@@ -17,7 +17,7 @@ chmod go-w /dev/ttyv0 /dev/pts/* 2>/dev/null || true
 tmux kill-session -t socx 2>/dev/null
 tmux kill-session -t soc 2>/dev/null
 
-# W1 NETX: full-screen btop-style pfSense SOC cockpit.
+# W1 NETX: SOC-specific btop cockpit with IFTop/TCPDump along the bottom.
 tmux new-session -d -s socx -n NETX "$TOPR"
 tmux set-option -t socx -g mouse off
 tmux set-option -t socx -g status on
@@ -27,7 +27,7 @@ tmux set-option -t socx -g status-position bottom
 tmux set-option -t socx -g status-justify centre
 tmux set-option -t socx -g status-style 'fg=colour51,bg=black,bold'
 tmux set-option -t socx -g status-format[0] '#[fg=colour51,bg=black,bold]#(/usr/local/sbin/socx-bottom-rail socx:NETX)'
-tmux set-option -t socx -g status-format[1] '#[align=left]#[fg=colour16,bg=colour51,bold] SOCX WALL #[fg=colour231,bg=colour54,bold] JupiterLXI #[fg=colour119,bg=black,bold] LIVE #[fg=colour245,bg=black]| #[fg=colour45,bg=black,bold]#(/usr/local/sbin/socx-ups-status) #[fg=colour245,bg=black]| #[fg=colour226,bg=black]#(SOCX_TICKER_STEP=18 /usr/local/sbin/socx-alert-ticker 54) #[align=right]#[fg=colour51,bg=black]tcpdumpx #[fg=colour245,bg=black]| #[fg=colour226,bg=black,bold]%Y-%m-%d #[fg=colour51,bg=black,bold]%H:%M:%S '
+tmux set-option -t socx -g status-format[1] '#[align=left]#[fg=colour45,bg=black,bold]#{@socx_ups} #[fg=colour245,bg=black]| #[fg=colour119,bg=black,bold]LIVE FW #[fg=colour245,bg=black]| #[fg=colour226,bg=black]#(SOCX_TICKER_STEP=18 /usr/local/sbin/socx-alert-ticker 76) #[align=right]#[fg=colour226,bg=black,bold]%Y-%m-%d #[fg=colour51,bg=black,bold]%H:%M:%S '
 tmux set-option -t socx -g pane-border-lines double
 tmux set-option -t socx -g pane-border-style 'fg=colour51'
 tmux set-option -t socx -g pane-active-border-style 'fg=colour51,bold'
@@ -36,41 +36,40 @@ tmux set-option -t socx -g display-panes-colour colour201
 tmux set-option -t socx -g display-panes-active-colour colour51
 tmux set-option -t socx -g status-left-length 178
 tmux set-option -t socx -g status-right-length 44
-tmux set-option -t socx -g status-left '#[fg=colour16,bg=colour51,bold] SOCX WALL #[fg=colour231,bg=colour54,bold] JupiterLXI #[fg=colour119,bg=black,bold] LIVE #[fg=colour245,bg=black]| #[fg=colour45,bg=black,bold]#(/usr/local/sbin/socx-ups-status) #[fg=colour245,bg=black]| #[fg=colour226,bg=black]#(SOCX_TICKER_STEP=18 /usr/local/sbin/socx-alert-ticker 54) '
-tmux set-option -t socx -g status-right '#[fg=colour51]tcpdumpx #[fg=colour245]| #[fg=colour226,bold]%Y-%m-%d #[fg=colour51,bold]%H:%M:%S '
+tmux set-option -t socx -g status-left '#[fg=colour45,bg=black,bold]#{@socx_ups} #[fg=colour245,bg=black]| #[fg=colour119,bg=black,bold]LIVE FW #[fg=colour245,bg=black]| #[fg=colour226,bg=black]#(SOCX_TICKER_STEP=18 /usr/local/sbin/socx-alert-ticker 76) '
+tmux set-option -t socx -g status-right '#[fg=colour226,bold]%Y-%m-%d #[fg=colour51,bold]%H:%M:%S '
+tmux set-option -t socx -g @socx_ups "$(/usr/local/sbin/socx-ups-status 2>/dev/null || echo 'NUT APC UPS warming up')"
+tmux run-shell -b 'while tmux has-session -t socx 2>/dev/null; do tmux set-option -q -t socx -g @socx_ups "$(/usr/local/sbin/socx-ups-status 2>/dev/null || echo NUT APC UPS unavailable)"; tmux refresh-client -S -t socx 2>/dev/null || true; sleep 0.5; done'
 tmux set-window-option -t socx -g window-status-format '#[fg=colour245,bg=black] #I:#W '
 tmux set-window-option -t socx -g window-status-current-format '#[fg=colour16,bg=colour201,bold] #I:#W '
 tmux set-window-option -t socx -g window-active-style 'fg=colour255,bg=black'
 tmux set-window-option -t socx -g window-style 'fg=colour250,bg=black'
+tmux split-window -v -p 40 -t socx:NETX "iftopx -i $IFLAN -n -N"
+tmux split-window -h -p 44 -t socx:NETX.1 "tcpdumpx -i $IFWAN -nn -q"
 tmux select-pane -t socx:NETX.0 -T 'BTOPX SOC COCKPIT'
+tmux select-pane -t socx:NETX.1 -T 'IFTOPX FLOW RADAR'
+tmux select-pane -t socx:NETX.2 -T 'TCPDUMPX PACKET STORY'
 tmux set-window-option -t socx:NETX pane-border-status off
 tmux set-window-option -t socx:NETX pane-border-format '#[fg=colour51,bold]#{pane_title}'
 tmux select-pane -t socx:NETX.0
 
-# W2 TRAFFICX: color iftop/tcpdump clones, kept off the primary btop-style wall.
-tmux new-window -a -t socx:NETX -n TRAFFICX "iftopx -i $IFLAN -n -N"
-tmux split-window -h -p 44 -t socx:TRAFFICX "tcpdumpx -i $IFWAN -nn -q"
-tmux select-pane -t socx:TRAFFICX.0 -T 'IFTOPX FLOW RADAR'
-tmux select-pane -t socx:TRAFFICX.1 -T 'TCPDUMPX PACKET STORY'
-tmux set-window-option -t socx:TRAFFICX pane-border-status off
-
-# W3 THREATX: retain the existing alert views, but with brighter grep color.
+# W2 THREATX: retain the existing alert views, but with brighter grep color.
 tmux new-window -t socx -n THREATX "sh -c 'export GREP_COLOR=\"01;31\"; echo == SURICATA IDS ALERTS ==; tail -n 40 -F \"$ALERTS\" 2>/dev/null | grep --line-buffered --color=always -Ei \"alert|drop|blocked|malware|scan|trojan|cnc|c2|$\"'"
 tmux split-window -h -t socx:THREATX "sh -c 'export GREP_COLOR=\"01;35\"; echo == pfBlockerNG DNSBL ==; tail -n 40 -F \"$DNSBL\" 2>/dev/null | grep --line-buffered --color=always -Ei \"block|deny|dnsbl|$\"'"
 tmux split-window -v -p 50 -t socx:THREATX.0 "pftop"
 
-# W4 FLOWX
+# W3 FLOWX
 tmux new-window -t socx -n FLOWX "vnstat -l -i $IFWAN"
 tmux split-window -h -t socx:FLOWX "systat -ifstat 1"
 tmux split-window -v -t socx:FLOWX.0 "mtr -o LSRNABWV 1.1.1.1"
 
-# W5 LIVEX
+# W4 LIVEX
 tmux new-window -t socx -n LIVEX "sh -c 'echo == FIREWALL filter.log ==; tail -n 50 -F /var/log/filter.log 2>/dev/null | grep --line-buffered --color=always -Ei \"block|pass|tcp|udp|icmp|$\"'"
 tmux split-window -h -t socx:LIVEX "sh -c 'echo == ZEEK conn.log ==; tail -n 50 -F $ZK/conn.log 2>/dev/null'"
 tmux split-window -v -t socx:LIVEX.0 "sh -c 'echo == ZEEK dns.log ==; tail -n 50 -F $ZK/dns.log 2>/dev/null'"
 tmux split-window -v -t socx:LIVEX.1 "sh /root/eve_alerts.sh"
 
-# W6 SYSX
+# W5 SYSX
 tmux new-window -t socx -n SYSX "systat -vmstat 1"
 tmux split-window -h -t socx:SYSX "systat -iostat 1"
 tmux split-window -v -t socx:SYSX.0 "top -m io"
