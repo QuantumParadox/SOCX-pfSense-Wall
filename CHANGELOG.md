@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.25
+
+- Wrapped wall mode in a tmux restart loop so a renderer exit no longer drops the console back to a shell prompt.
+- Added wall-renderer exception recovery with `/tmp/socx-wall.err` logging.
+- Added animated CPU core pulse bars that repaint on the 0.5-second wall refresh.
+- Kept UPS wattage sampled on every wall refresh and labeled it as `0.5s` in the live panel.
+
 ## v0.1.24
 
 - Added dedicated `SOCX_MODE=wall` with a new single-pane `socx-wall` renderer for large, high-contrast wall displays.

@@ -4,7 +4,7 @@ IFLAN=ix0; IFWAN=ix1
 MODE="${SOCX_MODE:-wall}"
 TOPR="pfbtop --interval 0.5 --top 24"
 if [ "$MODE" = "wall" ]; then
-    TOPR="socx-wall --mode wall --interval 0.5"
+    TOPR="/bin/sh -c 'while :; do /usr/local/sbin/socx-wall --mode wall --interval 0.5 2>>/tmp/socx-wall.err; printf \"\\033[0m\\nSOCX wall renderer exited; restarting in 3s\\n\"; sleep 3; done'"
 fi
 ZK=/var/spool/zeek/zeek
 SURI=$(ls -d /var/log/suricata/suricata_* 2>/dev/null | head -1)

@@ -30,8 +30,13 @@ $once = (bool)$opts['once'];
 $state = [
     'net' => [],
     'time' => microtime(true),
+    'tick' => 0,
     'ticker' => 0,
     'static' => static_info(),
+    'core_history' => [],
+    'last_events' => [],
+    'last_events_at' => 0.0,
+    'last_frame' => null,
 ];
 
 if (!$once) {
@@ -42,9 +47,17 @@ if (!$once) {
 }
 
 do {
-    [$cols, $rows] = term_size($opts);
-    $hosts = load_host_map((string)$opts['hosts']);
-    $frame = $opts['demo'] ? demo_frame($hosts) : collect_live_frame($state, $hosts);
+    try {
+        $state['tick']++;
+        [$cols, $rows] = term_size($opts);
+        $hosts = load_host_map((string)$opts['hosts']);
+        $frame = $opts['demo'] ? demo_frame($hosts, $state) : collect_live_frame($state, $hosts);
+        $state['last_frame'] = $frame;
+    } catch (Throwable $e) {
+        log_wall_error($e);
+        [$cols, $rows] = term_size($opts);
+        $frame = $state['last_frame'] ?: error_frame($e);
+    }
     $screen = render_wall($frame, $cols, $rows, $color, $state);
     if ($once) {
         echo $screen;
@@ -57,6 +70,12 @@ do {
     flush();
     usleep((int)($interval * 1000000));
 } while (true);
+
+function log_wall_error(Throwable $e): void
+{
+    $line = sprintf("[%s] %s: %s in %s:%d\n", date('c'), get_class($e), $e->getMessage(), $e->getFile(), $e->getLine());
+    @file_put_contents('/tmp/socx-wall.err', $line, FILE_APPEND);
+}
 
 function parse_args(array $argv): array
 {
@@ -197,6 +216,7 @@ function collect_live_frame(array &$state, array $hosts): array
     $now = microtime(true);
     $top = run_cmd('/usr/bin/top -P -b -n 1');
     $cpu = parse_cpu($top);
+    update_core_history($state, $cpu);
     $mem = parse_mem($top, (int)$state['static']['physmem']);
     $load = parse_load($top);
     $pf = parse_pf(run_cmd('/sbin/pfctl -si'));
@@ -205,7 +225,7 @@ function collect_live_frame(array &$state, array $hosts): array
     $temp = parse_temp(run_cmd("/sbin/sysctl -a | /usr/bin/grep -E 'dev.cpu\\.[0-9]+\\.temperature|hw.acpi.thermal.*temperature' | /usr/bin/head -8"));
     $freq = trim(run_cmd('/sbin/sysctl -n dev.cpu.0.freq'));
     $ups = collect_ups_status();
-    $events = collect_events($hosts);
+    $events = collect_events_cached($state, $hosts, $now);
     $flows = flows_from_events($events);
     $packets = packets_from_events($events);
 
@@ -228,11 +248,12 @@ function collect_live_frame(array &$state, array $hosts): array
             'used' => (int)round((float)$cpu['used']),
             'freq' => is_numeric($freq) ? sprintf('%.1fGHz', ((int)$freq) / 1000) : '--GHz',
             'temp' => $temp,
-            'cores' => $cpu['cores'] ?: [['id' => 0, 'used' => (float)$cpu['used']]],
+            'cores' => attach_core_history($cpu['cores'] ?: [['id' => 0, 'used' => (float)$cpu['used']]], $state),
             'load' => [$load['1'], $load['5'], $load['15']],
             'processes' => $load['processes'],
             'uptime' => $load['uptime'],
         ],
+        'tick' => $state['tick'],
         'ups' => $ups,
         'procs' => $procs,
         'flows' => $flows,
@@ -241,7 +262,7 @@ function collect_live_frame(array &$state, array $hosts): array
     ];
 }
 
-function demo_frame(array $hosts): array
+function demo_frame(array $hosts, array $state = []): array
 {
     $hosts = $hosts + [
         '192.168.1.161' => 'JupiterLXI',
@@ -270,7 +291,8 @@ function demo_frame(array $hosts): array
             'processes' => '152 processes: 1 running, 151 sleeping',
             'uptime' => '1+00:42:01',
         ],
-        'ups' => 'UPS ONLINE 540W load 27% batt 100% run 40m',
+        'tick' => (int)($state['tick'] ?? 0),
+        'ups' => 'UPS 540W 0.5s 27% batt 100% 40m',
         'procs' => [
             ['pid' => '60684', 'name' => 'tmux', 'user' => 'root', 'rss' => parse_size('572M'), 'cpu' => 3.1, 'cmd' => 'tmux socx wall'],
             ['pid' => '8809', 'name' => 'ntopng', 'user' => 'ntopng', 'rss' => parse_size('540M'), 'cpu' => 2.9, 'cmd' => 'ntopng flow telemetry'],
@@ -297,6 +319,17 @@ function demo_frame(array $hosts): array
             '[IDS][HIGH]  ' . host_label('192.168.1.102', $hosts) . ' -> suspicious outbound beacon',
         ],
     ];
+}
+
+function error_frame(Throwable $e): array
+{
+    $frame = demo_frame([], ['tick' => 0]);
+    $frame['badges'] = ['WAN --', 'VPN --', 'DNS --', 'UPS --'];
+    $frame['events'] = ['[HIGH] SOCX wall renderer recovered: ' . $e->getMessage()];
+    $frame['packets'] = [
+        ['time' => date('H:i:s'), 'proto' => 'ERR', 'dir' => 'LCL', 'src' => 'socx-wall', 'dst' => 'renderer', 'service' => 'recover', 'size' => 'ctrl', 'verdict' => 'WARN'],
+    ];
+    return $frame;
 }
 
 function render_wall(array $frame, int $cols, int $rows, bool $color, array &$state): string
@@ -494,6 +527,7 @@ function cpu_rows(array $f, array $p): array
 {
     $w = $p['width'] - 2;
     $cpu = $f['cpu'];
+    $tick = (int)($f['tick'] ?? 0);
     $barW = max(8, min(18, $w - 18));
     $rows = [
         sprintf('CPU %3d%%   %-7s   %s', $cpu['used'], $cpu['freq'], $cpu['temp']),
@@ -505,14 +539,14 @@ function cpu_rows(array $f, array $p): array
             $parts = [];
             foreach ($pair as $core) {
                 $used = (int)round((float)$core['used']);
-                $parts[] = sprintf('C%s %s %2d%%', $core['id'], bar($used, 8), $used);
+                $parts[] = sprintf('C%s %s %2d%%', $core['id'], animated_bar($used, 8, $tick + (int)$core['id']), $used);
             }
             $rows[] = implode(' ', $parts);
         }
     } else {
         foreach (array_slice($cpu['cores'], 0, max(1, $p['height'] - 4)) as $core) {
             $used = (int)round((float)$core['used']);
-            $rows[] = sprintf('C%-2s %s %3d%%', $core['id'], bar($used, $barW), $used);
+            $rows[] = sprintf('C%-2s %s %3d%%', $core['id'], animated_bar($used, $barW, $tick + (int)$core['id']), $used);
         }
     }
     $rows[] = 'load avg ' . implode(' ', $cpu['load']);
@@ -665,6 +699,29 @@ function parse_cpu_line(string $line): array
     return ['idle' => $idle, 'used' => max(0.0, min(100.0, 100.0 - $idle))];
 }
 
+function update_core_history(array &$state, array $cpu): void
+{
+    $cores = $cpu['cores'] ?: [['id' => 0, 'used' => (float)$cpu['used']]];
+    foreach ($cores as $core) {
+        $id = (int)($core['id'] ?? 0);
+        $state['core_history'][$id] ??= [];
+        $state['core_history'][$id][] = (float)($core['used'] ?? 0);
+        if (count($state['core_history'][$id]) > 64) {
+            $state['core_history'][$id] = array_slice($state['core_history'][$id], -64);
+        }
+    }
+}
+
+function attach_core_history(array $cores, array $state): array
+{
+    foreach ($cores as &$core) {
+        $id = (int)($core['id'] ?? 0);
+        $core['history'] = $state['core_history'][$id] ?? [(float)($core['used'] ?? 0)];
+    }
+    unset($core);
+    return $cores;
+}
+
 function parse_mem(string $top, int $physmem): array
 {
     $mem = ['total' => $physmem, 'free' => 0, 'active' => 0, 'inactive' => 0, 'wired' => 0, 'arc_total' => 0];
@@ -789,6 +846,9 @@ function collect_ups_status(): string
     if ($line === '' || stripos($line, 'unavailable') !== false) {
         return '';
     }
+    if (preg_match('/^(UPS\s+\S+W)\s+(.+)$/', $line, $m)) {
+        return $m[1] . ' 0.5s ' . $m[2];
+    }
     return $line;
 }
 
@@ -816,6 +876,17 @@ function collect_events(array $hosts): array
         }
     }
     return array_slice(array_reverse($events), 0, 40);
+}
+
+function collect_events_cached(array &$state, array $hosts, float $now): array
+{
+    if (($now - (float)($state['last_events_at'] ?? 0.0)) < 1.5 && isset($state['last_events'])) {
+        return $state['last_events'];
+    }
+    $events = collect_events($hosts);
+    $state['last_events'] = $events;
+    $state['last_events_at'] = $now;
+    return $events;
 }
 
 function tail_lines(string $file, int $count): array
@@ -1078,6 +1149,19 @@ function bar(int $pct, int $width): string
     $width = max(4, $width);
     $filled = (int)round(($pct / 100) * $width);
     return '[' . str_repeat('#', $filled) . str_repeat('.', $width - $filled) . ']';
+}
+
+function animated_bar(int $pct, int $width, int $tick): string
+{
+    $width = max(4, $width);
+    $filled = (int)round(($pct / 100) * $width);
+    $chars = array_fill(0, $width, '.');
+    for ($i = 0; $i < $filled; $i++) {
+        $chars[$i] = '#';
+    }
+    $pulse = $tick % $width;
+    $chars[$pulse] = '+';
+    return '[' . implode('', $chars) . ']';
 }
 
 function graph_bar(int $value, int $max, bool $alert): string

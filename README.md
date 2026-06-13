@@ -18,6 +18,7 @@ Suggested topics:
 - Defaults to `SOCX_MODE=wall`, a single-pane high-contrast wall display with internal panels and clipping.
 - Shows a classic split-wall `NETX` layout: btop-style pfSense cockpit on top, IFTopX bottom-left, TCPDumpX bottom-right.
 - Adds `socx-wall`, a readable wall-mode renderer with symmetric CPU/RAM, process, IFTopX, TCPDumpX, UPS, and event ticker panels.
+- Runs wall mode inside a restart loop and logs renderer errors to `/tmp/socx-wall.err`.
 - Shows CPU graph, CPU cores, RAM/ARC, pf state/search counters, live interface rates, and top processes in the top cockpit.
 - Shows compact NUT/APC UPS watts/load/battery/runtime in the top-left `mem net pf live` box.
 - Adds `iftopx`, a readable color flow radar for live LAN/WAN traffic.
