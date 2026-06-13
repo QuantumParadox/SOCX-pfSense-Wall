@@ -1,7 +1,7 @@
 #!/bin/sh
 # SOCX: colorized SOC console dashboard.
 IFLAN=ix0; IFWAN=ix1
-TOPR="pfbtop --interval 0.5 --top 18"
+TOPR="pfbtop --interval 0.5 --top 12"
 ZK=/var/spool/zeek/zeek
 SURI=$(ls -d /var/log/suricata/suricata_* 2>/dev/null | head -1)
 ALERTS="$SURI/alerts.log"
@@ -17,7 +17,7 @@ chmod go-w /dev/ttyv0 /dev/pts/* 2>/dev/null || true
 tmux kill-session -t socx 2>/dev/null
 tmux kill-session -t soc 2>/dev/null
 
-# W1 NETX: SOC-specific btop cockpit with IFTop/TCPDump along the bottom.
+# W1 NETX: single-pane LCARS SOC cockpit with integrated traffic/firewall feed.
 tmux new-session -d -s socx -n NETX "$TOPR"
 tmux set-option -t socx -g mouse off
 tmux set-option -t socx -g status on
@@ -44,11 +44,7 @@ tmux set-window-option -t socx -g window-status-format '#[fg=colour245,bg=black]
 tmux set-window-option -t socx -g window-status-current-format '#[fg=colour16,bg=colour201,bold] #I:#W '
 tmux set-window-option -t socx -g window-active-style 'fg=colour255,bg=black'
 tmux set-window-option -t socx -g window-style 'fg=colour250,bg=black'
-tmux split-window -v -p 40 -t socx:NETX "iftopx -i $IFLAN -n -N"
-tmux split-window -h -p 44 -t socx:NETX.1 "tcpdumpx -i $IFWAN -nn -q"
-tmux select-pane -t socx:NETX.0 -T 'BTOPX SOC COCKPIT'
-tmux select-pane -t socx:NETX.1 -T 'IFTOPX FLOW RADAR'
-tmux select-pane -t socx:NETX.2 -T 'TCPDUMPX PACKET STORY'
+tmux select-pane -t socx:NETX.0 -T 'LCARS SOC CENTER'
 tmux set-window-option -t socx:NETX pane-border-status off
 tmux set-window-option -t socx:NETX pane-border-format '#[fg=colour51,bold]#{pane_title}'
 tmux select-pane -t socx:NETX.0

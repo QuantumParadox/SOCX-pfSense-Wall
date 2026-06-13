@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.16
+
+- Rebuilt the primary `NETX` wall as a single-pane LCARS SOC center instead of a split top/IFTop/TCPDump mosaic.
+- Added the three-quadrant layout from the new brief: Q1 CPU/RAM/process, Q2 network/state traffic, and Q3 human-readable firewall/pflog events.
+- Added filterlog parsing for readable PASS/BLOCK rows and active pf state peer sampling for the network quadrant.
+- Expanded the bottom NUT widget to include APC model, wattage with `(0.5s)`, load, battery, runtime, and temperature when available.
+
 ## v0.1.15
 
 - Rebuilt `NETX` as a SOC-specific btop wall: compute/process, live network traffic, firewall/power, and bottom IFTop/TCPDump panes.

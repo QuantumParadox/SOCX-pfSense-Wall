@@ -1,12 +1,12 @@
 # SOCX pfSense Wall
 
-SOCX pfSense Wall is a terminal-based security operations display for pfSense. It is built for a large always-on monitor and combines a btop-style pfSense dashboard, a cleaner traffic radar, a color packet story view, and a live SOC ticker inside tmux.
+SOCX pfSense Wall is a terminal-based security operations display for pfSense. It is built for a large always-on monitor and combines an LCARS-style btop SOC center, readable traffic/firewall telemetry, live NUT/APC UPS data, and a live SOC ticker inside tmux.
 
 Suggested GitHub repo name: `SOCX-pfSense-Wall`
 
 Suggested GitHub description:
 
-`A tmux-based pfSense SOC wall dashboard with pfsense-btop, color iftop/tcpdump clones, threat ticker, and autoboot support.`
+`A tmux-based pfSense LCARS SOC wall with CPU/RAM/process, network traffic, firewall event, NUT/APC UPS, ticker, and autoboot support.`
 
 Suggested topics:
 
@@ -15,16 +15,16 @@ Suggested topics:
 ## What It Does
 
 - Starts a full-screen tmux dashboard called `socx`.
-- Shows a SOC-specific btop-style cockpit on the primary `NETX` window.
-- Groups CPU, RAM traces, CPU cores, and top running processes into one compute section.
-- Shows live network traffic and pf firewall/power telemetry in separate sections.
-- Shows NUT/APC Smart-UPS state, watts, load, battery, runtime remaining, and input voltage in the main cockpit.
-- Shows a compact `NUT APC UPS` watts/battery/runtime widget in the bottom SOCX bar.
+- Shows a single-pane LCARS SOC center on the primary `NETX` window.
+- Uses a three-quadrant layout: Q1 CPU/RAM/process, Q2 network/state traffic, and Q3 human-readable firewall/pflog events.
+- Shows CPU and RAM traces, per-core bars, top running processes, interface RX/TX rates, active pf state peers, PASS/BLOCK rows, and pf counters.
+- Shows NUT/APC Smart-UPS state, watts, load, battery, runtime remaining, and input voltage in the main cockpit when available.
+- Shows a compact `NUT APC` model/watts/load/battery/runtime widget in the bottom SOCX bar, refreshed by tmux every 0.5 seconds.
 - Adds `iftopx`, a readable color flow radar for live LAN/WAN traffic.
 - Adds `tcpdumpx`, a readable color packet story view that explains traffic direction, service, size, and flow.
-- Keeps IFTop/TCPDump visible in the bottom of the primary `NETX` wall.
+- Keeps raw IFTop/TCPDump-style tools available from the companion SOCX windows while the primary wall stays unified.
 - Adds a SOC ticker for firewall blocks, DNS blocks, IDS-style alerts, and other useful events.
-- Adds a solid `╚════╩════╝` lower frame above the SOC ticker so the IFTop/TCPDump divider lands cleanly.
+- Adds a solid lower frame above the SOC ticker.
 - Leaves the original `htop`, `tcpdump`, and `iftop` tools untouched.
 - Includes a pfSense boot script so SOCX can start automatically after reboot.
 

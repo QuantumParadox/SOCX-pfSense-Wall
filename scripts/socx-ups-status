@@ -30,9 +30,11 @@ for ups in $("$UPSC" -l 2>/dev/null); do
     [ -n "$raw" ] || continue
 
     status=$(printf '%s\n' "$raw" | awk -F': ' '$1=="ups.status"{print $2; exit}')
+    model=$(printf '%s\n' "$raw" | awk -F': ' '$1=="device.model" || $1=="ups.model"{print $2; exit}')
     charge=$(printf '%s\n' "$raw" | awk -F': ' '$1=="battery.charge"{print int($2 + 0.5); exit}')
     runtime=$(printf '%s\n' "$raw" | awk -F': ' '$1=="battery.runtime"{print $2; exit}')
     load=$(printf '%s\n' "$raw" | awk -F': ' '$1=="ups.load"{print int($2 + 0.5); exit}')
+    temp=$(printf '%s\n' "$raw" | awk -F': ' '$1=="ups.temperature"{print int($2 + 0.5); exit}')
     watts=$(printf '%s\n' "$raw" | awk -F': ' '
         $1=="ups.realpower"{w=$2}
         $1=="ups.power" && w==""{w=$2}
@@ -46,8 +48,11 @@ for ups in $("$UPSC" -l 2>/dev/null); do
     [ -n "$watts" ] || watts='?'
     [ -n "$load" ] || load='?'
     [ -n "$charge" ] || charge='?'
+    [ -n "$model" ] || model='UPS'
     runtime_fmt=$(fmt_runtime "$runtime")
-    printf 'NUT APC UPS %s %sW load %s%% batt %s%% run %s' "$(status_word "$status")" "$watts" "$load" "$charge" "$runtime_fmt"
+    line=$(printf 'NUT APC %s %s %sW (0.5s) load %s%% batt %s%% run %s' "$model" "$(status_word "$status")" "$watts" "$load" "$charge" "$runtime_fmt")
+    [ -n "$temp" ] && line="$line temp ${temp}C"
+    printf '%s' "$line"
     exit 0
 done
 
