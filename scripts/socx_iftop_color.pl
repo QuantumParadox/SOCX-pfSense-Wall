@@ -238,6 +238,7 @@ sub render_compact {
     }
 
     my $narrow = $w < 70;
+    my $tiny_wall = $w < 56;
     my $wall = $w <= 100;
     my $epw = int(($w - ($narrow ? 18 : 44)) / 2);
     if ($narrow) {
@@ -247,8 +248,9 @@ sub render_compact {
         $epw = 12 if $epw < 12;
         $epw = 30 if $epw > 30;
     }
-    my $max_flows = $wall ? ($h - 3) : $h - 7;
+    my $max_flows = $tiny_wall ? int(($h - 2) / 2) : ($wall ? ($h - 3) : $h - 7);
     $max_flows = 3 if $max_flows < 3;
+    $max_flows = 2 if $tiny_wall && $h < 9;
     $max_flows = 20 if $wall && $max_flows > 20;
     $max_flows = 18 if !$wall && $max_flows > 18;
 
@@ -261,7 +263,9 @@ sub render_compact {
     my $clock = sprintf('%02d:%02d:%02d', $now[2], $now[1], $now[0]);
     my $refresh = $ENV{'SOCX_IFTOP_SECONDS'} || '2';
     my $pulse = pulse_char();
-    if ($wall) {
+    if ($tiny_wall) {
+        emit(sprintf('IFTOPX %s  flow radar  up/down/class', $iface));
+    } elsif ($wall) {
         my $asset_w = 14;
         my $peer_w = $w - 73;
         $peer_w = 18 if $peer_w < 18;
@@ -302,7 +306,16 @@ sub render_compact {
         $count++;
         my $a = $wall ? endpoint_label($f->{a} // '?', 1) : endpoint_fit(endpoint_label($f->{a} // '?', 0), $epw);
         my $b = $wall ? endpoint_label($f->{b} // '?', 1) : endpoint_fit(endpoint_label($f->{b} // '?', 0), $epw);
-        if ($wall) {
+        if ($tiny_wall) {
+            my ($asset, $peer) = flow_sides($a, $b);
+            my $tag = flow_tag($asset, $peer);
+            my $activity = bar_plain(percent_of(rate_value($f->{a2s}) + rate_value($f->{b2s}), $max_total_rate), 6);
+            my $head = sprintf('%02d %s -> %s', $count, $asset, $peer);
+            emit(fit_plain($head, $w));
+            my $detail = sprintf('   up %s  down %s  %s %s',
+                rate_narrow($f->{a2s}), rate_narrow($f->{b2s}), $tag, $activity);
+            emit(fit_plain($detail, $w));
+        } elsif ($wall) {
             my $asset_w = 14;
             my $peer_w = $w - 73;
             $peer_w = 18 if $peer_w < 18;

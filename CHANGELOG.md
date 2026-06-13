@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.23
+
+- Added narrow two-line IFTopX formatting for the bottom-left pane so flow, rates, and class remain readable without right-edge clipping.
+- Added narrow two-line TCPDumpX formatting for the bottom-right pane so each packet keeps its flow line paired with its service/size detail line.
+
 ## v0.1.22
 
 - Changed the classic top cockpit refresh from `1500ms` to `500ms` so CPU core bars update twice per second.

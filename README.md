@@ -20,6 +20,7 @@ Suggested topics:
 - Shows compact NUT/APC UPS watts/load/battery/runtime in the top-left `mem net pf live` box.
 - Adds `iftopx`, a readable color flow radar for live LAN/WAN traffic.
 - Adds `tcpdumpx`, a readable color packet story view that explains traffic direction, service, size, and flow.
+- Uses narrow two-line formatting in the bottom IFTopX/TCPDumpX panes so flows and packet details stay readable on the wall display.
 - Keeps IFTopX/TCPDumpX visible in the bottom of the primary `NETX` wall.
 - Adds a SOC ticker for firewall blocks, DNS blocks, IDS-style alerts, and other useful events.
 - Shows a bottom rail with only firewall/security ticker text for maximum readable space.

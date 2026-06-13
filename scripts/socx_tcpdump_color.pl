@@ -18,6 +18,7 @@ my $structured = $ENV{'SOCX_COMPACT'} || ($width > 0 && $width < 120);
 my $narrow = $width && $width < 58;
 my $mid = $width && $width < 95;
 my $wall = $width && $width <= 100;
+my $tiny_wall = $width && $width < 46;
 my $packet_count = 0;
 
 my %C = (
@@ -185,8 +186,23 @@ sub compact_action {
     return join(' ', @parts);
 }
 
+sub tiny_action {
+    my ($detail) = @_;
+    $detail =~ s/new connection/new/g;
+    $detail =~ s/connect reply/reply/g;
+    $detail =~ s/health ping/ping/g;
+    $detail =~ s/closing/close/g;
+    return $detail;
+}
+
 sub header_lines {
     my $name = $iface ? $iface : 'wan';
+    if ($tiny_wall) {
+        return (
+            fit_words("TCPDUMPX $name packets", $width || 40),
+            fit_words("time  type dir flow + detail", $width || 40),
+        );
+    }
     if ($wall) {
         my $flow_w = ($width || 90) - 38;
         $flow_w = 34 if $flow_w < 34;
@@ -210,11 +226,19 @@ sub format_packet {
         my ($ts, $rest) = ($1, $2);
         $ts = substr($ts, 3, 5) if $narrow;
         $rest =~ s/, length \d+//;
+        my ($arp_target, $arp_sender) = ('link', 'link');
         if ($rest =~ /Request who-has (\S+) tell (\S+)/) {
-            $rest = 'who has ' . (endpoint_label($1))[0] . ' tell ' . (endpoint_label($2))[0];
+            ($arp_target, $arp_sender) = ((endpoint_label($1))[0], (endpoint_label($2))[0]);
+            $rest = 'who has ' . $arp_target . ' tell ' . $arp_sender;
         }
         if ($wall) {
             $ts = substr($ts, 3, 5);
+            if ($tiny_wall) {
+                return (
+                    fit_words(sprintf('%-5s %-4s %-3s %s->%s', $ts, 'ARP', 'LCL', $arp_sender, $arp_target), $width || 40),
+                    fit_words(sprintf('      who-has %s', $arp_target), $width || 40),
+                );
+            }
             my $flow_w = ($width || 90) - 38;
             $flow_w = 34 if $flow_w < 34;
             my $flow = fit_words($rest, $flow_w);
@@ -248,6 +272,13 @@ sub format_packet {
 
     if ($wall) {
         $ts = substr($ts, 3, 5);
+        if ($tiny_wall) {
+            my $flow = fit_words("$src_label->$dst_label", ($width || 40) - 14);
+            return (
+                fit_words(sprintf('%-5s %-4s %-3s %s', $ts, $proto, $dir, $flow), $width || 40),
+                fit_words(sprintf('      %s', tiny_action($detail)), $width || 40),
+            );
+        }
         my $flow_w = ($width || 90) - 38;
         $flow_w = 34 if $flow_w < 34;
         my $flow = fit_words("$src_label -> $dst_label", $flow_w);
@@ -289,6 +320,7 @@ sub print_line {
 
 sub max_wall_rows {
     my $max_rows = $height ? ($height - 2) : 18;
+    $max_rows-- if $tiny_wall && $max_rows % 2;
     $max_rows = 4 if $max_rows < 4;
     return $max_rows;
 }
