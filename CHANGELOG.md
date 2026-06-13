@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.22
+
+- Changed the classic top cockpit refresh from `1500ms` to `500ms` so CPU core bars update twice per second.
+
 ## v0.1.21
 
 - Added compact NUT/APC UPS telemetry into the top-left `mem net pf live` cockpit box.
