@@ -26,7 +26,7 @@ tmux set-option -t socx -g status-position bottom
 tmux set-option -t socx -g status-justify centre
 tmux set-option -t socx -g status-style 'fg=colour51,bg=black,bold'
 tmux set-option -t socx -g status-format[0] '#[fg=colour51,bg=black,bold]#(/usr/local/sbin/socx-bottom-rail socx:NETX)'
-tmux set-option -t socx -g status-format[1] '#[align=left]#[fg=colour119,bg=black,bold]LIVE: #[fg=colour226,bg=black]#(SOCX_TICKER_PREFIX= SOCX_TICKER_STEP=18 /usr/local/sbin/socx-alert-ticker 74)'
+tmux set-option -t socx -g status-format[1] '#[align=left]#[fg=colour226,bg=black]#(SOCX_TICKER_PREFIX= SOCX_TICKER_STEP=18 /usr/local/sbin/socx-alert-ticker #{window_width})'
 tmux set-option -t socx -g pane-border-lines double
 tmux set-option -t socx -g pane-border-style 'fg=colour51'
 tmux set-option -t socx -g pane-active-border-style 'fg=colour51,bold'
@@ -35,7 +35,7 @@ tmux set-option -t socx -g display-panes-colour colour201
 tmux set-option -t socx -g display-panes-active-colour colour51
 tmux set-option -t socx -g status-left-length 200
 tmux set-option -t socx -g status-right-length 0
-tmux set-option -t socx -g status-left '#[fg=colour119,bg=black,bold]LIVE: #[fg=colour226,bg=black]#(SOCX_TICKER_PREFIX= SOCX_TICKER_STEP=18 /usr/local/sbin/socx-alert-ticker 74)'
+tmux set-option -t socx -g status-left '#[fg=colour226,bg=black]#(SOCX_TICKER_PREFIX= SOCX_TICKER_STEP=18 /usr/local/sbin/socx-alert-ticker #{window_width})'
 tmux set-option -t socx -g status-right ''
 tmux set-window-option -t socx -g window-status-format '#[fg=colour245,bg=black] #I:#W '
 tmux set-window-option -t socx -g window-status-current-format '#[fg=colour16,bg=colour201,bold] #I:#W '

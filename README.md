@@ -21,7 +21,7 @@ Suggested topics:
 - Adds `tcpdumpx`, a readable color packet story view that explains traffic direction, service, size, and flow.
 - Keeps IFTopX/TCPDumpX visible in the bottom of the primary `NETX` wall.
 - Adds a SOC ticker for firewall blocks, DNS blocks, IDS-style alerts, and other useful events.
-- Shows a bottom rail with only `LIVE:` and the firewall/security ticker for maximum readable space.
+- Shows a bottom rail with only firewall/security ticker text for maximum readable space.
 - Leaves the original `htop`, `tcpdump`, and `iftop` tools untouched.
 - Includes a pfSense boot script so SOCX can start automatically after reboot.
 

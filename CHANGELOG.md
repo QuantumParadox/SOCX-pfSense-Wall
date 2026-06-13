@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.20
+
+- Removed the `LIVE:` label from the classic split-wall bottom rail.
+- Let the firewall/security ticker use the full tmux window width with no status prefix.
+
 ## v0.1.19
 
 - Simplified the classic split-wall bottom rail to only `LIVE:` plus firewall/security ticker text.
