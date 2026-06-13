@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.13
+
+- Reworked the SOC cockpit frame style toward a btop/LCARS look with rounded Unicode panel borders.
+- Improved Unicode-aware padding so the new frame characters stay aligned inside tmux.
+- Scaled the CPU history graph dynamically so normal CPU activity remains visually alive.
+
 ## v0.1.12
 
 - Restored the wide btop-style SOC cockpit layout for 24-row wall panes.

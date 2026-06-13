@@ -8,7 +8,7 @@ declare(strict_types=1);
  */
 
 const APP_NAME = 'pfsense-btop';
-const APP_VERSION = '0.4.1';
+const APP_VERSION = '0.5.0';
 
 $opts = parse_args($argv);
 if ($opts['help']) {
@@ -975,10 +975,13 @@ function cpu_graph(array $history, int $width, int $height, bool $color, string 
     $width = max(1, $width);
     $height = max(1, $height);
     $samples = array_slice($history, -$width);
-    $samples = array_pad($samples, -$width, 0.0);
+    $fill = $samples ? (float)end($samples) : 0.0;
+    $samples = array_pad($samples, -$width, $fill);
+    $scale = max(45.0, max($samples) * 1.35);
+    $scale = min(100.0, $scale);
     $lines = [];
     for ($row = $height; $row >= 1; $row--) {
-        $threshold = ($row / $height) * 100.0;
+        $threshold = ($row / $height) * $scale;
         $line = '';
         foreach ($samples as $v) {
             if ($v >= $threshold) {
@@ -1005,16 +1008,16 @@ function panel(string $title, array $body, int $width, int $height, bool $color,
     $height = max(3, $height);
     $inner = max(1, $width - 2);
     $plainTitle = ' ' . $title . ' ';
-    if (strlen($plainTitle) > $inner) {
+    if (visible_len($plainTitle) > $inner) {
         $plainTitle = substr($plainTitle, 0, $inner);
     }
     $titleText = title_ansi($tone, $plainTitle, $color);
-    $top = ansi($tone, '+', $color) . $titleText . ansi($tone, str_repeat('-', max(0, $inner - strlen($plainTitle))) . '+', $color);
-    $bottom = ansi($tone, '+' . str_repeat('-', $inner) . '+', $color);
+    $top = ansi($tone, '╭', $color) . $titleText . ansi($tone, str_repeat('─', max(0, $inner - visible_len($plainTitle))) . '╮', $color);
+    $bottom = ansi($tone, '╰' . str_repeat('─', $inner) . '╯', $color);
     $lines = [$top];
     for ($i = 0; $i < $height - 2; $i++) {
         $line = fit($body[$i] ?? '', $inner);
-        $lines[] = ansi($tone, '|', $color) . pad_visible($line, $inner) . ansi($tone, '|', $color);
+        $lines[] = ansi($tone, '│', $color) . pad_visible($line, $inner) . ansi($tone, '│', $color);
     }
     $lines[] = $bottom;
     return $lines;
@@ -1069,7 +1072,11 @@ function pad_visible(string $text, int $width): string
 
 function visible_len(string $text): int
 {
-    return strlen(strip_ansi($text));
+    $plain = strip_ansi($text);
+    if (preg_match_all('/./us', $plain, $m) !== false) {
+        return count($m[0]);
+    }
+    return strlen($plain);
 }
 
 function strip_ansi(string $text): string
@@ -1112,8 +1119,8 @@ function section(string $label, int $cols, bool $color): string
 
 function box_line(string $label, int $cols, bool $color, string $tone): string
 {
-    $plain = '-- ' . $label . ' ';
-    $line = $plain . str_repeat('-', max(0, $cols - strlen($plain)));
+    $plain = '─ ' . $label . ' ';
+    $line = $plain . str_repeat('─', max(0, $cols - visible_len($plain)));
     return ansi($tone, fit($line, $cols), $color);
 }
 
@@ -1212,7 +1219,7 @@ function ansi(string $tone, string $text, bool $enabled): string
 function fit(string $text, int $cols): string
 {
     $plain = preg_replace('/\033\[[0-9;]*m/', '', $text);
-    if (strlen($plain) <= $cols) {
+    if (visible_len($text) <= $cols) {
         return $text;
     }
     $keep = max(1, $cols - 1);
