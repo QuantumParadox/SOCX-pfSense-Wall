@@ -15,6 +15,7 @@ case "$STEP" in
 esac
 [ "$STEP" -lt 1 ] && STEP=1
 [ "$STEP" -gt 24 ] && STEP=24
+PREFIX=${SOCX_TICKER_PREFIX-"SOCX: "}
 
 BASE=/tmp/socx-alert-ticker
 CACHE="$BASE.msg"
@@ -198,12 +199,12 @@ pos=$((pos % count))
 line=$(/usr/bin/awk -v want="$((pos + 1))" 'NF { c++; if (c == want) { print; exit } }' "$CACHE")
 [ -n "$line" ] || line="SOCX: alert ticker warming up"
 
-out=$(printf '%s' "$line" | /usr/bin/awk -v w="$WIDTH" '{
-    s = "SOCX: " $0
+out=$(printf '%s' "$line" | /usr/bin/awk -v w="$WIDTH" -v prefix="$PREFIX" '{
+    s = prefix $0
     if (length(s) > w) {
         s = substr(s, 1, w - 3)
         if (s ~ / /) sub(/[[:space:]][^[:space:]]*$/, "", s)
-        if (length(s) < 12) s = substr("SOCX: " $0, 1, w - 3)
+        if (length(s) < 12) s = substr(prefix $0, 1, w - 3)
         s = s "..."
     }
     while (length(s) < w) s = s " "

@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.19
+
+- Simplified the classic split-wall bottom rail to only `LIVE:` plus firewall/security ticker text.
+- Removed the bottom-rail clock and NUT/UPS telemetry so firewall data has the full line.
+- Added a ticker prefix override so this wall can show firewall text without the old `SOCX:` prefix.
+
 ## v0.1.18
 
 - Refined the classic split-wall bottom rail: removed `SOCX WALL` and `JupiterLXI` labels from the status line.
