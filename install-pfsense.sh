@@ -4,6 +4,7 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 install -m 0755 "$ROOT/scripts/pfsense-btop.php" /usr/local/sbin/pfsense-btop
+install -m 0755 "$ROOT/scripts/socx-wall.php" /usr/local/sbin/socx-wall
 install -m 0755 "$ROOT/scripts/socxboard.sh" /root/socxboard.sh
 install -m 0755 "$ROOT/scripts/socx-bottom-rail" /usr/local/sbin/socx-bottom-rail
 install -m 0755 "$ROOT/scripts/socx-alert-ticker" /usr/local/sbin/socx-alert-ticker
@@ -18,6 +19,9 @@ install -m 0755 "$ROOT/scripts/socx" /usr/local/bin/socx
 ln -sf /usr/local/bin/socx /usr/local/bin/SOCX
 ln -sf /usr/local/bin/socx /usr/local/bin/soc
 install -m 0755 "$ROOT/rc.d/socx" /usr/local/etc/rc.d/socx
+if [ ! -f /usr/local/etc/socx_hosts.conf ]; then
+    install -m 0644 "$ROOT/config/socx_hosts.conf.example" /usr/local/etc/socx_hosts.conf
+fi
 
 echo "SOCX pfSense Wall installed."
 echo "Run: socx"

@@ -1,7 +1,11 @@
 #!/bin/sh
 # SOCX: colorized SOC console dashboard.
 IFLAN=ix0; IFWAN=ix1
+MODE="${SOCX_MODE:-wall}"
 TOPR="pfbtop --interval 0.5 --top 24"
+if [ "$MODE" = "wall" ]; then
+    TOPR="socx-wall --mode wall --interval 0.5"
+fi
 ZK=/var/spool/zeek/zeek
 SURI=$(ls -d /var/log/suricata/suricata_* 2>/dev/null | head -1)
 ALERTS="$SURI/alerts.log"
@@ -19,14 +23,6 @@ tmux kill-session -t socx 2>/dev/null
 # W1 NETX: pfSense cockpit top, color iftop/tcpdump clones underneath.
 tmux new-session -d -s socx -n NETX "$TOPR"
 tmux set-option -t socx -g mouse off
-tmux set-option -t socx -g status on
-tmux set-option -t socx -g status 2
-tmux set-option -t socx -g status-interval 1
-tmux set-option -t socx -g status-position bottom
-tmux set-option -t socx -g status-justify centre
-tmux set-option -t socx -g status-style 'fg=colour51,bg=black,bold'
-tmux set-option -t socx -g status-format[0] '#[fg=colour51,bg=black,bold]#(/usr/local/sbin/socx-bottom-rail socx:NETX)'
-tmux set-option -t socx -g status-format[1] '#[align=left]#[fg=colour226,bg=black]#(SOCX_TICKER_PREFIX= SOCX_TICKER_STEP=18 /usr/local/sbin/socx-alert-ticker #{window_width})'
 tmux set-option -t socx -g pane-border-lines double
 tmux set-option -t socx -g pane-border-style 'fg=colour51'
 tmux set-option -t socx -g pane-active-border-style 'fg=colour51,bold'
@@ -41,13 +37,27 @@ tmux set-window-option -t socx -g window-status-format '#[fg=colour245,bg=black]
 tmux set-window-option -t socx -g window-status-current-format '#[fg=colour16,bg=colour201,bold] #I:#W '
 tmux set-window-option -t socx -g window-active-style 'fg=colour255,bg=black'
 tmux set-window-option -t socx -g window-style 'fg=colour250,bg=black'
-tmux split-window -v -p 38 -t socx:NETX "iftopx -i $IFLAN -n -N"
-tmux split-window -h -p 44 -t socx:NETX.1 "tcpdumpx -i $IFWAN -nn -q"
-tmux select-pane -t socx:NETX.0 -T 'PF TOP'
-tmux select-pane -t socx:NETX.1 -T 'IFTOPX FLOW RADAR'
-tmux select-pane -t socx:NETX.2 -T 'TCPDUMPX PACKET STORY'
-tmux set-window-option -t socx:NETX pane-border-status off
-tmux set-window-option -t socx:NETX pane-border-format '#[fg=colour51,bold]#{pane_title}'
+if [ "$MODE" = "wall" ]; then
+    tmux set-option -t socx -g status off
+    tmux set-window-option -t socx:NETX pane-border-status off
+    tmux select-pane -t socx:NETX.0 -T 'SOCX WALL MODE'
+else
+    tmux set-option -t socx -g status on
+    tmux set-option -t socx -g status 2
+    tmux set-option -t socx -g status-interval 1
+    tmux set-option -t socx -g status-position bottom
+    tmux set-option -t socx -g status-justify centre
+    tmux set-option -t socx -g status-style 'fg=colour51,bg=black,bold'
+    tmux set-option -t socx -g status-format[0] '#[fg=colour51,bg=black,bold]#(/usr/local/sbin/socx-bottom-rail socx:NETX)'
+    tmux set-option -t socx -g status-format[1] '#[align=left]#[fg=colour226,bg=black]#(SOCX_TICKER_PREFIX= SOCX_TICKER_STEP=18 /usr/local/sbin/socx-alert-ticker #{window_width})'
+    tmux split-window -v -p 38 -t socx:NETX "iftopx -i $IFLAN -n -N"
+    tmux split-window -h -p 44 -t socx:NETX.1 "tcpdumpx -i $IFWAN -nn -q"
+    tmux select-pane -t socx:NETX.0 -T 'PF TOP'
+    tmux select-pane -t socx:NETX.1 -T 'IFTOPX FLOW RADAR'
+    tmux select-pane -t socx:NETX.2 -T 'TCPDUMPX PACKET STORY'
+    tmux set-window-option -t socx:NETX pane-border-status off
+    tmux set-window-option -t socx:NETX pane-border-format '#[fg=colour51,bold]#{pane_title}'
+fi
 tmux select-pane -t socx:NETX.0
 
 # W2 THREATX: retain the existing alert views, but with brighter grep color.

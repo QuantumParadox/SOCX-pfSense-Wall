@@ -15,7 +15,9 @@ Suggested topics:
 ## What It Does
 
 - Starts a full-screen tmux dashboard called `socx`.
+- Defaults to `SOCX_MODE=wall`, a single-pane high-contrast wall display with internal panels and clipping.
 - Shows a classic split-wall `NETX` layout: btop-style pfSense cockpit on top, IFTopX bottom-left, TCPDumpX bottom-right.
+- Adds `socx-wall`, a readable wall-mode renderer with symmetric CPU/RAM, process, IFTopX, TCPDumpX, UPS, and event ticker panels.
 - Shows CPU graph, CPU cores, RAM/ARC, pf state/search counters, live interface rates, and top processes in the top cockpit.
 - Shows compact NUT/APC UPS watts/load/battery/runtime in the top-left `mem net pf live` box.
 - Adds `iftopx`, a readable color flow radar for live LAN/WAN traffic.
@@ -30,6 +32,7 @@ Suggested topics:
 ## Files
 
 - `scripts/pfsense-btop.php` - btop-style read-only pfSense monitor.
+- `scripts/socx-wall.php` - single-pane wall-mode renderer with panel clipping and demo mode.
 - `scripts/socxboard.sh` - tmux layout and SOCX session launcher.
 - `scripts/socx-bottom-rail` - dynamically draws the lower frame rail and center join.
 - `scripts/socx-alert-ticker` - bottom status ticker for readable firewall/security events.
@@ -37,7 +40,8 @@ Suggested topics:
 - `scripts/socx-iftop-color` and `scripts/socx_iftop_color.pl` - color flow radar wrapper and renderer.
 - `scripts/socx-tcpdump-color` and `scripts/socx_tcpdump_color.pl` - color packet story wrapper and renderer.
 - `scripts/iftopx`, `scripts/tcpdumpx`, `scripts/socx` - convenience launchers.
-- `rc.d/socx.sh` - pfSense/FreeBSD boot script for automatic detached startup.
+- `config/socx_hosts.conf.example` - optional friendly-name map for local LAN hosts.
+- `rc.d/socx` - pfSense/FreeBSD boot script for automatic detached startup.
 
 ## Install On pfSense
 
@@ -54,6 +58,24 @@ socx
 ```
 
 The installer also creates `soc` and `SOCX` aliases.
+
+Wall mode is the default. To launch the older split-pane layout:
+
+```sh
+SOCX_MODE=classic socx
+```
+
+Preview the wall renderer safely with fake data:
+
+```sh
+socx-wall --demo --mode wall --once --width 140 --height 36
+```
+
+Friendly hostnames are read from:
+
+```sh
+/usr/local/etc/socx_hosts.conf
+```
 
 ## Autoboot
 

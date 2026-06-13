@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.24
+
+- Added dedicated `SOCX_MODE=wall` with a new single-pane `socx-wall` renderer for large, high-contrast wall displays.
+- Added a clipped panel layout system with `truncate_text`, `pad_or_clip`, `render_box`, `render_row`, `draw_hline`, `draw_vline`, and `safe_write` helpers.
+- Added demo mode via `socx-wall --demo --mode wall --once` for safe layout previews without live pfSense data.
+- Added friendly host mapping through `/usr/local/etc/socx_hosts.conf`.
+- Made the wall-mode IFTopX/TCPDumpX areas symmetrical and kept UPS, CPU cores, process rows, and the event ticker inside fixed panels.
+
 ## v0.1.23
 
 - Added narrow two-line IFTopX formatting for the bottom-left pane so flow, rates, and class remain readable without right-edge clipping.

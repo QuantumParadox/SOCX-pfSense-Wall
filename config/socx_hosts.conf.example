@@ -1,0 +1,10 @@
+# SOCX friendly host map.
+# Format:
+# IP=Name
+#
+# Local LAN hosts render as Name/LAN.x when a mapping exists.
+
+192.168.1.161=JupiterLXI
+192.168.1.102=Enceladus
+192.168.1.127=NAS-Core
+192.168.1.121=Mediabox
