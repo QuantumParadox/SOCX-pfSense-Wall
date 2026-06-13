@@ -8,7 +8,7 @@ declare(strict_types=1);
  */
 
 const APP_NAME = 'pfsense-btop';
-const APP_VERSION = '0.5.0';
+const APP_VERSION = '0.6.0';
 
 $opts = parse_args($argv);
 if ($opts['help']) {
@@ -538,7 +538,7 @@ function render_frame(array $f, int $cols, int $rows, bool $color): string
 
 function render_full_frame(array $f, int $cols, int $rows, bool $color): string
 {
-    $topH = min(11, max(9, (int)ceil($rows * 0.44)));
+    $topH = min(16, max(11, (int)floor($rows * 0.34)));
     $bottomH = max(8, $rows - $topH);
     $rightW = min(max(52, (int)floor($cols * 0.54)), $cols - 44);
     $leftW = $cols - $rightW;
@@ -981,10 +981,11 @@ function cpu_graph(array $history, int $width, int $height, bool $color, string 
     $scale = min(100.0, $scale);
     $lines = [];
     for ($row = $height; $row >= 1; $row--) {
-        $threshold = ($row / $height) * $scale;
         $line = '';
         foreach ($samples as $v) {
-            if ($v >= $threshold) {
+            $level = (int)round(($v / $scale) * ($height - 1)) + 1;
+            $level = max(1, min($height, $level));
+            if ($row === $level) {
                 $line .= '#';
             } elseif ($row === 1) {
                 $line .= '.';

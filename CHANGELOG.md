@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.14
+
+- Converted the primary `NETX` wall into a full-screen btop-style SOC cockpit.
+- Moved IFTop/TCPDump into a separate `TRAFFICX` window so the main AOC view can match the btop layout.
+- Expanded the top CPU panel height on full-screen walls and kept CPU cores on the right.
+- Made the bottom rail draw a clean full-width line when the active wall has one pane.
+
 ## v0.1.13
 
 - Reworked the SOC cockpit frame style toward a btop/LCARS look with rounded Unicode panel borders.
