@@ -26,7 +26,7 @@ tmux set-option -t socx -g status-position bottom
 tmux set-option -t socx -g status-justify centre
 tmux set-option -t socx -g status-style 'fg=colour51,bg=black,bold'
 tmux set-option -t socx -g status-format[0] '#[fg=colour51,bg=black,bold]#(/usr/local/sbin/socx-bottom-rail socx:NETX)'
-tmux set-option -t socx -g status-format[1] '#[align=left]#[fg=colour16,bg=colour51,bold] SOCX WALL #[fg=colour231,bg=colour54,bold] JupiterLXI #[fg=colour119,bg=black,bold] LIVE #[fg=colour245,bg=black]| #[fg=colour226,bg=black]#(SOCX_TICKER_STEP=18 /usr/local/sbin/socx-alert-ticker 88) #[align=right]#[fg=colour51,bg=black]tcpdumpx #[fg=colour245,bg=black]| #[fg=colour226,bg=black,bold]%Y-%m-%d #[fg=colour51,bg=black,bold]%H:%M:%S '
+tmux set-option -t socx -g status-format[1] '#[align=left]#[fg=colour16,bg=colour51,bold] %H:%M:%S #[fg=colour119,bg=black,bold] LIVE #[fg=colour245,bg=black]| #[fg=colour226,bg=black]#(SOCX_TICKER_STEP=18 /usr/local/sbin/socx-alert-ticker 48) #[align=right]#[fg=colour45,bg=black,bold]#{@socx_ups} '
 tmux set-option -t socx -g pane-border-lines double
 tmux set-option -t socx -g pane-border-style 'fg=colour51'
 tmux set-option -t socx -g pane-active-border-style 'fg=colour51,bold'
@@ -34,9 +34,11 @@ tmux set-option -t socx -g message-style 'fg=colour16,bg=colour51,bold'
 tmux set-option -t socx -g display-panes-colour colour201
 tmux set-option -t socx -g display-panes-active-colour colour51
 tmux set-option -t socx -g status-left-length 132
-tmux set-option -t socx -g status-right-length 44
-tmux set-option -t socx -g status-left '#[fg=colour16,bg=colour51,bold] SOCX WALL #[fg=colour231,bg=colour54,bold] JupiterLXI #[fg=colour119,bg=black,bold] LIVE #[fg=colour245,bg=black]| #[fg=colour226,bg=black]#(SOCX_TICKER_STEP=18 /usr/local/sbin/socx-alert-ticker 88) '
-tmux set-option -t socx -g status-right '#[fg=colour51]tcpdumpx #[fg=colour245]| #[fg=colour226,bold]%Y-%m-%d #[fg=colour51,bold]%H:%M:%S '
+tmux set-option -t socx -g status-right-length 60
+tmux set-option -t socx -g status-left '#[fg=colour16,bg=colour51,bold] %H:%M:%S #[fg=colour119,bg=black,bold] LIVE #[fg=colour245,bg=black]| #[fg=colour226,bg=black]#(SOCX_TICKER_STEP=18 /usr/local/sbin/socx-alert-ticker 48) '
+tmux set-option -t socx -g status-right '#[fg=colour45,bold]#{@socx_ups} '
+tmux set-option -t socx -g @socx_ups "$(SOCX_UPS_COMPACT=1 /usr/local/sbin/socx-ups-status 2>/dev/null || echo 'NUT UPS warming up')"
+tmux run-shell -b 'while tmux has-session -t socx 2>/dev/null; do tmux set-option -q -t socx -g @socx_ups "$(SOCX_UPS_COMPACT=1 /usr/local/sbin/socx-ups-status 2>/dev/null || echo NUT UPS unavailable)"; tmux refresh-client -S -t socx 2>/dev/null || true; sleep 0.5; done'
 tmux set-window-option -t socx -g window-status-format '#[fg=colour245,bg=black] #I:#W '
 tmux set-window-option -t socx -g window-status-current-format '#[fg=colour16,bg=colour201,bold] #I:#W '
 tmux set-window-option -t socx -g window-active-style 'fg=colour255,bg=black'

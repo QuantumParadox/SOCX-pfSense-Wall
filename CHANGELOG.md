@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.18
+
+- Refined the classic split-wall bottom rail: removed `SOCX WALL` and `JupiterLXI` labels from the status line.
+- Moved the clock, `LIVE`, and firewall ticker to the left side of the bottom rail.
+- Added compact NUT/APC UPS telemetry on the right side with a 0.5s tmux updater for wattage.
+
 ## v0.1.17
 
 - Restored the classic split-wall `NETX` layout shown in the reference photo.

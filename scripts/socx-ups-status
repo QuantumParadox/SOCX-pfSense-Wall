@@ -50,6 +50,10 @@ for ups in $("$UPSC" -l 2>/dev/null); do
     [ -n "$charge" ] || charge='?'
     [ -n "$model" ] || model='UPS'
     runtime_fmt=$(fmt_runtime "$runtime")
+    if [ "${SOCX_UPS_COMPACT:-}" = "1" ]; then
+        printf 'NUT %sW load %s%% batt %s%% run %s' "$watts" "$load" "$charge" "$runtime_fmt"
+        exit 0
+    fi
     line=$(printf 'NUT APC %s %s %sW (0.5s) load %s%% batt %s%% run %s' "$model" "$(status_word "$status")" "$watts" "$load" "$charge" "$runtime_fmt")
     [ -n "$temp" ] && line="$line temp ${temp}C"
     printf '%s' "$line"
