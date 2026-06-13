@@ -1,7 +1,7 @@
 #!/bin/sh
 # SOCX: colorized SOC console dashboard.
 IFLAN=ix0; IFWAN=ix1
-TOPR="pfbtop --interval 0.5 --top 12"
+TOPR="pfbtop --interval 1.5 --top 24"
 ZK=/var/spool/zeek/zeek
 SURI=$(ls -d /var/log/suricata/suricata_* 2>/dev/null | head -1)
 ALERTS="$SURI/alerts.log"
@@ -15,9 +15,8 @@ mesg n 2>/dev/null || true
 chmod go-w /dev/ttyv0 /dev/pts/* 2>/dev/null || true
 
 tmux kill-session -t socx 2>/dev/null
-tmux kill-session -t soc 2>/dev/null
 
-# W1 NETX: single-pane LCARS SOC cockpit with integrated traffic/firewall feed.
+# W1 NETX: pfSense cockpit top, color iftop/tcpdump clones underneath.
 tmux new-session -d -s socx -n NETX "$TOPR"
 tmux set-option -t socx -g mouse off
 tmux set-option -t socx -g status on
@@ -27,24 +26,26 @@ tmux set-option -t socx -g status-position bottom
 tmux set-option -t socx -g status-justify centre
 tmux set-option -t socx -g status-style 'fg=colour51,bg=black,bold'
 tmux set-option -t socx -g status-format[0] '#[fg=colour51,bg=black,bold]#(/usr/local/sbin/socx-bottom-rail socx:NETX)'
-tmux set-option -t socx -g status-format[1] '#[align=left]#[fg=colour45,bg=black,bold]#{@socx_ups} #[fg=colour245,bg=black]| #[fg=colour119,bg=black,bold]LIVE FW #[fg=colour245,bg=black]| #[fg=colour226,bg=black]#(SOCX_TICKER_STEP=18 /usr/local/sbin/socx-alert-ticker 76) #[align=right]#[fg=colour226,bg=black,bold]%Y-%m-%d #[fg=colour51,bg=black,bold]%H:%M:%S '
+tmux set-option -t socx -g status-format[1] '#[align=left]#[fg=colour16,bg=colour51,bold] SOCX WALL #[fg=colour231,bg=colour54,bold] JupiterLXI #[fg=colour119,bg=black,bold] LIVE #[fg=colour245,bg=black]| #[fg=colour226,bg=black]#(SOCX_TICKER_STEP=18 /usr/local/sbin/socx-alert-ticker 88) #[align=right]#[fg=colour51,bg=black]tcpdumpx #[fg=colour245,bg=black]| #[fg=colour226,bg=black,bold]%Y-%m-%d #[fg=colour51,bg=black,bold]%H:%M:%S '
 tmux set-option -t socx -g pane-border-lines double
 tmux set-option -t socx -g pane-border-style 'fg=colour51'
 tmux set-option -t socx -g pane-active-border-style 'fg=colour51,bold'
 tmux set-option -t socx -g message-style 'fg=colour16,bg=colour51,bold'
 tmux set-option -t socx -g display-panes-colour colour201
 tmux set-option -t socx -g display-panes-active-colour colour51
-tmux set-option -t socx -g status-left-length 178
+tmux set-option -t socx -g status-left-length 132
 tmux set-option -t socx -g status-right-length 44
-tmux set-option -t socx -g status-left '#[fg=colour45,bg=black,bold]#{@socx_ups} #[fg=colour245,bg=black]| #[fg=colour119,bg=black,bold]LIVE FW #[fg=colour245,bg=black]| #[fg=colour226,bg=black]#(SOCX_TICKER_STEP=18 /usr/local/sbin/socx-alert-ticker 76) '
-tmux set-option -t socx -g status-right '#[fg=colour226,bold]%Y-%m-%d #[fg=colour51,bold]%H:%M:%S '
-tmux set-option -t socx -g @socx_ups "$(/usr/local/sbin/socx-ups-status 2>/dev/null || echo 'NUT APC UPS warming up')"
-tmux run-shell -b 'while tmux has-session -t socx 2>/dev/null; do tmux set-option -q -t socx -g @socx_ups "$(/usr/local/sbin/socx-ups-status 2>/dev/null || echo NUT APC UPS unavailable)"; tmux refresh-client -S -t socx 2>/dev/null || true; sleep 0.5; done'
+tmux set-option -t socx -g status-left '#[fg=colour16,bg=colour51,bold] SOCX WALL #[fg=colour231,bg=colour54,bold] JupiterLXI #[fg=colour119,bg=black,bold] LIVE #[fg=colour245,bg=black]| #[fg=colour226,bg=black]#(SOCX_TICKER_STEP=18 /usr/local/sbin/socx-alert-ticker 88) '
+tmux set-option -t socx -g status-right '#[fg=colour51]tcpdumpx #[fg=colour245]| #[fg=colour226,bold]%Y-%m-%d #[fg=colour51,bold]%H:%M:%S '
 tmux set-window-option -t socx -g window-status-format '#[fg=colour245,bg=black] #I:#W '
 tmux set-window-option -t socx -g window-status-current-format '#[fg=colour16,bg=colour201,bold] #I:#W '
 tmux set-window-option -t socx -g window-active-style 'fg=colour255,bg=black'
 tmux set-window-option -t socx -g window-style 'fg=colour250,bg=black'
-tmux select-pane -t socx:NETX.0 -T 'LCARS SOC CENTER'
+tmux split-window -v -p 42 -t socx:NETX "iftopx -i $IFLAN -n -N"
+tmux split-window -h -p 44 -t socx:NETX.1 "tcpdumpx -i $IFWAN -nn -q"
+tmux select-pane -t socx:NETX.0 -T 'PF TOP'
+tmux select-pane -t socx:NETX.1 -T 'IFTOPX FLOW RADAR'
+tmux select-pane -t socx:NETX.2 -T 'TCPDUMPX PACKET STORY'
 tmux set-window-option -t socx:NETX pane-border-status off
 tmux set-window-option -t socx:NETX pane-border-format '#[fg=colour51,bold]#{pane_title}'
 tmux select-pane -t socx:NETX.0

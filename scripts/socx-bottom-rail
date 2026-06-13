@@ -2,7 +2,6 @@
 # Print the lower frame rail for the SOCX bottom panes.
 target=${1:-socx:NETX}
 win_width=$(tmux display-message -p -t "$target" '#{window_width}' 2>/dev/null || printf '180')
-pane_count=$(tmux list-panes -t "$target" 2>/dev/null | wc -l | tr -d ' ')
 pane_right=$(tmux display-message -p -t "$target.1" '#{pane_right}' 2>/dev/null || printf '')
 
 case "$win_width" in
@@ -13,15 +12,6 @@ case "$pane_right" in
 esac
 
 [ "$win_width" -lt 12 ] && win_width=12
-
-case "$pane_count" in
-    ''|*[!0-9]*) pane_count=0 ;;
-esac
-if [ "$pane_count" -lt 2 ]; then
-    awk -v w="$win_width" 'BEGIN { for (i = 0; i < w; i++) printf "═"; }'
-    exit 0
-fi
-
 [ "$pane_right" -lt 2 ] && pane_right=$((win_width / 2 - 1))
 [ "$pane_right" -gt $((win_width - 4)) ] && pane_right=$((win_width / 2 - 1))
 

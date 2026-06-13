@@ -8,7 +8,7 @@ declare(strict_types=1);
  */
 
 const APP_NAME = 'pfsense-btop';
-const APP_VERSION = '0.8.0';
+const APP_VERSION = '0.3.1';
 
 $opts = parse_args($argv);
 if ($opts['help']) {
@@ -23,8 +23,6 @@ $once = (bool)$opts['once'];
 $state = [
     'net' => [],
     'cpu_history' => [],
-    'ram_history' => [],
-    'net_history' => [],
     'time' => microtime(true),
     'static' => static_info(),
 ];
@@ -92,7 +90,7 @@ function print_help(): void
     echo APP_NAME . ' ' . APP_VERSION . "\n";
     echo "Usage: pfsense-btop [--once] [--no-color] [--interval SEC] [--top N]\n";
     echo "\n";
-    echo "Panels: LCARS header, CPU/RAM/process, network/state traffic, firewall events, UPS rail.\n";
+    echo "Panels: CPU, memory/ARC/swap, pf firewall, network rates, disks, top processes.\n";
     echo "Press Ctrl-C to exit the live dashboard.\n";
 }
 
@@ -157,28 +155,13 @@ function collect_frame(array &$state, int $topCount): array
     }
 
     $mem = parse_mem($top, $state['static']['physmem']);
-    $state['ram_history'][] = $mem['used_pct'];
-    if (count($state['ram_history']) > 240) {
-        $state['ram_history'] = array_slice($state['ram_history'], -240);
-    }
     $load = parse_load($top);
     $pf = parse_pf(run_cmd('/sbin/pfctl -si'));
     $net = parse_net(run_cmd('/usr/bin/netstat -ibn'), $state, $now);
-    $netTotal = 0;
-    foreach ($net as $row) {
-        $netTotal += (int)($row['rx'] ?? 0) + (int)($row['tx'] ?? 0);
-    }
-    $state['net_history'][] = $netTotal;
-    if (count($state['net_history']) > 240) {
-        $state['net_history'] = array_slice($state['net_history'], -240);
-    }
     $disks = parse_disks(run_cmd('/bin/df -h / /var /tmp /cf 2>/dev/null'));
     $procs = parse_processes(run_cmd('/bin/ps auxww'), $topCount);
     $temps = parse_temps(run_cmd("/sbin/sysctl -a | /usr/bin/grep -E 'dev.cpu\\.[0-9]+\\.temperature|hw.acpi.thermal.*temperature' | /usr/bin/head -8"));
     $freq = trim(run_cmd('/sbin/sysctl -n dev.cpu.0.freq'));
-    $ups = collect_ups();
-    $talkers = collect_state_talkers();
-    $firewall = collect_firewall_events();
 
     $state['time'] = $now;
 
@@ -188,109 +171,14 @@ function collect_frame(array &$state, int $topCount): array
         'load' => $load,
         'cpu' => $cpu,
         'cpu_history' => $state['cpu_history'],
-        'ram_history' => $state['ram_history'],
-        'net_history' => $state['net_history'],
         'freq_mhz' => is_numeric($freq) ? (int)$freq : 0,
         'mem' => $mem,
         'pf' => $pf,
         'net' => $net,
-        'talkers' => $talkers,
-        'firewall' => $firewall,
         'disks' => $disks,
         'procs' => $procs,
         'temps' => $temps,
-        'ups' => $ups,
     ];
-}
-
-function collect_ups(): array
-{
-    $empty = [
-        'present' => false,
-        'name' => '',
-        'model' => '',
-        'status' => '',
-        'charge_pct' => null,
-        'runtime_s' => null,
-        'load_pct' => null,
-        'power_w' => null,
-        'input_v' => null,
-        'output_v' => null,
-        'temp_c' => null,
-    ];
-
-    $upsc = trim(run_cmd('/bin/sh -c "command -v upsc || true"'));
-    if ($upsc === '') {
-        return $empty;
-    }
-
-    $names = preg_split('/\s+/', trim(run_cmd($upsc . ' -l')));
-    if (!$names) {
-        return $empty;
-    }
-
-    foreach ($names as $name) {
-        $name = trim($name);
-        if ($name === '' || !preg_match('/^[A-Za-z0-9_.:@-]+$/', $name)) {
-            continue;
-        }
-        $raw = run_cmd($upsc . ' ' . escapeshellarg($name));
-        if (trim($raw) === '') {
-            continue;
-        }
-        $ups = parse_ups($name, $raw);
-        if ($ups['present']) {
-            return $ups;
-        }
-    }
-
-    return $empty;
-}
-
-function parse_ups(string $name, string $raw): array
-{
-    $data = [];
-    foreach (explode("\n", $raw) as $line) {
-        if (preg_match('/^([^:]+):\s*(.*)$/', trim($line), $m)) {
-            $data[strtolower($m[1])] = trim($m[2]);
-        }
-    }
-
-    $inputV = num_or_null($data['input.voltage'] ?? null);
-    $outputV = num_or_null($data['output.voltage'] ?? null);
-    $current = num_or_null($data['output.current'] ?? null);
-    $power = num_or_null($data['ups.realpower'] ?? null);
-    if ($power === null) {
-        $power = num_or_null($data['ups.power'] ?? null);
-    }
-    if ($power === null && $outputV !== null && $current !== null) {
-        $power = $outputV * $current;
-    }
-
-    return [
-        'present' => true,
-        'name' => $name,
-        'model' => $data['device.model'] ?? $data['ups.model'] ?? $name,
-        'status' => strtoupper($data['ups.status'] ?? ''),
-        'charge_pct' => num_or_null($data['battery.charge'] ?? null),
-        'runtime_s' => num_or_null($data['battery.runtime'] ?? null),
-        'load_pct' => num_or_null($data['ups.load'] ?? null),
-        'power_w' => $power,
-        'input_v' => $inputV,
-        'output_v' => $outputV,
-        'temp_c' => num_or_null($data['ups.temperature'] ?? null),
-    ];
-}
-
-function num_or_null(?string $value): ?float
-{
-    if ($value === null || trim($value) === '') {
-        return null;
-    }
-    if (preg_match('/-?[0-9.]+/', $value, $m)) {
-        return (float)$m[0];
-    }
-    return null;
 }
 
 function parse_load(string $top): array
@@ -426,267 +314,6 @@ function parse_pf(string $raw): array
     return $pf;
 }
 
-function collect_state_talkers(): array
-{
-    $raw = run_cmd('/bin/sh -c "/sbin/pfctl -ss 2>/dev/null | /usr/bin/head -120"');
-    $seen = [];
-    $rows = [];
-    foreach (explode("\n", $raw) as $line) {
-        $line = trim($line);
-        if ($line === '') {
-            continue;
-        }
-        if (!preg_match('/\b(tcp|udp|icmp|icmp6)\s+(\S+)(?:\s+\(([^)]+)\))?\s+->\s+(\S+)/i', $line, $m)) {
-            continue;
-        }
-        $proto = strtoupper($m[1]);
-        $srcEndpoint = trim((string)($m[3] ?? '')) !== '' ? $m[3] : $m[2];
-        [$srcIp, $srcPort] = split_endpoint($srcEndpoint);
-        [$dstIp, $dstPort] = split_endpoint($m[4]);
-        if ($srcIp === '' || $dstIp === '') {
-            continue;
-        }
-        $srcLabel = ip_label($srcIp);
-        $dstLabel = ip_label($dstIp);
-        if (!is_local_label($srcLabel) && is_local_label($dstLabel)) {
-            [$srcLabel, $dstLabel] = [$dstLabel, $srcLabel];
-            [$srcPort, $dstPort] = [$dstPort, $srcPort];
-        }
-        $key = $proto . '|' . $srcIp . '|' . $dstIp . '|' . $dstPort;
-        if (isset($seen[$key])) {
-            continue;
-        }
-        $seen[$key] = true;
-        $rows[] = [
-            'asset' => $srcLabel,
-            'peer' => $dstLabel,
-            'proto' => $proto,
-            'service' => service_name($dstPort !== '' ? $dstPort : $srcPort),
-            'raw' => $line,
-        ];
-        if (count($rows) >= 10) {
-            break;
-        }
-    }
-    return $rows;
-}
-
-function is_local_label(string $label): bool
-{
-    return $label === 'pfSense' || str_starts_with($label, 'LAN.') || $label === 'mDNS' || $label === 'SSDP' || $label === 'BCAST';
-}
-
-function collect_firewall_events(): array
-{
-    $raw = run_cmd("/bin/sh -c '/usr/sbin/clog /var/log/filter.log 2>/dev/null | /usr/bin/tail -n 160'");
-    $events = [];
-    $stats = [
-        'pass' => 0,
-        'block' => 0,
-        'top_src' => '?',
-        'top_port' => '?',
-    ];
-    $srcCount = [];
-    $portCount = [];
-
-    foreach (explode("\n", $raw) as $line) {
-        $event = parse_filterlog_event($line);
-        if ($event === null) {
-            continue;
-        }
-        $events[] = $event;
-        $action = strtolower((string)$event['action']);
-        if ($action === 'pass') {
-            $stats['pass']++;
-        } elseif ($action === 'block') {
-            $stats['block']++;
-        }
-        $src = (string)$event['src_ip'];
-        $port = (string)$event['dst_port'];
-        if ($src !== '') {
-            $srcCount[$src] = ($srcCount[$src] ?? 0) + 1;
-        }
-        if ($port !== '') {
-            $portCount[$port] = ($portCount[$port] ?? 0) + 1;
-        }
-    }
-
-    arsort($srcCount);
-    arsort($portCount);
-    $topSrc = array_key_first($srcCount);
-    $topPort = array_key_first($portCount);
-    if (is_string($topSrc) && $topSrc !== '') {
-        $stats['top_src'] = ip_label($topSrc) . ' (' . $srcCount[$topSrc] . ')';
-    }
-    if (is_string($topPort) && $topPort !== '') {
-        $svc = service_name($topPort);
-        $stats['top_port'] = $topPort . ($svc !== '' ? '/' . $svc : '') . ' (' . $portCount[$topPort] . ')';
-    }
-
-    return [
-        'events' => array_slice(array_reverse($events), 0, 24),
-        'stats' => $stats,
-    ];
-}
-
-function parse_filterlog_event(string $line): ?array
-{
-    $line = trim($line);
-    if ($line === '') {
-        return null;
-    }
-    $stamp = date('H:i:s');
-    $csv = $line;
-    if (preg_match('/^([A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2}).*filterlog(?:\[[0-9]+\])?:\s*(.+)$/', $line, $m)) {
-        $stamp = substr($m[1], -8);
-        $csv = $m[2];
-    } elseif (preg_match('/^(\d{2}:\d{2}:\d{2}).*?((?:[^,]*,){12}.+)$/', $line, $m)) {
-        $stamp = $m[1];
-        $csv = $m[2];
-    }
-
-    $parts = str_getcsv($csv);
-    if (count($parts) < 19) {
-        return null;
-    }
-
-    $action = strtoupper(trim((string)($parts[6] ?? '')));
-    if ($action !== 'PASS' && $action !== 'BLOCK') {
-        return null;
-    }
-    $dir = strtoupper(trim((string)($parts[7] ?? '')));
-    $proto = strtoupper(trim((string)($parts[16] ?? 'IP')));
-    $src = trim((string)($parts[18] ?? ''));
-    $dst = trim((string)($parts[19] ?? ''));
-    $srcPort = trim((string)($parts[20] ?? ''));
-    $dstPort = trim((string)($parts[21] ?? ''));
-    $len = trim((string)($parts[17] ?? ''));
-
-    if ($src === '' || $dst === '') {
-        return null;
-    }
-
-    $service = service_name($dstPort !== '' ? $dstPort : $srcPort);
-    return [
-        'time' => $stamp,
-        'action' => $action,
-        'dir' => $dir,
-        'proto' => $proto,
-        'src_ip' => $src,
-        'dst_ip' => $dst,
-        'src' => ip_label($src),
-        'dst' => ip_label($dst),
-        'src_port' => $srcPort,
-        'dst_port' => $dstPort,
-        'service' => $service,
-        'len' => $len,
-        'note' => firewall_note($action, $proto, $service, $dstPort, $len),
-    ];
-}
-
-function split_endpoint(string $endpoint): array
-{
-    $endpoint = trim($endpoint);
-    $endpoint = trim($endpoint, ',;');
-    if (preg_match('/^(\d{1,3}(?:\.\d{1,3}){3})[.:](\d+)$/', $endpoint, $m)) {
-        return [$m[1], $m[2]];
-    }
-    if (preg_match('/^(\d{1,3}(?:\.\d{1,3}){3})$/', $endpoint, $m)) {
-        return [$m[1], ''];
-    }
-    if (preg_match('/^\[?([0-9a-f:]+)\]?[.:](\d+)$/i', $endpoint, $m)) {
-        return [$m[1], $m[2]];
-    }
-    return [$endpoint, ''];
-}
-
-function ip_label(string $ip): string
-{
-    if ($ip === '192.168.1.1') {
-        return 'pfSense';
-    }
-    if ($ip === '192.168.1.255' || $ip === '255.255.255.255') {
-        return 'BCAST';
-    }
-    if ($ip === '224.0.0.251') {
-        return 'mDNS';
-    }
-    if ($ip === '239.255.255.250') {
-        return 'SSDP';
-    }
-    if (str_starts_with($ip, '224.') || str_starts_with($ip, '239.')) {
-        return 'MULTI';
-    }
-    if ($ip === '1.1.1.1') {
-        return 'Cloudflare';
-    }
-    if ($ip === '8.8.8.8') {
-        return 'GoogleDNS';
-    }
-    if ($ip === '9.9.9.9') {
-        return 'Quad9';
-    }
-    if ($ip === '74.46.12.1') {
-        return 'ISP-GW';
-    }
-    if (preg_match('/^192\.168\.1\.(\d+)$/', $ip, $m)) {
-        return 'LAN.' . $m[1];
-    }
-    if (preg_match('/^74\.46\.(\d+)\.(\d+)$/', $ip, $m)) {
-        return 'ISP.' . $m[1] . '.' . $m[2];
-    }
-    if (str_contains($ip, ':')) {
-        return 'IPv6';
-    }
-    if (preg_match('/^\d+\.\d+\.(\d+)\.(\d+)$/', $ip, $m)) {
-        return 'EXT.' . $m[1] . '.' . $m[2];
-    }
-    return $ip;
-}
-
-function service_name(string $port): string
-{
-    return match ($port) {
-        '22' => 'ssh',
-        '53' => 'dns',
-        '80' => 'web',
-        '123' => 'ntp',
-        '443' => 'https',
-        '500', '4500' => 'vpn',
-        '1900' => 'ssdp',
-        '5353' => 'mdns',
-        '5900' => 'vnc',
-        default => $port !== '' ? 'port ' . $port : '',
-    };
-}
-
-function firewall_note(string $action, string $proto, string $service, string $port, string $len): string
-{
-    $parts = [];
-    if ($service !== '') {
-        $parts[] = $service;
-    } elseif ($proto !== '') {
-        $parts[] = strtolower($proto);
-    }
-    if ($action === 'BLOCK') {
-        if ($port === '22') {
-            $parts[] = 'ssh probe';
-        } elseif ($port === '5900') {
-            $parts[] = 'vnc scan';
-        } elseif ($port === '500' || $port === '4500') {
-            $parts[] = 'vpn probe';
-        } elseif ($service === 'mdns' || $service === 'ssdp') {
-            $parts[] = 'noisy local';
-        } else {
-            $parts[] = 'blocked';
-        }
-    }
-    if ($len !== '' && is_numeric($len)) {
-        $parts[] = (string)(int)$len . 'B';
-    }
-    return implode(' ', array_unique($parts));
-}
-
 function parse_net(string $raw, array &$state, float $now): array
 {
     $rows = [];
@@ -808,13 +435,7 @@ function render_frame(array $f, int $cols, int $rows, bool $color): string
     $cols = max(20, $cols);
     $rows = max(8, $rows);
 
-    if ($cols >= 78 && $rows >= 20) {
-        return render_lcars_soc_frame($f, $cols, $rows, $color);
-    }
-    if ($cols >= 120 && $rows >= 20 && $rows <= 32) {
-        return render_soc_center_frame($f, $cols, $rows, $color);
-    }
-    if ($cols >= 100 && $rows >= 22) {
+    if ($cols >= 100 && $rows >= 28) {
         return render_full_frame($f, $cols, $rows, $color);
     }
     if ($cols >= 70 && $rows >= 12) {
@@ -823,318 +444,9 @@ function render_frame(array $f, int $cols, int $rows, bool $color): string
     return render_compact_frame($f, $cols, $rows, $color);
 }
 
-function render_lcars_soc_frame(array $f, int $cols, int $rows, bool $color): string
-{
-    $header = lcars_header($f, $cols, 3, $color);
-    $inTmux = getenv('TMUX') !== false && getenv('TMUX') !== '';
-    $railH = (!$inTmux && $rows >= 32) ? 4 : 0;
-    $available = max(10, $rows - count($header) - $railH);
-
-    if ($cols < 110) {
-        $q1H = min(12, max(10, (int)floor($available * 0.44)));
-        $q2H = min(8, max(6, (int)floor($available * 0.25)));
-        $q3H = max(5, $available - $q1H - $q2H);
-        while ($q1H + $q2H + $q3H > $available && $q1H > 7) {
-            $q1H--;
-        }
-        while ($q1H + $q2H + $q3H > $available && $q2H > 4) {
-            $q2H--;
-        }
-        while ($q1H + $q2H + $q3H > $available && $q3H > 4) {
-            $q3H--;
-        }
-        $lines = array_merge(
-            $header,
-            lcars_compute_quadrant($f, $cols, $q1H, $color),
-            lcars_network_quadrant($f, $cols, $q2H, $color),
-            lcars_firewall_quadrant($f, $cols, $q3H, $color)
-        );
-        if ($railH > 0) {
-            $lines = array_merge($lines, lcars_status_rail($f, $cols, $railH, $color));
-        }
-        return lines_to_screen($lines, $rows, $cols);
-    }
-
-    $q3H = min(12, max(7, (int)floor($available * 0.36)));
-    $topH = max(9, $available - $q3H);
-    if ($topH + $q3H > $available) {
-        $q3H = max(6, $available - $topH);
-    }
-
-    $q1W = min(max(36, (int)floor($cols * 0.43)), $cols - 34);
-    $q2W = $cols - $q1W;
-    $top = hjoin_blocks([
-        lcars_compute_quadrant($f, $q1W, $topH, $color),
-        lcars_network_quadrant($f, $q2W, $topH, $color),
-    ]);
-
-    $lines = array_merge(
-        $header,
-        $top,
-        lcars_firewall_quadrant($f, $cols, $q3H, $color)
-    );
-    if ($railH > 0) {
-        $lines = array_merge($lines, lcars_status_rail($f, $cols, $railH, $color));
-    }
-    return lines_to_screen($lines, $rows, $cols);
-}
-
-function lcars_header(array $f, int $width, int $height, bool $color): array
-{
-    $title = '◣ LCARS · SOC';
-    $line = sprintf(
-        'NODE: %s    %s    LOAD %s %s %s    UPTIME %s',
-        $f['static']['host'],
-        $f['time'],
-        $f['load']['1'],
-        $f['load']['5'],
-        $f['load']['15'],
-        $f['load']['uptime']
-    );
-    return panel($title, [fit($line, max(1, $width - 2))], $width, $height, $color, 'orange');
-}
-
-function lcars_compute_quadrant(array $f, int $width, int $height, bool $color): array
-{
-    $inner = max(1, $width - 2);
-    $cpu = $f['cpu'];
-    $mem = $f['mem'];
-    $temp = max_temp($f['temps']);
-    $traceW = max(8, $inner - 18);
-    $body = [];
-    $body[] = fit(sprintf(
-        'CPU TOTAL %5.1f%% %s',
-        $cpu['used'],
-        sparkline($f['cpu_history'], $traceW, $color, level_color($cpu['used']), 100.0)
-    ), $inner);
-    $body[] = fit(sprintf(
-        'RAM GRAPH  %5.1f%% %s',
-        $mem['used_pct'],
-        sparkline($f['ram_history'] ?? [], $traceW, $color, level_color((float)$mem['used_pct']), 100.0)
-    ), $inner);
-    $body[] = fit(sprintf(
-        'RAM       %s/%s %s',
-        fmt_bytes($mem['used']),
-        fmt_bytes($mem['total']),
-        block_bar((float)$mem['used_pct'], max(6, $inner - 28), $color, level_color((float)$mem['used_pct']))
-    ), $inner);
-
-    $cores = array_values($cpu['cores'] ?? []);
-    $pairW = max(16, (int)floor(($inner - 2) / 2));
-    $maxCoreRows = max(1, min(4, (int)floor(($height - 9) / 2) + 2));
-    for ($i = 0; $i < min(count($cores), $maxCoreRows * 2); $i += 2) {
-        $left = core_summary($cores[$i], $pairW, $color);
-        $right = isset($cores[$i + 1]) ? core_summary($cores[$i + 1], $pairW, $color) : '';
-        $body[] = fit(pad_visible($left, $pairW) . '  ' . pad_visible($right, $pairW), $inner);
-    }
-
-    if ($height < 12) {
-        $body[] = fit('ARC ' . fmt_bytes($mem['arc_total']) . '  TEMP ' . ($temp === '' ? '?' : $temp) . '  LOAD ' . $f['load']['1'] . ' ' . $f['load']['5'], $inner);
-        $body[] = fit(sprintf('%6s %-9s %5s %7s %s', 'PID', 'USER', 'CPU%', 'MEM', 'COMMAND'), $inner);
-        $remaining = max(0, $height - 2 - count($body));
-        foreach (array_slice($f['procs'], 0, $remaining) as $p) {
-            $cmdW = max(8, $inner - 33);
-            $body[] = fit(sprintf(
-                '%6s %-9s %5.1f %7s %s',
-                $p['pid'],
-                trunc($p['user'], 9),
-                $p['cpu'],
-                fmt_bytes($p['rss']),
-                trunc(proc_name($p['cmd']), $cmdW)
-            ), $inner);
-        }
-        return panel('▌Q1  C P U  ·  R A M  ·  P R O C', $body, $width, $height, $color, 'lilac');
-    }
-
-    $body[] = fit(sprintf(
-        'SWAP %s/%s %s',
-        fmt_bytes($mem['swap_used']),
-        fmt_bytes($mem['swap_total']),
-        block_bar((float)$mem['swap_pct'], max(6, $inner - 26), $color, level_color((float)$mem['swap_pct']))
-    ), $inner);
-    $body[] = fit('ARC ' . fmt_bytes($mem['arc_total']) . '  TEMP ' . ($temp === '' ? '?' : $temp) . '  FREQ ' . fmt_freq((int)$f['freq_mhz']), $inner);
-    $body[] = fit(title_ansi('tan', 'PROCESSES  top by CPU', $color), $inner);
-    $body[] = fit(sprintf('%6s %-9s %5s %7s %s', 'PID', 'USER', 'CPU%', 'MEM', 'COMMAND'), $inner);
-
-    $remaining = max(0, $height - 2 - count($body));
-    foreach (array_slice($f['procs'], 0, $remaining) as $p) {
-        $cmdW = max(8, $inner - 33);
-        $body[] = fit(sprintf(
-            '%6s %-9s %5.1f %7s %s',
-            $p['pid'],
-            trunc($p['user'], 9),
-            $p['cpu'],
-            fmt_bytes($p['rss']),
-            trunc(proc_name($p['cmd']), $cmdW)
-        ), $inner);
-    }
-
-    return panel('▌Q1  C P U  ·  M E M O R Y  ·  P R O C', $body, $width, $height, $color, 'lilac');
-}
-
-function core_summary(array $core, int $width, bool $color): string
-{
-    $used = (float)($core['used'] ?? 0.0);
-    $barW = max(4, $width - 10);
-    return fit(sprintf('c%-2d %s %02.0f', $core['id'] ?? 0, block_bar($used, $barW, $color, level_color($used)), $used), $width);
-}
-
-function lcars_network_quadrant(array $f, int $width, int $height, bool $color): array
-{
-    $inner = max(1, $width - 2);
-    $body = [];
-    $body[] = fit('TRAFFIC TRACE ' . sparkline($f['net_history'] ?? [], max(8, $inner - 15), $color, 'sky'), $inner);
-    $short = $height < 8;
-    if (!$short) {
-        $body[] = fit(sprintf('%-8s %10s %10s  %s', 'IFACE', 'RX/s', 'TX/s', 'ACTIVITY'), $inner);
-    }
-
-    $maxRate = 1;
-    foreach ($f['net'] as $n) {
-        $maxRate = max($maxRate, (int)($n['rx'] ?? 0), (int)($n['tx'] ?? 0));
-    }
-    $barW = max(4, $inner - 35);
-    if ($short) {
-        foreach (array_slice($f['net'], 0, max(1, $height - 4)) as $n) {
-            $rx = $n['rx'] === null ? 'sampling' : fmt_bytes((int)$n['rx']) . '/s';
-            $tx = $n['tx'] === null ? 'sampling' : fmt_bytes((int)$n['tx']) . '/s';
-            $pct = percent((int)($n['rx'] ?? 0) + (int)($n['tx'] ?? 0), $maxRate * 2);
-            $body[] = fit(sprintf('%-8s RX %-9s TX %-9s %s', $n['name'], $rx, $tx, block_bar($pct, max(4, $inner - 40), $color, 'sky')), $inner);
-        }
-        $pf = $f['pf'];
-        $body[] = fit(sprintf('STATES %s  NEW/s %s  SEARCH %s', $pf['states'], $pf['inserts_rate'], $pf['searches_rate']), $inner);
-        return panel('▌Q2  N E T W O R K  ·  T R A F F I C', $body, $width, $height, $color, 'sky');
-    }
-
-    foreach (array_slice($f['net'], 0, 5) as $n) {
-        $rx = $n['rx'] === null ? 'sampling' : fmt_bytes((int)$n['rx']) . '/s';
-        $tx = $n['tx'] === null ? 'sampling' : fmt_bytes((int)$n['tx']) . '/s';
-        $pct = percent((int)($n['rx'] ?? 0) + (int)($n['tx'] ?? 0), $maxRate * 2);
-        $body[] = fit(sprintf(
-            '%-8s %10s %10s  %s',
-            $n['name'],
-            $rx,
-            $tx,
-            block_bar($pct, $barW, $color, 'sky')
-        ), $inner);
-    }
-
-    $pf = $f['pf'];
-    $body[] = fit(title_ansi('tan', 'ACTIVE STATE PEERS', $color), $inner);
-    foreach (array_slice($f['talkers'] ?? [], 0, max(0, $height - 10)) as $t) {
-        $body[] = fit(sprintf(
-            '%-10s -> %-12s %-5s %s',
-            trunc((string)$t['asset'], 10),
-            trunc((string)$t['peer'], 12),
-            $t['proto'],
-            trunc((string)$t['service'], max(6, $inner - 34))
-        ), $inner);
-    }
-    $body[] = fit(sprintf(
-        'STATES %s  NEW/s %s  SEARCH %s',
-        $pf['states'],
-        $pf['inserts_rate'],
-        $pf['searches_rate']
-    ), $inner);
-
-    return panel('▌Q2  N E T W O R K  ·  T R A F F I C', $body, $width, $height, $color, 'sky');
-}
-
-function lcars_firewall_quadrant(array $f, int $width, int $height, bool $color): array
-{
-    $inner = max(1, $width - 2);
-    $fw = $f['firewall'] ?? ['events' => [], 'stats' => []];
-    $stats = $fw['stats'] ?? [];
-    $body = [];
-    $body[] = fit(sprintf('%-8s %-6s %-5s %-22s %-22s %s', 'TIME', 'ACT', 'PROTO', 'SOURCE', 'DESTINATION', 'DETAIL'), $inner);
-    $maxEvents = max(1, $height - 5);
-    foreach (array_slice($fw['events'] ?? [], 0, $maxEvents) as $event) {
-        $body[] = firewall_event_line($event, $inner, $color);
-    }
-    if (count($fw['events'] ?? []) === 0) {
-        $body[] = fit(ansi('dim', 'Waiting for pfSense filter.log events. Enable logging on rules for a richer live feed.', $color), $inner);
-    }
-    $pf = $f['pf'];
-    $body[] = fit(sprintf(
-        'FW recent: BLOCK %s  PASS %s  TOP SRC %s  TOP PORT %s',
-        $stats['block'] ?? 0,
-        $stats['pass'] ?? 0,
-        $stats['top_src'] ?? '?',
-        $stats['top_port'] ?? '?'
-    ), $inner);
-    $body[] = fit(sprintf(
-        'PF since boot: BLOCK %s  PASS %s  STATUS %s',
-        fmt_compact_int((int)$pf['blocked']),
-        fmt_compact_int((int)$pf['passed']),
-        $pf['status']
-    ), $inner);
-
-    return panel('▌Q3  L I V E  N E T W O R K  ·  T C P D U M P / P F L O G', $body, $width, $height, $color, 'orange');
-}
-
-function firewall_event_line(array $e, int $width, bool $color): string
-{
-    $action = (string)($e['action'] ?? '?');
-    $tone = $action === 'BLOCK' ? 'red' : 'green';
-    $src = (string)($e['src'] ?? '?');
-    $dst = (string)($e['dst'] ?? '?');
-    $dstPort = (string)($e['dst_port'] ?? '');
-    if ($dstPort !== '') {
-        $dst .= ':' . $dstPort;
-    }
-    return fit(sprintf(
-        '%-8s %-6s %-5s %-22s %-22s %s',
-        $e['time'] ?? '',
-        ansi($tone, $action, $color),
-        $e['proto'] ?? '',
-        trunc($src, 22),
-        trunc($dst, 22),
-        trunc((string)($e['note'] ?? ''), max(8, $width - 70))
-    ), $width);
-}
-
-function lcars_status_rail(array $f, int $width, int $height, bool $color): array
-{
-    $ups = ($f['ups']['present'] ?? false) === true
-        ? ups_line($f['ups'], max(1, $width - 2), $color)
-        : 'NUT APC UPS unavailable';
-    $pf = $f['pf'];
-    $fw = $f['firewall']['stats'] ?? [];
-    $body = [
-        fit($ups, max(1, $width - 2)),
-        fit(sprintf(
-            'FW BLOCK %s  PASS %s  RECENT BLOCK %s  TOP SRC %s',
-            fmt_compact_int((int)$pf['blocked']),
-            fmt_compact_int((int)$pf['passed']),
-            $fw['block'] ?? 0,
-            $fw['top_src'] ?? '?'
-        ), max(1, $width - 2)),
-    ];
-    return panel('◣ STATUS RAIL', $body, $width, $height, $color, 'green');
-}
-
-function render_soc_center_frame(array $f, int $cols, int $rows, bool $color): string
-{
-    $topH = min(15, max(11, (int)ceil($rows * 0.52)));
-    $bottomH = max(7, $rows - $topH);
-    if ($topH + $bottomH > $rows) {
-        $topH = max(10, $rows - $bottomH);
-    }
-    $netW = (int)floor($cols * 0.52);
-    $fireW = $cols - $netW;
-
-    $top = compute_process_panel($f, $cols, $topH, $color);
-    $bottom = hjoin_blocks([
-        soc_network_panel($f, $netW, $bottomH, $color),
-        firewall_panel($f, $fireW, $bottomH, $color),
-    ]);
-
-    return lines_to_screen(array_merge($top, $bottom), $rows, $cols);
-}
-
 function render_full_frame(array $f, int $cols, int $rows, bool $color): string
 {
-    $topH = min(16, max(11, (int)floor($rows * 0.34)));
+    $topH = min(11, max(8, (int)floor($rows * 0.30)));
     $bottomH = max(8, $rows - $topH);
     $rightW = min(max(52, (int)floor($cols * 0.54)), $cols - 44);
     $leftW = $cols - $rightW;
@@ -1196,9 +508,6 @@ function render_compact_frame(array $f, int $cols, int $rows, bool $color): stri
     ), $cols);
     $out[] = fit('ARC ' . fmt_bytes($mem['arc_total']) . ' | Free ' . fmt_bytes($mem['free']) . ' | Swap ' . sprintf('%.0f%%', $mem['swap_pct']), $cols);
     $out[] = fit('pf states ' . $pf['states'] . ' | ' . $pf['searches_rate'] . ' searches', $cols);
-    if (($f['ups']['present'] ?? false) === true) {
-        $out[] = ups_line($f['ups'], $cols, $color);
-    }
 
     foreach (array_slice($f['net'], 0, 3) as $n) {
         $out[] = fit(sprintf(
@@ -1224,7 +533,7 @@ function cpu_panel(array $f, int $width, int $height, bool $color): array
     $rightW = ($width >= 72 && $bodyH >= 6) ? min(44, max(30, (int)floor($inner * 0.36))) : 0;
     $leftW = $rightW > 0 ? max(10, $inner - $rightW - 1) : $inner;
     $glance = glance_lines($f, $leftW, $color);
-    $glanceH = min(count($glance), max(0, $bodyH - 3), 4);
+    $glanceH = min(count($glance), max(0, $bodyH - 3));
     $graphH = max(1, $bodyH - $glanceH - 2);
     $left = array_slice($glance, 0, $glanceH);
     $left = array_merge($left, cpu_graph($f['cpu_history'], $leftW, $graphH, $color, level_color($f['cpu']['used'])));
@@ -1232,7 +541,7 @@ function cpu_panel(array $f, int $width, int $height, bool $color): array
     $left[] = fit($f['load']['processes'], $leftW);
 
     if ($rightW <= 0) {
-        return panel('SOCX WALL  cpu  preset LCARS  ' . date('H:i:s'), $left, $width, $height, $color, 'cyan');
+        return panel('SOCX WALL  cpu  preset NEON  ' . date('H:i:s'), $left, $width, $height, $color, 'cyan');
     }
 
     $right = cpu_detail_lines($f, $rightW, $bodyH, $color);
@@ -1240,7 +549,7 @@ function cpu_panel(array $f, int $width, int $height, bool $color): array
     for ($i = 0; $i < $bodyH; $i++) {
         $body[] = pad_visible($left[$i] ?? '', $leftW) . ' ' . pad_visible($right[$i] ?? '', $rightW);
     }
-    $title = 'SOCX WALL  cpu  preset LCARS  ' . date('H:i:s') . '  ' . (int)(($GLOBALS['interval'] ?? 1.5) * 1000) . 'ms  THREAT-INTEL LIVE';
+    $title = 'SOCX WALL  cpu  preset NEON  ' . date('H:i:s') . '  ' . (int)(($GLOBALS['interval'] ?? 1.5) * 1000) . 'ms  THREAT-INTEL LIVE';
     return panel($title, $body, $width, $height, $color, 'cyan');
 }
 
@@ -1273,9 +582,6 @@ function glance_lines(array $f, int $width, bool $color): array
         ansi(level_color($cpu['used']), 'CPU', $color),
         $cpu['used']
     ), $width);
-    if (($f['ups']['present'] ?? false) === true) {
-        $lines[] = ups_line($f['ups'], $width, $color);
-    }
     $lines[] = fit(sprintf(
         '%s %s  %s %s  %s %s',
         ansi('green', 'search', $color),
@@ -1310,116 +616,6 @@ function rate_pair(?array $row, int $maxLen): string
     return fit('D ' . $rx . ' U ' . $tx, $maxLen);
 }
 
-function ups_line(array $ups, int $width, bool $color): string
-{
-    $tone = ups_color($ups);
-    $parts = [
-        ansi($tone, 'UPS ' . ups_status_word($ups), $color),
-        ansi('white', fmt_watts($ups['power_w'] ?? null), $color),
-        'load ' . fmt_pct($ups['load_pct'] ?? null),
-        'batt ' . fmt_pct($ups['charge_pct'] ?? null),
-        'run ' . fmt_runtime($ups['runtime_s'] ?? null),
-    ];
-    if (($ups['input_v'] ?? null) !== null) {
-        $parts[] = 'in ' . fmt_volts($ups['input_v']);
-    }
-    return fit(implode('  ', $parts), $width);
-}
-
-function ups_detail_line(array $ups, int $width, bool $color): string
-{
-    $load = $ups['load_pct'] ?? null;
-    $barW = max(4, $width - 31);
-    $tone = ups_color($ups);
-    return fit(sprintf(
-        'UPS %s %s %s %s %s',
-        fmt_watts($ups['power_w'] ?? null),
-        bar($load === null ? 0.0 : (float)$load, $barW, $color, $tone),
-        fmt_pct($load),
-        fmt_pct($ups['charge_pct'] ?? null),
-        fmt_runtime($ups['runtime_s'] ?? null)
-    ), $width);
-}
-
-function ups_color(array $ups): string
-{
-    $status = strtoupper((string)($ups['status'] ?? ''));
-    $charge = $ups['charge_pct'] ?? null;
-    $runtime = $ups['runtime_s'] ?? null;
-    if (str_contains($status, 'LB') || str_contains($status, 'RB') || str_contains($status, 'OVER')) {
-        return 'red';
-    }
-    if (str_contains($status, 'OB') || str_contains($status, 'DISCHRG')) {
-        return 'orange';
-    }
-    if (($charge !== null && (float)$charge < 50.0) || ($runtime !== null && (float)$runtime < 900.0)) {
-        return 'yellow';
-    }
-    if (str_contains($status, 'OL')) {
-        return 'green';
-    }
-    return 'yellow';
-}
-
-function ups_status_word(array $ups): string
-{
-    $status = strtoupper((string)($ups['status'] ?? ''));
-    if (str_contains($status, 'LB')) {
-        return 'LOW-BATT';
-    }
-    if (str_contains($status, 'RB')) {
-        return 'REPLACE';
-    }
-    if (str_contains($status, 'OVER')) {
-        return 'OVERLOAD';
-    }
-    if (str_contains($status, 'OB')) {
-        return 'BATTERY';
-    }
-    if (str_contains($status, 'OL')) {
-        return 'ONLINE';
-    }
-    return $status !== '' ? $status : '?';
-}
-
-function fmt_watts(?float $watts): string
-{
-    if ($watts === null) {
-        return '?W';
-    }
-    return sprintf('%.0fW', $watts);
-}
-
-function fmt_pct(?float $pct): string
-{
-    if ($pct === null) {
-        return '?%';
-    }
-    return sprintf('%.0f%%', $pct);
-}
-
-function fmt_volts(?float $volts): string
-{
-    if ($volts === null) {
-        return '?V';
-    }
-    return sprintf('%.1fV', $volts);
-}
-
-function fmt_runtime(?float $seconds): string
-{
-    if ($seconds === null || $seconds < 0) {
-        return '?';
-    }
-    $seconds = (int)round($seconds);
-    $hours = intdiv($seconds, 3600);
-    $minutes = intdiv($seconds % 3600, 60);
-    if ($hours > 0) {
-        return sprintf('%dh%02dm', $hours, $minutes);
-    }
-    return sprintf('%dm', $minutes);
-}
-
 function health_words(array $f): array
 {
     $words = [];
@@ -1435,16 +631,6 @@ function health_words(array $f): array
         $words[] = $tempNum >= 75.0 ? 'temp high ' . $temp : 'temp ' . $temp;
     }
     $words[] = $pfStates > 50000 ? 'states high' : 'states ok';
-    if (($f['ups']['present'] ?? false) === true) {
-        $upsTone = ups_color($f['ups']);
-        if ($upsTone === 'red') {
-            $words[] = 'ups critical';
-        } elseif ($upsTone === 'orange') {
-            $words[] = 'ups battery';
-        } else {
-            $words[] = 'ups online';
-        }
-    }
     return $words;
 }
 
@@ -1481,101 +667,6 @@ function cpu_detail_lines(array $f, int $width, int $height, bool $color): array
     }
     $lines[] = fit('Load AVG: ' . $f['load']['1'] . '  ' . $f['load']['5'] . '  ' . $f['load']['15'], $width);
     return fit_block($lines, $width, $height);
-}
-
-function compute_process_panel(array $f, int $width, int $height, bool $color): array
-{
-    $inner = max(1, $width - 2);
-    $bodyH = max(1, $height - 2);
-    $coreW = min(50, max(36, (int)floor($inner * 0.28)));
-    $procW = min(62, max(42, (int)floor($inner * 0.32)));
-    $leftW = $inner - $coreW - $procW - 2;
-    if ($leftW < 34) {
-        $procW = max(36, $procW - (34 - $leftW));
-        $leftW = $inner - $coreW - $procW - 2;
-    }
-
-    $cpu = $f['cpu'];
-    $mem = $f['mem'];
-    $temp = max_temp($f['temps']);
-    $cpuGraphH = max(2, (int)floor(($bodyH - 5) / 2));
-    $ramGraphH = max(2, $bodyH - $cpuGraphH - 5);
-
-    $left = [
-        fit(sprintf('CPU %4.0f%% %s %s', $cpu['used'], fmt_freq($f['freq_mhz']), $temp), $leftW),
-        fit('RAM ' . fmt_bytes($mem['used']) . '/' . fmt_bytes($mem['total']) . '  ARC ' . fmt_bytes($mem['arc_total']), $leftW),
-        fit('CPU trace', $leftW),
-    ];
-    $left = array_merge($left, cpu_graph($f['cpu_history'], $leftW, $cpuGraphH, $color, level_color($cpu['used'])));
-    $left[] = fit('RAM trace', $leftW);
-    $left = array_merge($left, cpu_graph($f['ram_history'] ?? [], $leftW, $ramGraphH, $color, level_color($mem['used_pct'])));
-    $left[] = fit('up ' . $f['load']['uptime'] . '  load ' . $f['load']['1'] . ' ' . $f['load']['5'] . ' ' . $f['load']['15'], $leftW);
-
-    $proc = [fit(sprintf('%6s %-12s %5s %7s %s', 'Pid', 'Process', 'Cpu%', 'Mem', 'User'), $procW)];
-    foreach (array_slice($f['procs'], 0, max(1, $bodyH - 1)) as $p) {
-        $proc[] = fit(sprintf(
-            '%6s %-12s %5.1f %7s %s',
-            $p['pid'],
-            trunc(proc_name($p['cmd']), 12),
-            $p['cpu'],
-            fmt_bytes($p['rss']),
-            trunc($p['user'], max(4, $procW - 35))
-        ), $procW);
-    }
-
-    $core = cpu_detail_lines($f, $coreW, $bodyH, $color);
-    $body = [];
-    for ($i = 0; $i < $bodyH; $i++) {
-        $body[] = pad_visible($left[$i] ?? '', $leftW) . ' ' .
-            pad_visible($proc[$i] ?? '', $procW) . ' ' .
-            pad_visible($core[$i] ?? '', $coreW);
-    }
-
-    $title = '1 compute  cpu + ram traces  top processes  cores  ' . date('H:i:s') . '  ' . (int)(($GLOBALS['interval'] ?? 1.5) * 1000) . 'ms';
-    return panel($title, $body, $width, $height, $color, 'cyan');
-}
-
-function soc_network_panel(array $f, int $width, int $height, bool $color): array
-{
-    $maxRate = 1;
-    foreach ($f['net'] as $n) {
-        $maxRate = max($maxRate, (int)($n['rx'] ?? 0), (int)($n['tx'] ?? 0));
-    }
-    $barW = max(6, $width - 35);
-    $body = [];
-    foreach (array_slice($f['net'], 0, max(1, (int)floor(($height - 2) / 2))) as $n) {
-        $rx = $n['rx'] === null ? 'sampling' : fmt_bytes($n['rx']) . '/s';
-        $tx = $n['tx'] === null ? 'sampling' : fmt_bytes($n['tx']) . '/s';
-        $rxPct = percent((int)($n['rx'] ?? 0), $maxRate);
-        $txPct = percent((int)($n['tx'] ?? 0), $maxRate);
-        $body[] = fit(sprintf('%-8s down %-9s %s', $n['name'], $rx, bar($rxPct, $barW, $color, 'cyan')), max(1, $width - 2));
-        $body[] = fit(sprintf('%-8s up   %-9s %s', '', $tx, bar($txPct, $barW, $color, 'magenta')), max(1, $width - 2));
-    }
-    return panel('2 live network traffic  wan lan vpn', $body, $width, $height, $color, 'magenta');
-}
-
-function firewall_panel(array $f, int $width, int $height, bool $color): array
-{
-    $pf = $f['pf'];
-    $states = is_numeric($pf['states']) ? (int)$pf['states'] : 0;
-    $blocked = (int)$pf['blocked'];
-    $passed = (int)$pf['passed'];
-    $total = max(1, $blocked + $passed);
-    $statePct = min(100.0, ($states / 50000.0) * 100.0);
-    $body = [
-        fit('pf status ' . $pf['status'] . '  states ' . $pf['states'], max(1, $width - 2)),
-        stat_bar('state', $statePct, (string)$states, max(4, $width - 22), $color),
-        fit('searches ' . $pf['searches_rate'] . '  inserts ' . $pf['inserts_rate'] . '  removals ' . $pf['removals_rate'], max(1, $width - 2)),
-        stat_bar('block', min(100.0, ($blocked / 200000.0) * 100.0), fmt_compact_int($blocked), max(4, $width - 22), $color),
-        stat_bar('pass', min(100.0, ($passed / max(1, $passed)) * 100.0), fmt_compact_int($passed), max(4, $width - 22), $color),
-        fit('decision mix block ' . sprintf('%.3f%%', ($blocked / $total) * 100.0) . '  pass ' . sprintf('%.3f%%', ($passed / $total) * 100.0), max(1, $width - 2)),
-    ];
-    if (($f['ups']['present'] ?? false) === true) {
-        $body[] = ups_line($f['ups'], max(1, $width - 2), $color);
-    }
-    $body[] = fit('bottom feed: live firewall blocks, DNSBL, IDS events', max(1, $width - 2));
-    $body[] = fit(ansi(health_color(health_words($f)), 'health', $color) . ' ' . implode('  ', health_words($f)), max(1, $width - 2));
-    return panel('3 firewall + power  pf decisions', $body, $width, $height, $color, 'orange');
 }
 
 function memory_panel(array $f, int $width, int $height, bool $color): array
@@ -1666,17 +757,13 @@ function cpu_graph(array $history, int $width, int $height, bool $color, string 
     $width = max(1, $width);
     $height = max(1, $height);
     $samples = array_slice($history, -$width);
-    $fill = $samples ? (float)end($samples) : 0.0;
-    $samples = array_pad($samples, -$width, $fill);
-    $scale = max(45.0, max($samples) * 1.35);
-    $scale = min(100.0, $scale);
+    $samples = array_pad($samples, -$width, 0.0);
     $lines = [];
     for ($row = $height; $row >= 1; $row--) {
+        $threshold = ($row / $height) * 100.0;
         $line = '';
         foreach ($samples as $v) {
-            $level = (int)round(($v / $scale) * ($height - 1)) + 1;
-            $level = max(1, min($height, $level));
-            if ($row === $level) {
+            if ($v >= $threshold) {
                 $line .= '#';
             } elseif ($row === 1) {
                 $line .= '.';
@@ -1687,34 +774,6 @@ function cpu_graph(array $history, int $width, int $height, bool $color, string 
         $lines[] = ansi(graph_tone($row, $height, $tone), $line, $color);
     }
     return $lines;
-}
-
-function sparkline(array $history, int $width, bool $color, string $tone, ?float $fixedMax = null): string
-{
-    $width = max(1, $width);
-    $samples = array_slice($history, -$width);
-    if (!$samples) {
-        $samples = [0.0];
-    }
-    $samples = array_pad($samples, -$width, (float)$samples[0]);
-    $max = $fixedMax !== null ? max(1.0, $fixedMax) : max(1.0, (float)max($samples));
-    $chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-    $out = '';
-    foreach ($samples as $v) {
-        $idx = (int)round(((float)$v / $max) * (count($chars) - 1));
-        $idx = max(0, min(count($chars) - 1, $idx));
-        $out .= $chars[$idx];
-    }
-    return ansi($tone, $out, $color);
-}
-
-function block_bar(float $pct, int $width, bool $color, string $tone): string
-{
-    $pct = max(0.0, min(100.0, $pct));
-    $width = max(1, $width);
-    $filled = (int)round($width * ($pct / 100.0));
-    $bar = str_repeat('█', $filled) . str_repeat('░', max(0, $width - $filled));
-    return ansi($tone, $bar, $color);
 }
 
 function stat_bar(string $label, float $pct, string $value, int $barW, bool $color): string
@@ -1728,16 +787,16 @@ function panel(string $title, array $body, int $width, int $height, bool $color,
     $height = max(3, $height);
     $inner = max(1, $width - 2);
     $plainTitle = ' ' . $title . ' ';
-    if (visible_len($plainTitle) > $inner) {
+    if (strlen($plainTitle) > $inner) {
         $plainTitle = substr($plainTitle, 0, $inner);
     }
     $titleText = title_ansi($tone, $plainTitle, $color);
-    $top = ansi($tone, '╭', $color) . $titleText . ansi($tone, str_repeat('─', max(0, $inner - visible_len($plainTitle))) . '╮', $color);
-    $bottom = ansi($tone, '╰' . str_repeat('─', $inner) . '╯', $color);
+    $top = ansi($tone, '+', $color) . $titleText . ansi($tone, str_repeat('-', max(0, $inner - strlen($plainTitle))) . '+', $color);
+    $bottom = ansi($tone, '+' . str_repeat('-', $inner) . '+', $color);
     $lines = [$top];
     for ($i = 0; $i < $height - 2; $i++) {
         $line = fit($body[$i] ?? '', $inner);
-        $lines[] = ansi($tone, '│', $color) . pad_visible($line, $inner) . ansi($tone, '│', $color);
+        $lines[] = ansi($tone, '|', $color) . pad_visible($line, $inner) . ansi($tone, '|', $color);
     }
     $lines[] = $bottom;
     return $lines;
@@ -1792,11 +851,7 @@ function pad_visible(string $text, int $width): string
 
 function visible_len(string $text): int
 {
-    $plain = strip_ansi($text);
-    if (preg_match_all('/./us', $plain, $m) !== false) {
-        return count($m[0]);
-    }
-    return strlen($plain);
+    return strlen(strip_ansi($text));
 }
 
 function strip_ansi(string $text): string
@@ -1839,8 +894,8 @@ function section(string $label, int $cols, bool $color): string
 
 function box_line(string $label, int $cols, bool $color, string $tone): string
 {
-    $plain = '─ ' . $label . ' ';
-    $line = $plain . str_repeat('─', max(0, $cols - visible_len($plain)));
+    $plain = '-- ' . $label . ' ';
+    $line = $plain . str_repeat('-', max(0, $cols - strlen($plain)));
     return ansi($tone, fit($line, $cols), $color);
 }
 
@@ -1919,22 +974,18 @@ function ansi(string $tone, string $text, bool $enabled): string
         return $text;
     }
     $codes = [
-        'cyan' => '38;2;153;204;255;1',
-        'sky' => '38;2;153;204;255;1',
-        'aqua' => '38;2;153;204;255;1',
-        'magenta' => '38;2;204;153;204;1',
-        'lilac' => '38;2;204;153;204;1',
-        'hotpink' => '38;2;204;102;102;1',
-        'violet' => '38;2;204;153;204;1',
-        'green' => '38;2;153;204;153;1',
-        'yellow' => '38;2;255;204;102;1',
-        'amber' => '38;2;255;204;102;1',
-        'orange' => '38;2;255;153;102;1',
-        'tan' => '38;2;255;204;153;1',
-        'red' => '38;2;204;102;102;1',
-        'blue' => '38;2;153;153;255;1',
-        'white' => '38;2;245;245;255;1',
-        'dim' => '38;2;130;130;140',
+        'cyan' => '38;5;51;1',
+        'aqua' => '38;5;45;1',
+        'magenta' => '38;5;201;1',
+        'hotpink' => '38;5;198;1',
+        'violet' => '38;5;141;1',
+        'green' => '38;5;119;1',
+        'yellow' => '38;5;226;1',
+        'orange' => '38;5;208;1',
+        'red' => '38;5;196;1',
+        'blue' => '38;5;81;1',
+        'white' => '38;5;255;1',
+        'dim' => '38;5;245',
     ];
     $code = $codes[$tone] ?? '0';
     return "\033[" . $code . 'm' . $text . "\033[0m";
@@ -1942,35 +993,27 @@ function ansi(string $tone, string $text, bool $enabled): string
 
 function fit(string $text, int $cols): string
 {
-    if (visible_len($text) <= $cols) {
+    $plain = preg_replace('/\033\[[0-9;]*m/', '', $text);
+    if (strlen($plain) <= $cols) {
         return $text;
     }
     $keep = max(1, $cols - 1);
     $out = '';
     $visible = 0;
     $len = strlen($text);
-    for ($i = 0; $i < $len && $visible < $keep;) {
+    for ($i = 0; $i < $len && $visible < $keep; $i++) {
         if ($text[$i] === "\033") {
             $end = strpos($text, 'm', $i);
             if ($end !== false) {
                 $out .= substr($text, $i, $end - $i + 1);
                 $i = $end;
-                $i++;
                 continue;
             }
         }
-        $chunk = substr($text, $i);
-        if (preg_match('/^./us', $chunk, $m) === 1) {
-            $char = $m[0];
-            $out .= $char;
-            $i += strlen($char);
-        } else {
-            $out .= $text[$i];
-            $i++;
-        }
+        $out .= $text[$i];
         $visible++;
     }
-    return $out . (str_contains($out, "\033[") ? "\033[0m" : '') . '>';
+    return $out . '>';
 }
 
 function trunc(string $text, int $width): string

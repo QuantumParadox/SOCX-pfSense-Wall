@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.17
+
+- Restored the classic split-wall `NETX` layout shown in the reference photo.
+- Brought back the `SOCX WALL cpu preset NEON` top cockpit with IFTopX asset/peer map and TCPDumpX packet story panes underneath.
+- Restored the bottom `SOCX WALL` / `JupiterLXI` / `LIVE` status styling and removed the NUT-first bar from the primary wall.
+- Set the primary cockpit refresh back to `1500ms` to match the reference wall.
+
 ## v0.1.16
 
 - Rebuilt the primary `NETX` wall as a single-pane LCARS SOC center instead of a split top/IFTop/TCPDump mosaic.
