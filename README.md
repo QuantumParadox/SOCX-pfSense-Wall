@@ -17,6 +17,7 @@ Suggested topics:
 - Starts a full-screen tmux dashboard called `socx`.
 - Shows a classic split-wall `NETX` layout: btop-style pfSense cockpit on top, IFTopX bottom-left, TCPDumpX bottom-right.
 - Shows CPU graph, CPU cores, RAM/ARC, pf state/search counters, live interface rates, and top processes in the top cockpit.
+- Shows compact NUT/APC UPS watts/load/battery/runtime in the top-left `mem net pf live` box.
 - Adds `iftopx`, a readable color flow radar for live LAN/WAN traffic.
 - Adds `tcpdumpx`, a readable color packet story view that explains traffic direction, service, size, and flow.
 - Keeps IFTopX/TCPDumpX visible in the bottom of the primary `NETX` wall.

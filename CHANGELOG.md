@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.21
+
+- Added compact NUT/APC UPS telemetry into the top-left `mem net pf live` cockpit box.
+- Kept the bottom rail dedicated entirely to firewall/security ticker text.
+- Gave the top cockpit slightly more height so the UPS line fits on the 80-column console.
+
 ## v0.1.20
 
 - Removed the `LIVE:` label from the classic split-wall bottom rail.

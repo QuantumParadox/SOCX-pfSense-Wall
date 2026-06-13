@@ -41,7 +41,7 @@ tmux set-window-option -t socx -g window-status-format '#[fg=colour245,bg=black]
 tmux set-window-option -t socx -g window-status-current-format '#[fg=colour16,bg=colour201,bold] #I:#W '
 tmux set-window-option -t socx -g window-active-style 'fg=colour255,bg=black'
 tmux set-window-option -t socx -g window-style 'fg=colour250,bg=black'
-tmux split-window -v -p 42 -t socx:NETX "iftopx -i $IFLAN -n -N"
+tmux split-window -v -p 38 -t socx:NETX "iftopx -i $IFLAN -n -N"
 tmux split-window -h -p 44 -t socx:NETX.1 "tcpdumpx -i $IFWAN -nn -q"
 tmux select-pane -t socx:NETX.0 -T 'PF TOP'
 tmux select-pane -t socx:NETX.1 -T 'IFTOPX FLOW RADAR'

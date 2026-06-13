@@ -8,7 +8,7 @@ declare(strict_types=1);
  */
 
 const APP_NAME = 'pfsense-btop';
-const APP_VERSION = '0.3.1';
+const APP_VERSION = '0.3.2';
 
 $opts = parse_args($argv);
 if ($opts['help']) {
@@ -162,6 +162,7 @@ function collect_frame(array &$state, int $topCount): array
     $procs = parse_processes(run_cmd('/bin/ps auxww'), $topCount);
     $temps = parse_temps(run_cmd("/sbin/sysctl -a | /usr/bin/grep -E 'dev.cpu\\.[0-9]+\\.temperature|hw.acpi.thermal.*temperature' | /usr/bin/head -8"));
     $freq = trim(run_cmd('/sbin/sysctl -n dev.cpu.0.freq'));
+    $upsLine = collect_ups_line();
 
     $state['time'] = $now;
 
@@ -178,7 +179,17 @@ function collect_frame(array &$state, int $topCount): array
         'disks' => $disks,
         'procs' => $procs,
         'temps' => $temps,
+        'ups_line' => $upsLine,
     ];
+}
+
+function collect_ups_line(): string
+{
+    $line = trim(run_cmd('/bin/sh -c "SOCX_UPS_TINY=1 /usr/local/sbin/socx-ups-status"'));
+    if ($line === '' || stripos($line, 'unavailable') !== false) {
+        return '';
+    }
+    return $line;
 }
 
 function parse_load(string $top): array
@@ -739,12 +750,17 @@ function mini_stats_panel(array $f, int $width, int $height, bool $color): array
 {
     $m = $f['mem'];
     $p = $f['pf'];
+    $upsLine = (string)($f['ups_line'] ?? '');
     $body = [
         stat_bar('RAM', $m['used_pct'], fmt_bytes($m['used']), max(4, $width - 18), $color),
         'ARC ' . fmt_bytes($m['arc_total']) . ' free ' . fmt_bytes($m['free']),
-        'pf states ' . $p['states'],
-        'pf searches ' . $p['searches_rate'],
+        'pf ' . $p['states'] . ' states  ' . $p['searches_rate'],
     ];
+    if ($upsLine !== '') {
+        $body[] = ansi('yellow', $upsLine, $color);
+    } else {
+        $body[] = 'pf searches ' . $p['searches_rate'];
+    }
     foreach (array_slice($f['net'], 0, max(1, $height - count($body) - 3)) as $n) {
         $body[] = fit(sprintf('%-7s D %8s', $n['name'], $n['rx'] === null ? 'sampling' : fmt_bytes($n['rx']) . '/s'), max(1, $width - 2));
         $body[] = fit(sprintf('%-7s U %8s', '', $n['tx'] === null ? 'sampling' : fmt_bytes($n['tx']) . '/s'), max(1, $width - 2));
