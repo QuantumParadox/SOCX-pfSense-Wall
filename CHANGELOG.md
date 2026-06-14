@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.33
+
+- Hardened the pfSense autoboot script so SOCX starts correctly when boot calls rc scripts with `faststart`, `onestart`, or `forcestart`.
+- Added boot defaults for wall mode, modern-btop theme, ASCII-safe rendering, and smooth ticker behavior.
+- Moved stale SOCX rc.d backup scripts out of the pfSense boot-scan directory so only one startup hook runs.
+
 ## v0.1.32
 
 - Changed modern-btop WALL mode from boxed metric cells to softer btop-style cards with lighter borders.

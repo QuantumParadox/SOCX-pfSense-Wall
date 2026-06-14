@@ -133,6 +133,8 @@ service socx stop
 service socx restart
 ```
 
+The boot script also accepts the FreeBSD/pfSense boot verbs `faststart`, `onestart`, and `forcestart`, so it works when called directly by the boot sequence.
+
 Attach to the live wall with:
 
 ```sh

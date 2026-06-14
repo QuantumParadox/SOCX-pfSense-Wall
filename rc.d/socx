@@ -9,26 +9,30 @@ PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
 export PATH
 
 case "$1" in
-start)
+start|faststart|onestart|forcestart)
     if command -v tmux >/dev/null 2>&1 && tmux has-session -t socx 2>/dev/null; then
         echo "SOCX already running."
         exit 0
     fi
 
     (
-        sleep 35
+        sleep "${SOCX_BOOT_DELAY:-35}"
         export TMUX_TMPDIR=/tmp
+        export SOCX_MODE="${SOCX_MODE:-wall}"
+        export SOCX_THEME="${SOCX_THEME:-modern-btop}"
+        export SOCX_UNICODE="${SOCX_UNICODE:-false}"
+        export SOCX_TICKER_SMOOTH="${SOCX_TICKER_SMOOTH:-true}"
         /bin/sh /root/socxboard.sh >>"$log_file" 2>&1
     ) &
     echo "SOCX scheduled to start detached."
     ;;
-stop)
+stop|faststop|onestop|forcestop)
     if command -v tmux >/dev/null 2>&1; then
         tmux kill-session -t socx 2>/dev/null || true
     fi
     echo "SOCX stopped."
     ;;
-restart)
+restart|fastrestart|onerestart|forcerestart)
     "$0" stop
     "$0" start
     ;;
