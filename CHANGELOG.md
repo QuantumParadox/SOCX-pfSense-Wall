@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.27
+
+- Changed wall-mode ticker defaults to turbo speed with `SOCX_TICKER_STEP=6` and `SOCX_TICKER_INTERVAL_MS=50`.
+- Made ticker advancement elapsed-time based so it catches up smoothly if a frame is delayed.
+- Cached tmux pane dimensions for one second to reduce redraw overhead during high-speed ticker updates.
+
 ## v0.1.26
 
 - Added wall-mode ticker speed controls: `SOCX_TICKER_SPEED`, `SOCX_TICKER_STEP`, `SOCX_TICKER_INTERVAL_MS`, `SOCX_TICKER_MAX_EVENTS`, and `SOCX_TICKER_DEDUPE_SECONDS`.

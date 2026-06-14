@@ -36,6 +36,7 @@ $state = [
     'tick' => 0,
     'ticker' => 0,
     'ticker_offset' => 0,
+    'last_ticker_advance_at' => 0.0,
     'ticker_hold_until' => 0.0,
     'ticker_hold_text' => '',
     'ticker_config' => $tickerConfig,
@@ -48,6 +49,9 @@ $state = [
     'events_fresh' => false,
     'last_frame' => null,
     'next_frame_at' => 0.0,
+    'cols' => 0,
+    'rows' => 0,
+    'next_size_at' => 0.0,
 ];
 
 if (!$once) {
@@ -60,7 +64,12 @@ if (!$once) {
 do {
     $now = microtime(true);
     try {
-        [$cols, $rows] = term_size($opts);
+        if ((int)$state['cols'] <= 0 || $now >= (float)$state['next_size_at']) {
+            [$state['cols'], $state['rows']] = term_size($opts);
+            $state['next_size_at'] = $now + 1.0;
+        }
+        $cols = (int)$state['cols'];
+        $rows = (int)$state['rows'];
         if ($state['last_frame'] === null || $once || $now >= (float)$state['next_frame_at']) {
             $state['tick']++;
             $hosts = load_host_map((string)$opts['hosts']);
@@ -75,9 +84,14 @@ do {
         }
     } catch (Throwable $e) {
         log_wall_error($e);
-        [$cols, $rows] = term_size($opts);
+        if ((int)$state['cols'] <= 0 || (int)$state['rows'] <= 0) {
+            [$state['cols'], $state['rows']] = term_size($opts);
+        }
+        $cols = (int)$state['cols'];
+        $rows = (int)$state['rows'];
         $frame = $state['last_frame'] ?: error_frame($e);
     }
+    advance_ticker($state, $now);
     $frame['ticker_events'] = ticker_event_texts($state);
     $frame['ticker_offset'] = (int)$state['ticker_offset'];
     $frame['ticker_hold_until'] = (float)$state['ticker_hold_until'];
@@ -187,7 +201,7 @@ function print_help(): void
 
 function ticker_config(array $opts): array
 {
-    $speed = strtolower((string)($opts['ticker_speed'] ?: getenv('SOCX_TICKER_SPEED') ?: 'fast'));
+    $speed = strtolower((string)($opts['ticker_speed'] ?: getenv('SOCX_TICKER_SPEED') ?: 'turbo'));
     $speedSteps = ['slow' => 1, 'normal' => 2, 'fast' => 4, 'turbo' => 6];
     $step = $speedSteps[$speed] ?? $speedSteps['fast'];
 
@@ -200,7 +214,7 @@ function ticker_config(array $opts): array
     $step = max(1, min(12, $step));
 
     $envInterval = getenv('SOCX_TICKER_INTERVAL_MS');
-    $intervalMs = (int)$opts['ticker_interval_ms'] > 0 ? (int)$opts['ticker_interval_ms'] : (is_numeric($envInterval) ? (int)$envInterval : 100);
+    $intervalMs = (int)$opts['ticker_interval_ms'] > 0 ? (int)$opts['ticker_interval_ms'] : (is_numeric($envInterval) ? (int)$envInterval : 50);
     $intervalMs = max(50, min(500, $intervalMs));
 
     $envMax = getenv('SOCX_TICKER_MAX_EVENTS');
@@ -443,7 +457,6 @@ function render_wall(array $frame, int $cols, int $rows, bool $color, array &$st
     foreach ($canvas as $line) {
         $lines[] = colorize_line($line, $color);
     }
-    advance_ticker($state, (float)($frame['ticker_now'] ?? microtime(true)));
     return implode("\n", $lines);
 }
 
@@ -1091,10 +1104,22 @@ function ticker_event_texts(array $state): array
 function advance_ticker(array &$state, float $now): void
 {
     if ($now < (float)($state['ticker_hold_until'] ?? 0.0)) {
+        $state['last_ticker_advance_at'] = $now;
         return;
     }
     $cfg = $state['ticker_config'] ?? ticker_config([]);
-    $state['ticker_offset'] = ((int)($state['ticker_offset'] ?? 0) + (int)$cfg['step']) % 1000000;
+    $interval = max(0.001, ((int)$cfg['interval_ms']) / 1000);
+    $last = (float)($state['last_ticker_advance_at'] ?? 0.0);
+    if ($last <= 0.0) {
+        $state['last_ticker_advance_at'] = $now;
+        return;
+    }
+    $ticks = (int)floor(($now - $last) / $interval);
+    if ($ticks <= 0) {
+        return;
+    }
+    $state['last_ticker_advance_at'] = $last + ($ticks * $interval);
+    $state['ticker_offset'] = ((int)($state['ticker_offset'] ?? 0) + ($ticks * (int)$cfg['step'])) % 1000000;
 }
 
 function tail_lines(string $file, int $count): array
