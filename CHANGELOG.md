@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.45
+
+- Made the Modern Wall Live Packets panel use raw packet-like firewall/DNSBL/IDS events instead of the balanced command-feed queue.
+- Replaced cramped packet columns with human-readable packet story rows such as `FW DROP WAN scan blocked...`, `ALLOW Allowed...`, and `DNSBL HIT ... DNSBL hit`.
+- Gave short wall displays an extra Live Packets row while preserving the main Process/Network panels.
+- Suppressed exact duplicate packet rows so the Live Packets panel shows more variety.
+- Kept DNSBL packet wording as query-level `DNSBL hit` / `DNS sinkhole`, separate from actual firewall drops.
+
 ## v0.1.44
 
 - Rebalanced the Modern Wall Event Feed so firewall drops no longer crowd out DNSBL, UPS, WAN/DNS/VPN, DHCP/ARP, IDS/IPS, PF, and flow-status events.

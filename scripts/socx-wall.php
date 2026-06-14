@@ -595,6 +595,7 @@ function collect_live_frame(array &$state, array $hosts): array
     $temp = parse_temp(run_cmd("/sbin/sysctl -a | /usr/bin/grep -E 'dev.cpu\\.[0-9]+\\.temperature|hw.acpi.thermal.*temperature' | /usr/bin/head -8"));
     $freq = trim(run_cmd('/sbin/sysctl -n dev.cpu.0.freq'));
     $events = collect_events_cached($state, $hosts, $now);
+    $packetEvents = $events;
 
     $state['time'] = $now;
     $iflan = getenv('SOCX_IFLAN') ?: 'ix0';
@@ -626,7 +627,7 @@ function collect_live_frame(array &$state, array $hosts): array
     if ($activityEvents) {
         $events = balance_events_for_feed(prioritize_events(array_merge($events, $activityEvents)), 80);
     }
-    $packets = packets_from_events($events);
+    $packets = packets_from_events($packetEvents ?: $events);
 
     return [
         'time' => date('H:i:s'),
@@ -895,8 +896,13 @@ function modern_btop_layout(int $cols, int $rows): array
     $cardsH = $rows <= 26 ? 5 : 6;
     $tickerH = $rows >= 34 ? 4 : ($rows <= 26 ? 2 : 3);
     $contentH = max(10, $rows - $headerH - $cardsH - $tickerH);
-    $packetsH = min(10, max(5, intdiv($contentH, 3)));
+    $packetsTarget = $rows <= 26 ? 6 : ($rows >= 34 ? 11 : 8);
+    $packetsH = min(12, max($packetsTarget, intdiv($contentH, 3)));
     $middleH = max(5, $contentH - $packetsH);
+    if ($rows <= 26 && $middleH < 9) {
+        $middleH = 9;
+        $packetsH = max(5, $contentH - $middleH);
+    }
     $middleY = $headerH + $cardsH;
     $packetsY = $middleY + $middleH;
     $mid = intdiv($cols, 2);
@@ -1577,21 +1583,33 @@ function modern_flow_rows(array $f, array $p): array
 function modern_packet_rows(array $f, array $p): array
 {
     $w = modern_content_width($p);
-    $svcW = $w >= 110 ? 8 : 5;
-    $verdictW = 10;
-    $flowW = max(24, $w - $svcW - $verdictW - 44);
-    $rows = [sprintf('%-8s %-5s %-4s %-*s %-*s %-*s', 'TIME', 'PROTO', 'DIR', $flowW, 'SRC -> DST', $svcW, 'SVC', $verdictW, 'VERDICT')];
-    foreach (array_slice($f['packets'], 0, max(1, $p['height'] - 3)) as $pkt) {
-        $rows[] = sprintf('%-8s %-5s %-4s %-*s %-*s %-*s',
+    $maxRows = max(1, $p['height'] - 2);
+    $rows = [];
+
+    if ($w < 96) {
+        $tagW = 9;
+        $storyW = max(12, $w - $tagW - 11);
+        foreach (array_slice($f['packets'], 0, $maxRows) as $pkt) {
+            $rows[] = sprintf('%-8s %-*s %-*s',
+                truncate_text((string)$pkt['time'], 8),
+                $tagW,
+                packet_event_tag($pkt, $tagW),
+                $storyW,
+                packet_story_text($pkt, $storyW));
+        }
+        return $rows;
+    }
+
+    $tagW = 11;
+    $storyW = max(36, $w - $tagW - 13);
+    $rows[] = sprintf('%-8s %-*s %-*s', 'TIME', $tagW, 'EVENT', $storyW, 'WHAT HAPPENED');
+    foreach (array_slice($f['packets'], 0, max(1, $maxRows - 1)) as $pkt) {
+        $rows[] = sprintf('%-8s %-*s %-*s',
             truncate_text((string)$pkt['time'], 8),
-            truncate_text((string)$pkt['proto'], 5),
-            truncate_text((string)$pkt['dir'], 4),
-            $flowW,
-            packet_flow_text($pkt, $flowW),
-            $svcW,
-            truncate_text(service_short((string)$pkt['service']), $svcW),
-            $verdictW,
-            truncate_text((string)$pkt['verdict'], $verdictW));
+            $tagW,
+            packet_event_tag($pkt, $tagW),
+            $storyW,
+            packet_story_text($pkt, $storyW));
     }
     return $rows;
 }
@@ -3298,17 +3316,43 @@ function parse_pf_age_seconds(string $line): float
 function packets_from_events(array $events): array
 {
     $rows = [];
+    $seen = [];
     foreach ($events as $e) {
         if (!empty($e['feed_only'])) {
             continue;
         }
-        $rows[] = ['time' => $e['time'], 'proto' => $e['proto'], 'dir' => $e['dir'], 'src' => $e['src'], 'dst' => $e['dst'], 'service' => $e['service'], 'size' => $e['size'], 'verdict' => $e['verdict']];
-        if (count($rows) >= 12) {
+        $key = implode('|', [
+            (string)($e['time'] ?? ''),
+            (string)($e['proto'] ?? ''),
+            (string)($e['dir'] ?? ''),
+            (string)($e['src'] ?? ''),
+            (string)($e['dst'] ?? ''),
+            (string)($e['service'] ?? ''),
+            (string)($e['verdict'] ?? ''),
+        ]);
+        if (isset($seen[$key])) {
+            continue;
+        }
+        $seen[$key] = true;
+        $rows[] = [
+            'time' => (string)($e['time'] ?? date('H:i:s')),
+            'proto' => (string)($e['proto'] ?? 'IP'),
+            'dir' => (string)($e['dir'] ?? 'FLOW'),
+            'src' => (string)($e['src'] ?? 'network'),
+            'dst' => (string)($e['dst'] ?? 'internet'),
+            'service' => (string)($e['service'] ?? 'unknown'),
+            'size' => (string)($e['size'] ?? 'ctrl'),
+            'bytes' => (int)($e['bytes'] ?? 0),
+            'verdict' => (string)($e['verdict'] ?? 'EVENT'),
+            'category' => event_category($e),
+            'severity' => (string)($e['severity'] ?? ''),
+        ];
+        if (count($rows) >= 18) {
             break;
         }
     }
     if (!$rows) {
-        $rows[] = ['time' => date('H:i:s'), 'proto' => 'PF', 'dir' => 'LCL', 'src' => 'pfSense', 'dst' => 'waiting', 'service' => 'log', 'size' => 'ctrl', 'verdict' => 'PASS'];
+        $rows[] = ['time' => date('H:i:s'), 'proto' => 'PF', 'dir' => 'LCL', 'src' => 'pfSense', 'dst' => 'waiting', 'service' => 'log', 'size' => 'ctrl', 'verdict' => 'PASS', 'category' => 'PF'];
     }
     return $rows;
 }
@@ -3583,9 +3627,82 @@ function packet_flow_text(array $packet, int $width): string
     return truncate_modern_text($src . '->' . $dst, $width);
 }
 
+function packet_event_tag(array $packet, int $width): string
+{
+    $category = strtoupper((string)($packet['category'] ?? ''));
+    $verdict = strtoupper((string)($packet['verdict'] ?? ''));
+    $service = strtolower((string)($packet['service'] ?? ''));
+
+    $tag = match (true) {
+        $verdict === 'SINKHOLE' => 'SINKHOLE',
+        $category === 'DNSBL' || $service === 'dnsbl' || str_contains($verdict, 'DNSBL') => 'DNSBL HIT',
+        $category === 'IPS' => $verdict === 'DROP' ? 'IPS DROP' : 'IPS',
+        $category === 'IDS' || $verdict === 'ALERT' => 'IDS ALERT',
+        $verdict === 'DROP' => 'FW DROP',
+        $verdict === 'PASS' => 'ALLOW',
+        $category !== '' => $category,
+        default => $verdict !== '' ? $verdict : 'EVENT',
+    };
+
+    return truncate_text($tag, $width);
+}
+
+function packet_story_text(array $packet, int $width): string
+{
+    $category = strtoupper((string)($packet['category'] ?? ''));
+    $verdict = strtoupper((string)($packet['verdict'] ?? ''));
+    $service = strtolower((string)($packet['service'] ?? ''));
+    $dir = strtoupper((string)($packet['dir'] ?? ''));
+    $proto = strtoupper((string)($packet['proto'] ?? 'IP'));
+    $srcRaw = (string)($packet['src'] ?? '');
+    $dstRaw = (string)($packet['dst'] ?? '');
+    $mini = $width < 52;
+    $src = compact_endpoint_label($srcRaw, $mini);
+    $dst = compact_endpoint_label($dstRaw, $mini);
+    $svc = service_human_label($service);
+    $bytes = (string)($packet['size'] ?? '');
+    $bytesText = ($bytes !== '' && $bytes !== '0B' && $bytes !== 'ctrl') ? ' ' . $bytes : '';
+
+    if ($category === 'DNSBL' || $service === 'dnsbl' || str_contains($verdict, 'DNSBL') || $verdict === 'SINKHOLE') {
+        $domain = truncate_modern_text($dstRaw !== '' ? $dstRaw : $dst, max(8, $width - cell_len($src) - 17));
+        $verb = $verdict === 'SINKHOLE' ? 'DNS sinkhole' : 'DNSBL hit';
+        return truncate_modern_text(sprintf('%s %s: %s', $src, $verb, $domain), $width);
+    }
+
+    if ($category === 'IDS' || $category === 'IPS' || $verdict === 'ALERT') {
+        $verb = $verdict === 'DROP' ? 'IPS blocked' : 'IDS alert';
+        return truncate_modern_text(sprintf('%s %s -> %s %s', $verb, $src, $dst, $svc), $width);
+    }
+
+    if ($verdict === 'DROP') {
+        $srcExternal = endpoint_is_external($srcRaw) || endpoint_is_external($src);
+        $dstExternal = endpoint_is_external($dstRaw) || endpoint_is_external($dst);
+        if ($dir === 'IN' && $srcExternal && $dstExternal) {
+            return truncate_modern_text(sprintf('WAN scan blocked from %s on %s%s', $src, $svc, $bytesText), $width);
+        }
+        if (endpoint_is_lan($srcRaw) || endpoint_is_lan($src)) {
+            return truncate_modern_text(sprintf('LAN policy blocked %s -> %s %s%s', $src, $dst, $svc, $bytesText), $width);
+        }
+        return truncate_modern_text(sprintf('Firewall blocked %s -> %s %s%s', $src, $dst, $svc, $bytesText), $width);
+    }
+
+    if ($verdict === 'PASS') {
+        return truncate_modern_text(sprintf('Allowed %s -> %s %s%s', $src, $dst, $svc, $bytesText), $width);
+    }
+
+    return truncate_modern_text(sprintf('%s %s -> %s %s %s%s', $proto, $src, $dst, $svc, $verdict, $bytesText), $width);
+}
+
 function endpoint_is_lan(string $label): bool
 {
-    return str_contains($label, '/LAN.') || preg_match('/^LAN\.\d+$/', $label) === 1 || preg_match('/^L\d+$/', $label) === 1;
+    $lower = strtolower($label);
+    return str_contains($label, '/LAN.')
+        || preg_match('/^LAN\.\d+$/', $label) === 1
+        || preg_match('/^L\d+$/', $label) === 1
+        || $label === 'LANv6'
+        || $label === 'L6'
+        || str_starts_with($lower, 'fd')
+        || str_starts_with($lower, 'fc');
 }
 
 function endpoint_is_external(string $label): bool
