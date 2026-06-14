@@ -1495,7 +1495,7 @@ function modern_ups_rows(array $f, array $p): array
     }
     $watts = center_text(sprintf('%s W', $ups['watts']), $w);
     $source = strtoupper(truncate_text((string)($ups['source'] ?? 'UPS'), 4));
-    if ($w < 18) {
+    if ($w < 24) {
         $v = is_numeric($ups['outputv']) ? (string)(int)round((float)$ups['outputv']) . 'V' : '?V';
         return [
             $watts,
@@ -1549,15 +1549,14 @@ function modern_flow_rows(array $f, array $p): array
         }
         return $rows;
     }
-    $rateW = $w >= 74 ? 9 : 7;
-    $svcW = $w >= 74 ? 8 : 5;
-    $tagW = $w >= 74 ? 8 : 5;
-    $meterW = max(3, min(6, $w - 34));
-    $flowW = max(10, $w - $rateW - $svcW - $tagW - $meterW - 8);
-    $rows = [sprintf('%-2s %-*s %-*s %-*s %-*s %s', '#', $flowW, 'FLOW', $rateW, 'RATE', $svcW, 'SVC', $tagW, 'TAG', 'MTR')];
+    $rateW = $w >= 74 ? 10 : 8;
+    $svcW = $w >= 74 ? 5 : 4;
+    $kindW = $w >= 74 ? 6 : 5;
+    $flowW = max(14, $w - $rateW - $svcW - $kindW - 7);
+    $rows = [sprintf('%-2s %-*s %-*s %-*s %-*s', '#', $flowW, 'FLOW', $rateW, 'RATE', $svcW, 'SVC', $kindW, 'KIND')];
     foreach (array_slice($f['flows'], 0, max(1, $p['height'] - 3)) as $idx => $flow) {
         $flowText = flow_path_text($flow, $flowW);
-        $rows[] = sprintf('%02d %-*s %-*s %-*s %-*s %s',
+        $rows[] = sprintf('%02d %-*s %-*s %-*s %-*s',
             $idx + 1,
             $flowW,
             $flowText,
@@ -1565,9 +1564,8 @@ function modern_flow_rows(array $f, array $p): array
             compact_rate_pair($flow['up'], $flow['down'], $rateW),
             $svcW,
             truncate_text(service_short((string)($flow['service'] ?? flow_class_short($flow['class']))), $svcW),
-            $tagW,
-            truncate_text(flow_class_short($flow['class']), $tagW),
-            compact_flow_bar($flow['up'], $flow['down'], $flow['class'], $meterW));
+            $kindW,
+            truncate_text(flow_class_short($flow['class']), $kindW));
     }
     return $rows;
 }
@@ -2788,13 +2786,26 @@ function parse_filter_event(string $line, array $hosts): ?array
         return null;
     }
     $dir = strtoupper($fields[7] ?? 'FLOW');
-    $proto = strtoupper($fields[16] ?? ($fields[15] ?? 'IP'));
-    $len = preg_replace('/\D/', '', $fields[17] ?? '') ?: '0';
-    $src = $fields[18] ?? '';
-    $dst = $fields[19] ?? '';
-    $sport = $fields[20] ?? '';
-    $dport = $fields[21] ?? '';
+    $ipVersion = (string)($fields[8] ?? '');
+    if ($ipVersion === '6') {
+        $proto = strtoupper($fields[12] ?? 'IP6');
+        $len = preg_replace('/\D/', '', $fields[14] ?? '') ?: '0';
+        $src = $fields[15] ?? '';
+        $dst = $fields[16] ?? '';
+        $sport = $fields[17] ?? '';
+        $dport = $fields[18] ?? '';
+    } else {
+        $proto = strtoupper($fields[16] ?? ($fields[15] ?? 'IP'));
+        $len = preg_replace('/\D/', '', $fields[17] ?? '') ?: '0';
+        $src = $fields[18] ?? '';
+        $dst = $fields[19] ?? '';
+        $sport = $fields[20] ?? '';
+        $dport = $fields[21] ?? '';
+    }
     if ($src === '' || $dst === '') {
+        return null;
+    }
+    if (is_pf_flow_noise_ip($src) || is_pf_flow_noise_ip($dst)) {
         return null;
     }
     $srcLabel = endpoint_label($src, $sport, $hosts);
@@ -2803,6 +2814,8 @@ function parse_filter_event(string $line, array $hosts): ?array
     $svc = service_name($dport ?: $sport);
     $time = preg_match('/(\d{2}:\d{2}:\d{2})/', $line, $m) ? $m[1] : date('H:i:s');
     $severity = $verdict === 'DROP' ? 'MED' : 'LOW';
+    $tickerSrc = compact_endpoint_label($srcLabel, true);
+    $tickerDst = compact_endpoint_label($dstLabel, true);
     return [
         'time' => $time,
         'proto' => $proto,
@@ -2814,7 +2827,7 @@ function parse_filter_event(string $line, array $hosts): ?array
         'bytes' => (int)$len,
         'verdict' => $verdict,
         'class' => $verdict === 'DROP' ? 'blocked' : (($svc === 'dns' || $svc === 'https') ? 'internet' : 'firewall'),
-        'ticker' => sprintf('[FW][%s] %s -> %s %s', $severity, $srcLabel, $dstLabel, strtolower($verdict)),
+        'ticker' => sprintf('[FW][%s] %s -> %s %s', $severity, $tickerSrc, $tickerDst, strtolower($verdict)),
     ];
 }
 
@@ -3086,7 +3099,7 @@ function service_name(string $port): string
         '80' => 'http',
         '443' => 'https',
         '123' => 'ntp',
-        '500', '4500' => 'vpn',
+        '500', '1443', '4500', '51820', '51821' => 'vpn',
         '22' => 'ssh',
         '137', '138', '139', '445' => 'smb',
         default => $port !== '' ? 'port' . $port : 'unknown',
@@ -3278,14 +3291,14 @@ function service_short(string $service): string
         $service === 'http' => 'web',
         $service === 'dns', $service === 'dnsbl' => 'dns',
         $service === 'unknown' => 'unk',
-        str_starts_with($service, 'port') => 'p' . substr($service, 4, 3),
+        str_starts_with($service, 'port') => 'p' . substr($service, 4, 4),
         default => truncate_text($service, 4),
     };
 }
 
 function flow_path_text(array $flow, int $width): string
 {
-    $mini = $width < 24;
+    $mini = $width < 40;
     $src = compact_endpoint_label((string)($flow['src'] ?? ''), $mini);
     $dst = compact_endpoint_label((string)($flow['dst'] ?? ''), $mini);
     return truncate_modern_text($src . '->' . $dst, $width);
@@ -3302,7 +3315,16 @@ function packet_flow_text(array $packet, int $width): string
 function compact_endpoint_label(string $label, bool $mini = false): string
 {
     $label = trim($label);
+    if (filter_var($label, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+        return compact_ipv6_label($label, $mini);
+    }
+    if (preg_match('/^(.+):(\d+)$/', $label, $m) && filter_var($m[1], FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+        return compact_ipv6_label($m[1], $mini);
+    }
     $label = preg_replace('/:\d+$/', '', $label) ?? $label;
+    if (filter_var($label, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+        return compact_ipv6_label($label, $mini);
+    }
     if (preg_match('/\/(LAN\.\d+)/', $label, $m)) {
         return $mini ? str_replace('LAN.', 'L', $m[1]) : $m[1];
     }
@@ -3328,6 +3350,24 @@ function compact_endpoint_label(string $label, bool $mini = false): string
         return $mini ? str_replace('EXT.', 'E', truncate_text($label, 10)) : truncate_text($label, 10);
     }
     return truncate_text($label, $mini ? 8 : 10);
+}
+
+function compact_ipv6_label(string $ip, bool $mini = false): string
+{
+    $ip = strtolower($ip);
+    if ($ip === '::1') {
+        return $mini ? 'lo6' : 'loop6';
+    }
+    if (str_starts_with($ip, 'fe80:')) {
+        return $mini ? 'LL6' : 'LLv6';
+    }
+    if (str_starts_with($ip, 'ff')) {
+        return $mini ? 'MC6' : 'MCAST6';
+    }
+    if (str_starts_with($ip, 'fd') || str_starts_with($ip, 'fc')) {
+        return $mini ? 'L6' : 'LANv6';
+    }
+    return $mini ? 'E6' : 'EXTv6';
 }
 
 function truncate_modern_text(string $text, int $width): string

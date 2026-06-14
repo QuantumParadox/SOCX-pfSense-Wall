@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.1.43
+
+- Removed the wide-mode IFTOPX `MTR` column that formed a large vertical white block on wider wall displays.
+- Changed wide Network Flows to a cleaner `FLOW / RATE / SVC / KIND` table so rows stay readable without dot-heavy clipping.
+- Use shorter `E15.230`/`L161` style labels in medium-width flow rows and compact UPS card details when the card is narrow.
+- Label common VPN/WireGuard-style ports as `vpn` instead of clipped generic `p...` service text.
+- Fixed IPv6 `filter.log` parsing by using IPv6-specific field offsets, preventing IPv6 addresses and TCP flags from landing in the wrong packet columns.
+- Compact IPv6 packet/event labels as `LANv6`, `EXTv6`, `LLv6`, and `MCAST6`, and suppress routine link-local/multicast filter noise from the wall feed.
+- Use short endpoint labels in firewall ticker events so long `EXT.x.y` text does not ellipsize.
+
 ## v0.1.42
 
 - Replaced stale event-derived IFTOPX rows with live `pfctl -ss -v` state byte deltas, so Network Flows update from active pf traffic.
