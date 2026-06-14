@@ -580,8 +580,8 @@ function render_modern_btop_wall(array $frame, int $cols, int $rows, bool $color
     $canvas = make_canvas($cols, $rows);
     $layout = modern_btop_layout($cols, $rows);
 
-    $cardGap = $cols >= 74 ? 1 : 0;
-    $cardWidths = split_widths($cols - ($cardGap * 4), 5);
+    $cardGap = $cols >= 110 ? 2 : ($cols >= 74 ? 1 : 0);
+    $cardWidths = weighted_widths($cols - ($cardGap * 4), [17, 13, 18, 15, 22]);
     $x = 0;
     $cards = [];
     foreach (['NETWORK', 'PF STATES', 'CPU', 'MEMORY', 'UPS'] as $idx => $title) {
@@ -591,17 +591,17 @@ function render_modern_btop_wall(array $frame, int $cols, int $rows, bool $color
             'CPU' => static fn(array $f, array $p): array => modern_cpu_card_rows($f, $p),
             'MEMORY' => static fn(array $f, array $p): array => modern_memory_rows($f, $p),
             default => static fn(array $f, array $p): array => modern_ups_rows($f, $p),
-        });
+        }, 'card');
         $x += $cardWidths[$idx] + $cardGap;
     }
 
     $panels = [
-        panel_obj(0, 0, $cols, $layout['header_h'], '', static fn(array $f, array $p): array => modern_header_rows($f, $p)),
+        panel_obj(0, 0, $cols, $layout['header_h'], '', static fn(array $f, array $p): array => modern_header_rows($f, $p), 'header'),
         ...$cards,
-        panel_obj(0, $layout['middle_y'], $layout['left_w'], $layout['middle_h'], 'PROCESS TREE / FILTER', static fn(array $f, array $p): array => modern_process_rows($f, $p)),
-        panel_obj($layout['right_x'], $layout['middle_y'], $layout['right_w'], $layout['middle_h'], 'NETWORK FLOWS / IFTOPX', static fn(array $f, array $p): array => modern_flow_rows($f, $p)),
-        panel_obj(0, $layout['packets_y'], $cols, $layout['packets_h'], 'LIVE PACKETS', static fn(array $f, array $p): array => modern_packet_rows($f, $p)),
-        panel_obj(0, $layout['ticker_y'], $cols, $layout['ticker_h'], ticker_title(), static fn(array $f, array $p): array => ticker_rows($f, $p)),
+        panel_obj(0, $layout['middle_y'], $layout['left_w'], $layout['middle_h'], 'PROCESS TREE / FILTER', static fn(array $f, array $p): array => modern_process_rows($f, $p), 'table'),
+        panel_obj($layout['right_x'], $layout['middle_y'], $layout['right_w'], $layout['middle_h'], 'NETWORK FLOWS / IFTOPX', static fn(array $f, array $p): array => modern_flow_rows($f, $p), 'table'),
+        panel_obj(0, $layout['packets_y'], $cols, $layout['packets_h'], 'LIVE PACKETS', static fn(array $f, array $p): array => modern_packet_rows($f, $p), 'table'),
+        panel_obj(0, $layout['ticker_y'], $cols, $layout['ticker_h'], ticker_title(), static fn(array $f, array $p): array => ticker_rows($f, $p), 'ticker'),
     ];
 
     foreach ($panels as $panel) {
@@ -633,10 +633,11 @@ function modern_btop_layout(int $cols, int $rows): array
     $headerH = 3;
     $cardsH = $rows >= 38 ? 9 : 8;
     $tickerH = 3;
-    $packetsH = max(6, min(10, intdiv($rows, 4)));
+    $contentH = max(10, $rows - $headerH - $cardsH - $tickerH);
+    $packetsH = min(12, max(5, intdiv($contentH, 2)));
+    $middleH = max(5, $contentH - $packetsH);
     $middleY = $headerH + $cardsH;
-    $packetsY = max($middleY + 5, $rows - $tickerH - $packetsH);
-    $middleH = max(5, $packetsY - $middleY);
+    $packetsY = $middleY + $middleH;
     $mid = intdiv($cols, 2);
     $middleGap = $cols >= 74 ? 1 : 0;
     $leftW = $mid;
@@ -720,6 +721,16 @@ function pad_or_clip(string $text, int $width): string
     return str_pad($text, $width);
 }
 
+function center_text(string $text, int $width): string
+{
+    $text = truncate_text($text, $width);
+    if (strlen($text) >= $width) {
+        return $text;
+    }
+    $left = intdiv($width - strlen($text), 2);
+    return str_repeat(' ', $left) . $text;
+}
+
 function safe_write(array &$canvas, int $x, int $y, string $text, int $maxWidth): void
 {
     if ($y < 0 || $y >= count($canvas) || $maxWidth <= 0) {
@@ -790,9 +801,27 @@ function render_modern_box(array &$canvas, int $x, int $y, int $width, int $heig
     }
 }
 
-function panel_obj(int $x, int $y, int $width, int $height, string $title, callable $render): array
+function render_modern_card_frame(array &$canvas, int $x, int $y, int $width, int $height, string $title): void
 {
-    return ['x' => $x, 'y' => $y, 'width' => $width, 'height' => $height, 'title' => $title, 'border' => 'cyan', 'render' => $render, 'clip' => true];
+    if ($width < 4 || $height < 2) {
+        return;
+    }
+    $label = ' ' . strtoupper($title) . ' ';
+    $line = $label . str_repeat('-', max(0, $width - strlen($label)));
+    safe_write($canvas, $x, $y, $line, $width);
+}
+
+function render_modern_header_frame(array &$canvas, int $x, int $y, int $width, int $height): void
+{
+    if ($width <= 0 || $height <= 0) {
+        return;
+    }
+    safe_write($canvas, $x, $y + $height - 1, str_repeat('-', $width), $width);
+}
+
+function panel_obj(int $x, int $y, int $width, int $height, string $title, callable $render, string $style = 'box'): array
+{
+    return ['x' => $x, 'y' => $y, 'width' => $width, 'height' => $height, 'title' => $title, 'border' => 'cyan', 'render' => $render, 'clip' => true, 'style' => $style];
 }
 
 function render_row(array &$canvas, array $panel, int $rowIndex, string $text): void
@@ -814,11 +843,43 @@ function draw_panel(array &$canvas, array $panel, array $frame): void
 
 function draw_modern_panel(array &$canvas, array $panel, array $frame): void
 {
-    render_modern_box($canvas, $panel['x'], $panel['y'], $panel['width'], $panel['height'], $panel['title']);
+    $style = (string)($panel['style'] ?? 'box');
+    if ($style === 'card') {
+        render_modern_card_frame($canvas, $panel['x'], $panel['y'], $panel['width'], $panel['height'], $panel['title']);
+    } elseif ($style === 'header') {
+        render_modern_header_frame($canvas, $panel['x'], $panel['y'], $panel['width'], $panel['height']);
+    } else {
+        render_modern_box($canvas, $panel['x'], $panel['y'], $panel['width'], $panel['height'], $panel['title']);
+    }
     $rows = ($panel['render'])($frame, $panel);
     foreach ($rows as $idx => $line) {
-        render_row($canvas, $panel, $idx, (string)$line);
+        render_modern_row($canvas, $panel, $idx, (string)$line);
     }
+}
+
+function render_modern_row(array &$canvas, array $panel, int $rowIndex, string $text): void
+{
+    [$x, $y, $width, $height] = modern_content_bounds($panel);
+    if ($rowIndex < 0 || $rowIndex >= $height) {
+        return;
+    }
+    safe_write($canvas, $x, $y + $rowIndex, $text, $width);
+}
+
+function modern_content_bounds(array $panel): array
+{
+    $style = (string)($panel['style'] ?? 'box');
+    $x = (int)$panel['x'];
+    $y = (int)$panel['y'];
+    $width = (int)$panel['width'];
+    $height = (int)$panel['height'];
+    if ($style === 'header') {
+        return [$x, $y, $width, max(0, $height - 1)];
+    }
+    if ($style === 'card') {
+        return [$x + 1, $y + 1, max(0, $width - 2), max(0, $height - 1)];
+    }
+    return [$x + 1, $y + 1, max(0, $width - 2), max(0, $height - 2)];
 }
 
 function ticker_title(): string
@@ -829,10 +890,25 @@ function ticker_title(): string
 
 function modern_header_rows(array $f, array $p): array
 {
+    $w = $p['width'];
     $badges = implode(' | ', $f['badges']);
-    $left = sprintf('SOCX MODERN WALL | %s | refresh %s | uptime %s', $f['time'], $f['refresh'], $f['cpu']['uptime'] ?? '?');
-    $space = max(1, ($p['width'] - 2) - strlen($left) - strlen($badges));
-    return [$left . str_repeat(' ', $space) . $badges];
+    $ups = normalize_ups($f['ups'] ?? []);
+    $left = sprintf('SOCX MODERN WALL  %s  refresh %s', $f['time'], $f['refresh']);
+    $space = max(1, $w - strlen($left) - strlen($badges));
+    $status = sprintf(
+        'WAN %s/%s   LAN %s/%s   PF %s states   UPS %sW %s%%',
+        compact_rate($f['wan']['down']),
+        compact_rate($f['wan']['up']),
+        compact_rate($f['lan']['down']),
+        compact_rate($f['lan']['up']),
+        $f['pf']['states'] ?? '?',
+        $ups['watts'] ?? '?',
+        $ups['load'] ?? '?'
+    );
+    return [
+        pad_or_clip($left . str_repeat(' ', $space) . $badges, $w),
+        pad_or_clip($status, $w),
+    ];
 }
 
 function modern_network_rows(array $f, array $p): array
@@ -844,14 +920,14 @@ function modern_network_rows(array $f, array $p): array
             sprintf('WAN up %s', compact_rate($f['wan']['up'])),
             sprintf('LAN dn %s', compact_rate($f['lan']['down'])),
             sprintf('LAN up %s', compact_rate($f['lan']['up'])),
-            sparkline($f['wan_history'] ?? [], max(6, $w - 2)),
+            fit_sparkline($f['wan_history'] ?? [], $w),
         ];
     }
     return [
-        sprintf('WAN dn %-8s up %-8s', $f['wan']['down'], $f['wan']['up']),
-        sprintf('LAN dn %-8s up %-8s', $f['lan']['down'], $f['lan']['up']),
-        'WAN ' . sparkline($f['wan_history'] ?? [], max(8, $w - 6)),
-        'LAN ' . sparkline($f['lan_history'] ?? [], max(8, $w - 6)),
+        sprintf('WAN  D %-8s U %-8s', $f['wan']['down'], $f['wan']['up']),
+        'WAN  ' . fit_sparkline($f['wan_history'] ?? [], $w - 5),
+        sprintf('LAN  D %-8s U %-8s', $f['lan']['down'], $f['lan']['up']),
+        'LAN  ' . fit_sparkline($f['lan_history'] ?? [], $w - 5),
         truncate_text(($f['wan']['link'] ?? '') . '  ' . ($f['wan']['rtt'] ?? ''), $w),
     ];
 }
@@ -866,7 +942,7 @@ function modern_pf_rows(array $f, array $p): array
             sprintf('sr %s', compact_rate($pf['searches_rate'] ?? '?')),
             sprintf('blk %s', compact_num((int)($pf['blocked'] ?? 0))),
             sprintf('pass %s', compact_num((int)($pf['passed'] ?? 0))),
-            sparkline($f['pf_history'] ?? [], max(6, $w - 2)),
+            fit_sparkline($f['pf_history'] ?? [], $w),
         ];
     }
     return [
@@ -874,28 +950,30 @@ function modern_pf_rows(array $f, array $p): array
         sprintf('search  %s', $pf['searches_rate'] ?? '?'),
         sprintf('blocked %s', compact_num((int)($pf['blocked'] ?? 0))),
         sprintf('passed  %s', compact_num((int)($pf['passed'] ?? 0))),
-        sparkline($f['pf_history'] ?? [], max(8, $w - 2)),
+        fit_sparkline($f['pf_history'] ?? [], $w),
     ];
 }
 
 function modern_cpu_card_rows(array $f, array $p): array
 {
     $cpu = $f['cpu'];
+    $tick = (int)($f['tick'] ?? 0);
     $w = $p['width'] - 2;
     if ($w < 22) {
         $rows = [sprintf('%d%% %s', $cpu['used'], str_replace('GHz', 'G', $cpu['freq']))];
         foreach (array_slice($cpu['cores'], 0, max(1, $p['height'] - 4)) as $core) {
             $used = (int)round((float)$core['used']);
-            $rows[] = sprintf('C%s %s %d%%', $core['id'], bar($used, 4), $used);
+            $barW = max(2, min(6, $w - 9));
+            $rows[] = sprintf('C%s %s %2d%%', $core['id'], animated_bar($used, $barW, $tick + (int)$core['id']), $used);
         }
         $rows[] = 'ld ' . implode(' ', array_slice($cpu['load'], 0, 2));
         return $rows;
     }
-    $barW = max(6, min(14, $w - 11));
+    $barW = max(8, min(18, $w - 11));
     $rows = [sprintf('%3d%%  %-7s  %s', $cpu['used'], $cpu['freq'], $cpu['temp'])];
     foreach (array_slice($cpu['cores'], 0, max(1, $p['height'] - 4)) as $core) {
         $used = (int)round((float)$core['used']);
-        $rows[] = sprintf('C%-2s %s %3d%%', $core['id'], bar($used, $barW), $used);
+        $rows[] = sprintf('C%-2s %s %3d%%', $core['id'], animated_bar($used, $barW, $tick + (int)$core['id']), $used);
     }
     $rows[] = 'load ' . implode(' ', $cpu['load']);
     return $rows;
@@ -905,22 +983,22 @@ function modern_memory_rows(array $f, array $p): array
 {
     $mem = $f['mem'];
     $w = $p['width'] - 2;
-    $barW = max(6, min(16, $w - 21));
     $arcPct = percent((int)$mem['arc_total'], max(1, (int)$mem['total']));
     if ($w < 22) {
         return [
             sprintf('RAM %d%%', (int)$mem['used_pct']),
+            fit_bar((int)$mem['used_pct'], $w),
             sprintf('%s/%s', bytes_text((int)$mem['used']), bytes_text((int)$mem['total'])),
             sprintf('ARC %d%%', $arcPct),
-            sprintf('%s used', bytes_text((int)$mem['arc_total'])),
+            fit_bar($arcPct, $w),
             'free ' . bytes_text((int)$mem['free']),
         ];
     }
     return [
         sprintf('RAM %s / %s', bytes_text((int)$mem['used']), bytes_text((int)$mem['total'])),
-        sprintf('%3d%% %s', (int)$mem['used_pct'], bar((int)$mem['used_pct'], $barW)),
+        sprintf('%3d%% %s', (int)$mem['used_pct'], fit_bar((int)$mem['used_pct'], $w - 5)),
         sprintf('ARC %s / %s', bytes_text((int)$mem['arc_total']), bytes_text((int)$mem['total'])),
-        sprintf('%3d%% %s', $arcPct, bar($arcPct, $barW)),
+        sprintf('%3d%% %s', $arcPct, fit_bar($arcPct, $w - 5)),
         'free ' . bytes_text((int)$mem['free']),
     ];
 }
@@ -934,19 +1012,19 @@ function modern_ups_rows(array $f, array $p): array
     }
     if ($w < 22) {
         return [
-            sprintf('POWER %s W', $ups['watts']),
-            sprintf('load %s%%', $ups['load']),
-            sprintf('batt %s%%', $ups['battery']),
+            center_text(sprintf('%s W', $ups['watts']), $w),
+            sprintf('load %s%% batt %s%%', $ups['load'], $ups['battery']),
             sprintf('run %s', $ups['runtime']),
             sprintf('pk %s av %s', $ups['peak60'], $ups['avg60']),
+            fit_sparkline($ups['history'], $w),
         ];
     }
     return [
-        sprintf('POWER %s W', $ups['watts']),
+        center_text(sprintf('UPS POWER  %s W', $ups['watts']), $w),
         sprintf('load %s%%  batt %s%%', $ups['load'], $ups['battery']),
         sprintf('run %s  line %sV', $ups['runtime'], $ups['linev']),
         sprintf('peak60 %sW  avg60 %sW', $ups['peak60'], $ups['avg60']),
-        sparkline($ups['history'], max(8, $w - 2)),
+        fit_sparkline($ups['history'], $w),
     ];
 }
 
@@ -1946,11 +2024,65 @@ function split_widths(int $total, int $parts): array
     return array_map(static fn(int $w): int => max(4, $w), $widths);
 }
 
+function weighted_widths(int $total, array $weights): array
+{
+    $weights = array_values(array_filter(array_map('intval', $weights), static fn(int $w): bool => $w > 0));
+    if (!$weights) {
+        return [$total];
+    }
+    $minWidth = $total >= count($weights) * 4 ? 4 : 1;
+    $sum = array_sum($weights);
+    $widths = [];
+    $fractions = [];
+    $used = 0;
+    foreach ($weights as $idx => $weight) {
+        $exact = ($total * $weight) / $sum;
+        $base = max($minWidth, (int)floor($exact));
+        $widths[$idx] = $base;
+        $fractions[$idx] = $exact - floor($exact);
+        $used += $base;
+    }
+    while ($used < $total) {
+        arsort($fractions);
+        foreach (array_keys($fractions) as $idx) {
+            if ($used >= $total) {
+                break;
+            }
+            $widths[$idx]++;
+            $used++;
+        }
+    }
+    while ($used > $total) {
+        asort($fractions);
+        $changed = false;
+        foreach (array_keys($fractions) as $idx) {
+            if ($used <= $total) {
+                break;
+            }
+            if ($widths[$idx] > $minWidth) {
+                $widths[$idx]--;
+                $used--;
+                $changed = true;
+            }
+        }
+        if (!$changed) {
+            break;
+        }
+    }
+    ksort($widths);
+    return array_values($widths);
+}
+
 function bar(int $pct, int $width): string
 {
     $width = max(4, $width);
     $filled = (int)round(($pct / 100) * $width);
     return '[' . str_repeat('#', $filled) . str_repeat('.', $width - $filled) . ']';
+}
+
+function fit_bar(int $pct, int $totalWidth): string
+{
+    return bar($pct, max(2, $totalWidth - 2));
 }
 
 function sparkline(array $values, int $width): string
@@ -1971,6 +2103,11 @@ function sparkline(array $values, int $width): string
         $out .= $chars[max(0, min(strlen($chars) - 1, $idx))];
     }
     return '[' . str_pad($out, $width, '.', STR_PAD_LEFT) . ']';
+}
+
+function fit_sparkline(array $values, int $totalWidth): string
+{
+    return sparkline($values, max(2, $totalWidth - 2));
 }
 
 function sparkline_chars(): string

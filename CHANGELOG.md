@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.32
+
+- Changed modern-btop WALL mode from boxed metric cells to softer btop-style cards with lighter borders.
+- Weighted the top cards so UPS gets more room and shows wattage as the primary readout.
+- Expanded CPU, memory, network, pf, and UPS meters/sparklines while keeping table rows single-line clipped.
+- Fixed the modern layout height calculation so packet panels and the event ticker do not overlap on 80x24 tmux panes.
+
 ## v0.1.31
 
 - Redesigned the modern-btop wall renderer with thin ASCII borders and spaced cards instead of shared `====` grid borders.
