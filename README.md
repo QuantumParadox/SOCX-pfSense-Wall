@@ -56,10 +56,10 @@ sh install-pfsense.sh
 Then launch manually:
 
 ```sh
-socx
+soc
 ```
 
-The installer also creates `soc` and `SOCX` aliases.
+The installer also keeps `socx` and `SOCX` as aliases, but `soc` is the short command to use.
 
 Wall mode is the default. To launch the older split-pane layout:
 

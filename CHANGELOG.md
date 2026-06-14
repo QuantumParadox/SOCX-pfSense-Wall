@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.30
+
+- Documented `soc` as the primary launch command while keeping `socx` and `SOCX` aliases.
+- Updated the pfSense installer completion message to say `Run: soc`.
+
 ## v0.1.29
 
 - Added `SOCX_THEME=modern-btop` as the default wall theme with a btop-inspired metric-card layout.

@@ -25,5 +25,5 @@ if [ ! -f /usr/local/etc/socx_hosts.conf ]; then
 fi
 
 echo "SOCX pfSense Wall installed."
-echo "Run: socx"
+echo "Run: soc"
 echo "Autoboot script: /usr/local/etc/rc.d/socx"
