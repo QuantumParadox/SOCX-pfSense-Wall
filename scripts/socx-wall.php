@@ -63,6 +63,7 @@ $state = [
     'wan_history' => [],
     'lan_history' => [],
     'pf_history' => [],
+    'pf_state_prev' => [],
     'ups_history' => [],
     'ups_cache' => [],
     'debug_timing' => getenv('SOCX_DEBUG_TIMING') === 'true',
@@ -617,7 +618,10 @@ function collect_live_frame(array &$state, array $hosts): array
     $state['command_events_fresh'] = !empty($commandEvents);
     $events = array_merge($events, $commandEvents);
     $events = prioritize_events($events);
-    $flows = flows_from_events($events);
+    $flows = collect_pf_state_flows($state, $hosts, $now);
+    if (!$flows) {
+        $flows = flows_from_events($events);
+    }
     $packets = packets_from_events($events);
 
     return [
@@ -1400,8 +1404,8 @@ function modern_network_rows(array $f, array $p): array
     $w = modern_content_width($p);
     if ($w < 22) {
         return [
-            sprintf('WAN %s/%s', compact_rate($f['wan']['down']), compact_rate($f['wan']['up'])),
-            sprintf('LAN %s/%s', compact_rate($f['lan']['down']), compact_rate($f['lan']['up'])),
+            truncate_text(sprintf('WAN %s', compact_rate_pair((string)$f['wan']['down'], (string)$f['wan']['up'], max(1, $w - 4))), $w),
+            truncate_text(sprintf('LAN %s', compact_rate_pair((string)$f['lan']['down'], (string)$f['lan']['up'], max(1, $w - 4))), $w),
             fit_sparkline($f['wan_history'] ?? [], $w),
         ];
     }
@@ -1419,15 +1423,15 @@ function modern_pf_rows(array $f, array $p): array
     $w = modern_content_width($p);
     if ($w < 22) {
         return [
-            sprintf('st %s', $pf['states'] ?? '?'),
-            sprintf('sr %s', compact_rate($pf['searches_rate'] ?? '?')),
-            sprintf('drop %s pass %s', compact_num((int)($pf['blocked'] ?? 0)), compact_num((int)($pf['passed'] ?? 0))),
-            fit_sparkline($f['pf_history'] ?? [], $w),
+            truncate_text(sprintf('st %s', compact_num((int)preg_replace('/\D/', '', (string)($pf['states'] ?? '0')))), $w),
+            truncate_text(sprintf('sr %s', compact_pf_rate((string)($pf['searches_rate'] ?? '?'))), $w),
+            truncate_text(sprintf('b%s/%s', compact_num_tight((int)($pf['blocked'] ?? 0)), compact_num_tight((int)($pf['passed'] ?? 0))), $w),
         ];
     }
     return [
-        sprintf('st %s  sr %s', $pf['states'] ?? '?', $pf['searches_rate'] ?? '?'),
-        sprintf('drop %s  pass %s', compact_num((int)($pf['blocked'] ?? 0)), compact_num((int)($pf['passed'] ?? 0))),
+        truncate_text(sprintf('states %s  search %s', $pf['states'] ?? '?', compact_pf_rate((string)($pf['searches_rate'] ?? '?'))), $w),
+        truncate_text(sprintf('blk %s  pass %s', compact_num((int)($pf['blocked'] ?? 0)), compact_num((int)($pf['passed'] ?? 0))), $w),
+        truncate_text(sprintf('ins %s  rem %s', compact_pf_rate((string)($pf['inserts_rate'] ?? '?')), compact_pf_rate((string)($pf['removals_rate'] ?? '?'))), $w),
         fit_sparkline($f['pf_history'] ?? [], $w),
     ];
 }
@@ -1469,9 +1473,9 @@ function modern_memory_rows(array $f, array $p): array
     $arcPct = percent((int)$mem['arc_total'], max(1, (int)$mem['total']));
     if ($w < 22) {
         return [
-            sprintf('RAM %s/%s', bytes_text((int)$mem['used']), bytes_text((int)$mem['total'])),
+            sprintf('RAM %s/%s', compact_bytes_tight((int)$mem['used']), compact_bytes_tight((int)$mem['total'])),
             sprintf('%2d%% %s', (int)$mem['used_pct'], fit_bar((int)$mem['used_pct'], max(1, $w - 4))),
-            sprintf('ARC %s free %s', bytes_text((int)$mem['arc_total']), bytes_text((int)$mem['free'])),
+            sprintf('ARC %s F%s', compact_bytes_tight((int)$mem['arc_total']), compact_bytes_tight((int)$mem['free'])),
         ];
     }
     return [
@@ -1528,6 +1532,23 @@ function modern_process_rows(array $f, array $p): array
 function modern_flow_rows(array $f, array $p): array
 {
     $w = modern_content_width($p);
+    if ($w < 52) {
+        $rateW = 8;
+        $svcW = 3;
+        $flowW = max(10, $w - $rateW - $svcW - 5);
+        $rows = [sprintf('%-2s %-*s %-*s %-*s', '#', $flowW, 'FLOW', $rateW, 'RATE', $svcW, 'SVC')];
+        foreach (array_slice($f['flows'], 0, max(1, $p['height'] - 3)) as $idx => $flow) {
+            $rows[] = sprintf('%02d %-*s %-*s %-*s',
+                $idx + 1,
+                $flowW,
+                flow_path_text($flow, $flowW),
+                $rateW,
+                compact_rate_pair($flow['up'], $flow['down'], $rateW),
+                $svcW,
+                truncate_text(service_short((string)($flow['service'] ?? '')), $svcW));
+        }
+        return $rows;
+    }
     $rateW = $w >= 74 ? 9 : 7;
     $svcW = $w >= 74 ? 8 : 5;
     $tagW = $w >= 74 ? 8 : 5;
@@ -1535,7 +1556,7 @@ function modern_flow_rows(array $f, array $p): array
     $flowW = max(10, $w - $rateW - $svcW - $tagW - $meterW - 8);
     $rows = [sprintf('%-2s %-*s %-*s %-*s %-*s %s', '#', $flowW, 'FLOW', $rateW, 'RATE', $svcW, 'SVC', $tagW, 'TAG', 'MTR')];
     foreach (array_slice($f['flows'], 0, max(1, $p['height'] - 3)) as $idx => $flow) {
-        $flowText = truncate_modern_text($flow['src'] . ' -> ' . $flow['dst'], $flowW);
+        $flowText = flow_path_text($flow, $flowW);
         $rows[] = sprintf('%02d %-*s %-*s %-*s %-*s %s',
             $idx + 1,
             $flowW,
@@ -1543,7 +1564,7 @@ function modern_flow_rows(array $f, array $p): array
             $rateW,
             compact_rate_pair($flow['up'], $flow['down'], $rateW),
             $svcW,
-            truncate_text((string)($flow['service'] ?? flow_class_short($flow['class'])), $svcW),
+            truncate_text(service_short((string)($flow['service'] ?? flow_class_short($flow['class']))), $svcW),
             $tagW,
             truncate_text(flow_class_short($flow['class']), $tagW),
             compact_flow_bar($flow['up'], $flow['down'], $flow['class'], $meterW));
@@ -1554,16 +1575,21 @@ function modern_flow_rows(array $f, array $p): array
 function modern_packet_rows(array $f, array $p): array
 {
     $w = modern_content_width($p);
-    $svcW = $w >= 110 ? 8 : 6;
+    $svcW = $w >= 110 ? 8 : 5;
     $verdictW = 10;
     $flowW = max(24, $w - $svcW - $verdictW - 44);
     $rows = [sprintf('%-8s %-5s %-4s %-*s %-*s %-*s', 'TIME', 'PROTO', 'DIR', $flowW, 'SRC -> DST', $svcW, 'SVC', $verdictW, 'VERDICT')];
     foreach (array_slice($f['packets'], 0, max(1, $p['height'] - 3)) as $pkt) {
-        $flow = $pkt['src'] . ' -> ' . $pkt['dst'];
         $rows[] = sprintf('%-8s %-5s %-4s %-*s %-*s %-*s',
-            $pkt['time'], $pkt['proto'], $pkt['dir'], $flowW, truncate_text($flow, $flowW),
-            $svcW, truncate_text($pkt['service'], $svcW),
-            $verdictW, truncate_text($pkt['verdict'], $verdictW));
+            truncate_text((string)$pkt['time'], 8),
+            truncate_text((string)$pkt['proto'], 5),
+            truncate_text((string)$pkt['dir'], 4),
+            $flowW,
+            packet_flow_text($pkt, $flowW),
+            $svcW,
+            truncate_text(service_short((string)$pkt['service']), $svcW),
+            $verdictW,
+            truncate_text((string)$pkt['verdict'], $verdictW));
     }
     return $rows;
 }
@@ -1937,12 +1963,18 @@ function parse_mem(string $top, int $physmem): array
 
 function parse_pf(string $raw): array
 {
-    $pf = ['states' => '?', 'searches_rate' => '?', 'passed' => 0, 'blocked' => 0];
+    $pf = ['states' => '?', 'searches_rate' => '?', 'inserts_rate' => '?', 'removals_rate' => '?', 'match_rate' => '?', 'passed' => 0, 'blocked' => 0];
     foreach (explode("\n", $raw) as $line) {
         if (preg_match('/current entries\s+(\d+)/', $line, $m)) {
             $pf['states'] = $m[1];
         } elseif (preg_match('/searches\s+\d+\s+([0-9.]+)\/s/', $line, $m)) {
             $pf['searches_rate'] = $m[1] . '/s';
+        } elseif (preg_match('/inserts\s+\d+\s+([0-9.]+)\/s/', $line, $m)) {
+            $pf['inserts_rate'] = $m[1] . '/s';
+        } elseif (preg_match('/removals\s+\d+\s+([0-9.]+)\/s/', $line, $m)) {
+            $pf['removals_rate'] = $m[1] . '/s';
+        } elseif (preg_match('/^\s+match\s+\d+\s+([0-9.]+)\/s/', $line, $m)) {
+            $pf['match_rate'] = $m[1] . '/s';
         } elseif (preg_match('/^\s+Passed\s+(\d+)\s+(\d+)/', $line, $m)) {
             $pf['passed'] += (int)$m[1] + (int)$m[2];
         } elseif (preg_match('/^\s+Blocked\s+(\d+)\s+(\d+)/', $line, $m)) {
@@ -2851,6 +2883,150 @@ function flows_from_events(array $events): array
     return $rows;
 }
 
+function collect_pf_state_flows(array &$state, array $hosts, float $now): array
+{
+    $raw = run_cmd('/sbin/pfctl -ss -v');
+    if (trim($raw) === '') {
+        return [];
+    }
+
+    $prev = $state['pf_state_prev'] ?? [];
+    $current = [];
+    $rows = [];
+    $pending = null;
+
+    foreach (explode("\n", $raw) as $line) {
+        if (trim($line) === '') {
+            continue;
+        }
+        if (!preg_match('/^\s/', $line)) {
+            $pending = parse_pf_state_header($line, $hosts);
+            continue;
+        }
+        if ($pending === null || !preg_match('/,\s*(\d+):(\d+)\s+pkts,\s*(\d+):(\d+)\s+bytes/i', $line, $m)) {
+            continue;
+        }
+
+        $bytesA = (int)$m[3];
+        $bytesB = (int)$m[4];
+        $key = $pending['key'];
+        $prior = $prev[$key] ?? null;
+        $elapsed = $prior ? max(0.001, $now - (float)$prior['t']) : max(1.0, parse_pf_age_seconds($line));
+        $deltaA = $prior ? max(0, $bytesA - (int)$prior['a']) : $bytesA;
+        $deltaB = $prior ? max(0, $bytesB - (int)$prior['b']) : $bytesB;
+        $rateA = (int)round($deltaA / $elapsed);
+        $rateB = (int)round($deltaB / $elapsed);
+        $score = $rateA + $rateB;
+        if ($score <= 0 && !$prior) {
+            $score = min($bytesA + $bytesB, 1_000_000);
+        }
+        $current[$key] = ['a' => $bytesA, 'b' => $bytesB, 't' => $now];
+        $rows[] = [
+            'src' => $pending['src'],
+            'dst' => $pending['dst'],
+            'up' => short_bytes($rateA) . '/s',
+            'down' => short_bytes($rateB) . '/s',
+            'class' => $pending['class'],
+            'service' => $pending['service'],
+            'proto' => $pending['proto'],
+            'iface' => $pending['iface'],
+            'score' => $score,
+            'graph' => graph_bar(max(1, $score), max(1, $score), false),
+        ];
+        $pending = null;
+    }
+
+    $state['pf_state_prev'] = $current;
+    usort($rows, static fn(array $a, array $b): int => ((int)$b['score']) <=> ((int)$a['score']));
+    return array_slice($rows, 0, 16);
+}
+
+function parse_pf_state_header(string $line, array $hosts): ?array
+{
+    if (!preg_match('/^(\S+)\s+([a-z0-9]+)\s+(.+?)\s+(->|<-)\s+(.+?)\s{2,}/i', $line, $m)) {
+        return null;
+    }
+    $iface = $m[1];
+    if (in_array($iface, ['lo0', 'pflog0', 'pfsync0'], true)) {
+        return null;
+    }
+    $proto = strtoupper($m[2]);
+    $left = parse_pf_endpoint_text($m[3], $hosts);
+    $right = parse_pf_endpoint_text($m[5], $hosts);
+    if ($left['label'] === '' || $right['label'] === '') {
+        return null;
+    }
+    if ($m[4] === '<-') {
+        $src = $right;
+        $dst = $left;
+    } else {
+        $src = $left;
+        $dst = $right;
+    }
+    if (is_pf_flow_noise_ip($src['ip']) || is_pf_flow_noise_ip($dst['ip'])) {
+        return null;
+    }
+    $service = service_name($dst['port'] !== '' ? $dst['port'] : $src['port']);
+    $class = str_starts_with($iface, 'tun') || str_starts_with($iface, 'wg') ? 'vpn' : (($service === 'dns' || $service === 'https') ? 'internet' : 'state');
+    return [
+        'iface' => $iface,
+        'proto' => $proto,
+        'src' => $src['label'],
+        'dst' => $dst['label'],
+        'service' => $service,
+        'class' => $class,
+        'key' => implode('|', [$iface, $proto, $src['ip'], $src['port'], $dst['ip'], $dst['port']]),
+    ];
+}
+
+function parse_pf_endpoint_text(string $text, array $hosts): array
+{
+    $text = trim($text);
+    if (preg_match('/\(([^)]+)\)/', $text, $m)) {
+        $text = trim($m[1]);
+    }
+    $text = preg_split('/\s+/', $text)[0] ?? $text;
+    $text = trim($text, '[]');
+    $ip = $text;
+    $port = '';
+    if (preg_match('/^(.+):(\d+)$/', $text, $m) && filter_var($m[1], FILTER_VALIDATE_IP)) {
+        $ip = $m[1];
+        $port = $m[2];
+    } elseif (preg_match('/^(.+)\[(\d+)\]$/', $text, $m) && filter_var($m[1], FILTER_VALIDATE_IP)) {
+        $ip = $m[1];
+        $port = $m[2];
+    } elseif (preg_match('/^(\d{1,3}(?:\.\d{1,3}){3}):(\d+)$/', $text, $m)) {
+        $ip = $m[1];
+        $port = $m[2];
+    }
+    $label = filter_var($ip, FILTER_VALIDATE_IP) ? endpoint_label($ip, $port, $hosts) : truncate_text($text, 24);
+    return ['ip' => $ip, 'port' => $port, 'label' => $label];
+}
+
+function is_pf_flow_noise_ip(string $ip): bool
+{
+    $ip = strtolower($ip);
+    if ($ip === '255.255.255.255' || $ip === '192.168.1.255' || $ip === '::1' || str_starts_with($ip, '127.')) {
+        return true;
+    }
+    return str_starts_with($ip, 'ff') || str_starts_with($ip, 'fe80:');
+}
+
+function parse_pf_age_seconds(string $line): float
+{
+    if (!preg_match('/age\s+([0-9:]+)/', $line, $m)) {
+        return 1.0;
+    }
+    $parts = array_map('intval', explode(':', $m[1]));
+    if (count($parts) === 3) {
+        return (float)(($parts[0] * 3600) + ($parts[1] * 60) + $parts[2]);
+    }
+    if (count($parts) === 2) {
+        return (float)(($parts[0] * 60) + $parts[1]);
+    }
+    return max(1.0, (float)($parts[0] ?? 1));
+}
+
 function packets_from_events(array $events): array
 {
     $rows = [];
@@ -2997,10 +3173,51 @@ function compact_num(int $num): string
     return (string)$num;
 }
 
+function compact_num_tight(int $num): string
+{
+    if ($num >= 1000000000) {
+        return (string)((int)round($num / 1000000000)) . 'B';
+    }
+    if ($num >= 1000000) {
+        return (string)((int)round($num / 1000000)) . 'M';
+    }
+    if ($num >= 1000) {
+        return (string)((int)round($num / 1000)) . 'K';
+    }
+    return (string)$num;
+}
+
+function compact_bytes_tight(int $bytes): string
+{
+    $units = ['B', 'K', 'M', 'G', 'T'];
+    $value = (float)$bytes;
+    $unit = 0;
+    while ($value >= 1024 && $unit < count($units) - 1) {
+        $value /= 1024;
+        $unit++;
+    }
+    if ($unit === 0) {
+        return (string)((int)round($value)) . 'B';
+    }
+    return (string)((int)round($value)) . $units[$unit];
+}
+
 function compact_rate(string $rate): string
 {
     $rate = str_replace('/s', '', $rate);
     return truncate_text($rate, 8);
+}
+
+function compact_pf_rate(string $rate): string
+{
+    $rate = trim(str_replace('/s', '', $rate));
+    if ($rate === '' || $rate === '?') {
+        return '?';
+    }
+    if (!is_numeric($rate)) {
+        return truncate_text($rate, 7);
+    }
+    return short_bytes((int)round((float)$rate)) . '/s';
 }
 
 function down_marker(): string
@@ -3046,8 +3263,71 @@ function flow_class_short(string $class): string
         'blocked' => 'drop',
         'firewall' => 'fw',
         'internet' => 'net',
+        'state' => 'state',
+        'vpn' => 'vpn',
         default => truncate_text($class, 3),
     };
+}
+
+function service_short(string $service): string
+{
+    $service = strtolower(trim($service));
+    return match (true) {
+        $service === '' => '?',
+        $service === 'https' => 'tls',
+        $service === 'http' => 'web',
+        $service === 'dns', $service === 'dnsbl' => 'dns',
+        $service === 'unknown' => 'unk',
+        str_starts_with($service, 'port') => 'p' . substr($service, 4, 3),
+        default => truncate_text($service, 4),
+    };
+}
+
+function flow_path_text(array $flow, int $width): string
+{
+    $mini = $width < 24;
+    $src = compact_endpoint_label((string)($flow['src'] ?? ''), $mini);
+    $dst = compact_endpoint_label((string)($flow['dst'] ?? ''), $mini);
+    return truncate_modern_text($src . '->' . $dst, $width);
+}
+
+function packet_flow_text(array $packet, int $width): string
+{
+    $mini = $width < 30;
+    $src = compact_endpoint_label((string)($packet['src'] ?? ''), $mini);
+    $dst = compact_endpoint_label((string)($packet['dst'] ?? ''), $mini);
+    return truncate_modern_text($src . '->' . $dst, $width);
+}
+
+function compact_endpoint_label(string $label, bool $mini = false): string
+{
+    $label = trim($label);
+    $label = preg_replace('/:\d+$/', '', $label) ?? $label;
+    if (preg_match('/\/(LAN\.\d+)/', $label, $m)) {
+        return $mini ? str_replace('LAN.', 'L', $m[1]) : $m[1];
+    }
+    if (preg_match('/^LAN\.(\d+)$/', $label, $m)) {
+        return $mini ? 'L' . $m[1] : $label;
+    }
+    if (preg_match('/^EXT\.(\d+(?:\.\d+)?)$/', $label, $m)) {
+        return $mini ? 'E' . $m[1] : truncate_text($label, 10);
+    }
+    if (str_contains($label, ':')) {
+        return $mini ? 'v6' : truncate_text($label, 10);
+    }
+    if ($label === 'BCAST') {
+        return $mini ? 'BC' : $label;
+    }
+    if ($label === 'pfSense') {
+        return $mini ? 'pf' : $label;
+    }
+    if ($label === 'WAN') {
+        return $label;
+    }
+    if (str_starts_with($label, 'EXT.')) {
+        return $mini ? str_replace('EXT.', 'E', truncate_text($label, 10)) : truncate_text($label, 10);
+    }
+    return truncate_text($label, $mini ? 8 : 10);
 }
 
 function truncate_modern_text(string $text, int $width): string

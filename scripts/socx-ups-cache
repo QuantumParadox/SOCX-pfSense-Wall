@@ -8,7 +8,7 @@
 UPSC=${UPSC:-/usr/local/bin/upsc}
 SNMPGET=${SNMPGET:-/usr/local/bin/snmpget}
 CACHE=${SOCX_UPS_CACHE_FILE:-/tmp/socx-ups-cache.env}
-INTERVAL_MS=${SOCX_UPS_REFRESH_MS:-500}
+INTERVAL_MS=${SOCX_UPS_REFRESH_MS:-250}
 SOURCE=${SOCX_UPS_SOURCE:-auto}
 
 nut_conf_value() {

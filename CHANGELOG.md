@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.1.42
+
+- Replaced stale event-derived IFTOPX rows with live `pfctl -ss -v` state byte deltas, so Network Flows update from active pf traffic.
+- Tightened narrow Network Flows columns to show compact `LAN -> EXT`, rate, and service text instead of clipped dot-heavy rows.
+- Filtered loopback, multicast/link-local, and broadcast pf states out of IFTOPX so the wall focuses on useful LAN/WAN/VPN conversations.
+- Compact PF stats with readable state/search/block/pass values plus insert/remove rates where space allows.
+- Compacted tight NETWORK and MEMORY card values to reduce clipped `...` text on 80-column wall displays.
+- Compact Live Packets endpoint and service labels so IPv6/filterlog rows do not stretch packet columns.
+- Lowered the UPS cache refresh default from 500 ms to 250 ms so NUT/APC wattage updates feel more responsive on the wall.
+
 ## v0.1.41
 
 - Fixed stale UPS telemetry by making `socx-ups-cache` fall back to direct Schneider/APC SNMP polling when NUT `upsc` cannot reach `upsd`.
