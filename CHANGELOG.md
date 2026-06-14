@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.35
+
+- Added `socweb`, a browser-first Option C dashboard for the modern btop-style SOC wall when terminal/tmux rendering is too limiting.
+- Added a lightweight Python 3.11 standard-library HTTP/WebSocket backend under `/usr/local/share/socx-web`.
+- Added dark card-based HTML/CSS/JS frontend with canvas sparklines, clipped process/flow/packet tables, prominent UPS wattage, and smooth CSS event ticker.
+- Added live pfSense collectors for `top -P`, `pfctl -si`, `netstat`, `pfctl -ss`, filterlog, DNSBL logs, and the existing NUT/APC UPS cache.
+- Added `socxweb` rc.d service for optional browser dashboard autoboot.
+
 ## v0.1.34
 
 - Made `modern-btop` render Unicode by default with box-drawing card borders, block meters, Unicode sparklines, and ANSI coloring.

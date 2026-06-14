@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+
+APP="/usr/local/share/socx-web/socx-web.py"
+
+if command -v python3 >/dev/null 2>&1; then
+    PYTHON="$(command -v python3)"
+elif command -v python3.11 >/dev/null 2>&1; then
+    PYTHON="$(command -v python3.11)"
+elif [ -x /usr/local/bin/python3.11 ]; then
+    PYTHON="/usr/local/bin/python3.11"
+else
+    echo "socweb needs Python 3.11 or python3. Install python311 or use the terminal fallback: soc" >&2
+    exit 1
+fi
+
+exec "$PYTHON" "$APP" "$@"

@@ -1,20 +1,23 @@
 # SOCX pfSense Wall
 
-SOCX pfSense Wall is a terminal-based security operations display for pfSense. It is built for a large always-on monitor and combines a btop-style pfSense cockpit, readable IFTop/TCPDump clones, and a live SOC ticker inside tmux.
+SOCX pfSense Wall is a pfSense security operations display for a large always-on monitor. It includes the original terminal/tmux wall plus a browser-based `socweb` dashboard for the polished Option C look: dark btop-inspired cards, WebSocket updates, smooth ticker animation, real sparklines, live UPS wattage, firewall events, flows, packet story rows, and pfSense collectors.
 
 Suggested GitHub repo name: `SOCX-pfSense-Wall`
 
 Suggested GitHub description:
 
-`A tmux-based pfSense SOC wall dashboard with pfsense-btop, color iftop/tcpdump clones, threat ticker, and autoboot support.`
+`A pfSense SOC wall dashboard with a browser-based btop-style web UI, tmux fallback, live firewall ticker, UPS telemetry, and autoboot support.`
 
 Suggested topics:
 
-`pfsense`, `freebsd`, `tmux`, `soc`, `network-monitoring`, `terminal-dashboard`, `cybersecurity`, `tcpdump`, `iftop`
+`pfsense`, `freebsd`, `tmux`, `websocket`, `soc`, `network-monitoring`, `terminal-dashboard`, `cybersecurity`, `tcpdump`, `iftop`
 
 ## What It Does
 
 - Starts a full-screen tmux dashboard called `socx`.
+- Adds `socweb`, a local browser dashboard for the modern btop-style SOC wall when terminal rendering is too limiting.
+- Serves WebSocket updates from pfSense collectors with no heavy Python framework dependency.
+- Shows dark modern cards, real canvas sparklines, clipped tables, and a smooth CSS event ticker.
 - Defaults to `SOCX_MODE=wall` and `SOCX_THEME=modern-btop`, a single-pane high-contrast wall display with internal panels and clipping.
 - Shows a classic split-wall `NETX` layout: btop-style pfSense cockpit on top, IFTopX bottom-left, TCPDumpX bottom-right.
 - Adds `socx-wall`, a modern btop-inspired wall renderer with metric cards, process table, flow table, live packet table, UPS sparkline, and smooth event ticker.
@@ -42,8 +45,12 @@ Suggested topics:
 - `scripts/socx-iftop-color` and `scripts/socx_iftop_color.pl` - color flow radar wrapper and renderer.
 - `scripts/socx-tcpdump-color` and `scripts/socx_tcpdump_color.pl` - color packet story wrapper and renderer.
 - `scripts/iftopx`, `scripts/tcpdumpx`, `scripts/socx` - convenience launchers.
+- `scripts/socweb` - browser dashboard launcher.
+- `web/socx-web.py` - lightweight Python WebSocket/HTTP backend for the browser wall.
+- `web/static/` - HTML, CSS, and JavaScript frontend for the modern card dashboard.
 - `config/socx_hosts.conf.example` - optional friendly-name map for local LAN hosts.
 - `rc.d/socx` - pfSense/FreeBSD boot script for automatic detached startup.
+- `rc.d/socxweb` - optional pfSense/FreeBSD boot script for the browser dashboard service.
 
 ## Install On pfSense
 
@@ -60,6 +67,36 @@ soc
 ```
 
 The installer also keeps `socx` and `SOCX` as aliases, but `soc` is the short command to use.
+
+Launch the browser dashboard:
+
+```sh
+socweb --host 0.0.0.0 --port 8094
+```
+
+Open it from the wall display:
+
+```text
+http://192.168.1.1:8094/
+```
+
+Kiosk examples:
+
+```sh
+chrome --kiosk http://192.168.1.1:8094/
+firefox --kiosk http://192.168.1.1:8094/
+```
+
+Web dashboard settings:
+
+```sh
+SOCX_WEB_HOST=0.0.0.0
+SOCX_WEB_PORT=8094
+SOCX_WEB_REFRESH_MS=500
+SOCX_IFWAN=ix1
+SOCX_IFLAN=ix0
+SOCX_WEB_MAX_EVENTS=40
+```
 
 Wall mode is the default. To launch the older split-pane layout:
 
@@ -145,6 +182,14 @@ Attach to the live wall with:
 tmux attach -t socx
 ```
 
+Start or stop the browser dashboard service with:
+
+```sh
+service socxweb start
+service socxweb stop
+service socxweb status
+```
+
 ## Notes
 
-This project is read-only monitoring glue. It does not change firewall rules, capture credentials, or modify packet handling. It is designed for a trusted admin console on your own pfSense box.
+This project is read-only monitoring glue. It does not change firewall rules, capture credentials, or modify packet handling. The browser dashboard should be exposed only on a trusted admin LAN or run locally in kiosk mode.

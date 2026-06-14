@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SOCX Web Wall</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="wall">
+    <header class="topbar">
+      <div class="identity">
+        <span class="mark"></span>
+        <div>
+          <div class="title">SOCX WEB WALL</div>
+          <div class="subtitle" id="hostname">pfSense</div>
+        </div>
+      </div>
+      <div class="top-metrics">
+        <span class="pill" id="health">connecting</span>
+        <span class="pill accent" id="refresh">500ms</span>
+        <span class="clock" id="clock">--:--:--</span>
+        <button class="icon-button" id="fullscreen" title="Fullscreen" aria-label="Fullscreen">⛶</button>
+      </div>
+    </header>
+
+    <main class="dashboard">
+      <section class="card network-card">
+        <div class="card-head">
+          <h2>Network</h2>
+          <span id="net-ifaces">WAN / LAN</span>
+        </div>
+        <div class="net-grid">
+          <div>
+            <span class="label">WAN down</span>
+            <strong id="wan-rx">--</strong>
+          </div>
+          <div>
+            <span class="label">WAN up</span>
+            <strong id="wan-tx">--</strong>
+          </div>
+          <div>
+            <span class="label">LAN down</span>
+            <strong id="lan-rx">--</strong>
+          </div>
+          <div>
+            <span class="label">LAN up</span>
+            <strong id="lan-tx">--</strong>
+          </div>
+        </div>
+        <canvas class="spark" id="net-spark"></canvas>
+      </section>
+
+      <section class="card pf-card">
+        <div class="card-head">
+          <h2>Firewall</h2>
+          <span>pf</span>
+        </div>
+        <div class="stat-line"><span>states</span><strong id="pf-states">--</strong></div>
+        <div class="stat-line"><span>search</span><strong id="pf-search">--</strong></div>
+        <div class="dual">
+          <div><span>passed</span><b id="pf-passed">--</b></div>
+          <div><span>blocked</span><b id="pf-blocked">--</b></div>
+        </div>
+        <canvas class="spark small" id="pf-spark"></canvas>
+      </section>
+
+      <section class="card ups-card">
+        <div class="card-head">
+          <h2>UPS</h2>
+          <span id="ups-status">--</span>
+        </div>
+        <div class="watts" id="ups-watts">-- W</div>
+        <div class="ups-meta">
+          <span>load <b id="ups-load">--</b></span>
+          <span>batt <b id="ups-batt">--</b></span>
+          <span>run <b id="ups-run">--</b></span>
+          <span>line <b id="ups-line">--</b></span>
+        </div>
+        <canvas class="spark small" id="ups-spark"></canvas>
+      </section>
+
+      <section class="card cpu-card">
+        <div class="card-head">
+          <h2>CPU</h2>
+          <span id="cpu-extra">--</span>
+        </div>
+        <div class="meter-row large">
+          <span>total</span>
+          <div class="meter"><i id="cpu-meter"></i></div>
+          <strong id="cpu-total">--</strong>
+        </div>
+        <div class="cores" id="cpu-cores"></div>
+        <canvas class="spark small" id="cpu-spark"></canvas>
+      </section>
+
+      <section class="card mem-card">
+        <div class="card-head">
+          <h2>Memory</h2>
+          <span id="mem-total">--</span>
+        </div>
+        <div class="meter-row large">
+          <span>used</span>
+          <div class="meter amber"><i id="mem-meter"></i></div>
+          <strong id="mem-pct">--</strong>
+        </div>
+        <div class="stat-line"><span>free</span><strong id="mem-free">--</strong></div>
+        <div class="stat-line"><span>ARC</span><strong id="mem-arc">--</strong></div>
+        <canvas class="spark small" id="mem-spark"></canvas>
+      </section>
+
+      <section class="card table-card process-card">
+        <div class="card-head">
+          <h2>Processes</h2>
+          <span id="proc-note">top cpu</span>
+        </div>
+        <div class="table process-table" id="processes"></div>
+      </section>
+
+      <section class="card table-card flows-card">
+        <div class="card-head">
+          <h2>Live Flows</h2>
+          <span>state table</span>
+        </div>
+        <div class="table flows-table" id="flows"></div>
+      </section>
+
+      <section class="card table-card packets-card">
+        <div class="card-head">
+          <h2>Packet Story</h2>
+          <span>filterlog</span>
+        </div>
+        <div class="table packet-table" id="packets"></div>
+      </section>
+    </main>
+
+    <footer class="ticker-shell">
+      <div class="ticker-fade left"></div>
+      <div class="ticker-fade right"></div>
+      <div class="ticker-track" id="ticker">Waiting for live firewall events</div>
+    </footer>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
