@@ -140,6 +140,17 @@ SOCX_TICKER_MAX_EVENTS=25
 SOCX_TICKER_DEDUPE_SECONDS=10
 ```
 
+Modern-btop defaults to a non-scrolling rotating Event Feed so tmux does not constantly crawl text across the wall:
+
+```sh
+SOCX_EVENT_FEED_MODE=rotate
+SOCX_EVENT_ROTATE_SECONDS=3
+SOCX_EVENT_HIGH_SECONDS=6
+SOCX_EVENT_CRIT_SECONDS=8
+```
+
+Set `SOCX_EVENT_FEED_MODE=scroll` to use the older horizontal ticker, or `SOCX_EVENT_FEED_MODE=stack` to show a small vertical group when the panel has room.
+
 UPS cache settings:
 
 ```sh
@@ -163,8 +174,8 @@ Set `SOCX_UNICODE=false` for the ASCII fallback.
 Preview speeds in demo mode:
 
 ```sh
-socx-wall --demo --mode wall --ticker-speed fast
-socx-wall --demo --mode wall --ticker-speed turbo
+socx-wall --demo --mode wall --theme modern-btop --event-feed-mode rotate
+socx-wall --demo --mode wall --theme modern-btop --event-feed-mode scroll --ticker-speed turbo
 ```
 
 ## Autoboot

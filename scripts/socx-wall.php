@@ -35,6 +35,7 @@ $interval = max(0.5, (float)$opts['interval']);
 $tickerConfig = ticker_config($opts);
 $theme = wall_theme($opts);
 putenv('SOCX_THEME=' . $theme);
+putenv('SOCX_EVENT_FEED_MODE=' . $tickerConfig['mode']);
 $renderInterval = min($interval, $tickerConfig['interval_ms'] / 1000);
 $renderInterval = max(0.025, $renderInterval);
 $once = (bool)$opts['once'];
@@ -44,6 +45,8 @@ $state = [
     'tick' => 0,
     'ticker' => 0,
     'ticker_offset' => 0,
+    'ticker_index' => 0,
+    'ticker_changed' => true,
     'last_ticker_advance_at' => 0.0,
     'ticker_hold_until' => 0.0,
     'ticker_hold_text' => '',
@@ -119,6 +122,9 @@ do {
     advance_ticker($state, $now);
     $frame['ticker_events'] = ticker_event_texts($state);
     $frame['ticker_offset'] = (int)$state['ticker_offset'];
+    $frame['ticker_index'] = (int)$state['ticker_index'];
+    $frame['ticker_config'] = $tickerConfig;
+    $frame['event_feed_mode'] = (string)($tickerConfig['mode'] ?? 'scroll');
     $frame['ticker_hold_until'] = (float)$state['ticker_hold_until'];
     $frame['ticker_hold_text'] = (string)$state['ticker_hold_text'];
     $frame['ticker_now'] = $now;
@@ -143,9 +149,13 @@ do {
         }
         echo "\033[H" . $screen;
         $renderMs = (microtime(true) - $renderStart) * 1000;
+        $state['ticker_changed'] = false;
     } else {
         $renderStart = microtime(true);
-        echo render_ticker_update($frame, $cols, $rows, $color, $theme);
+        if (($tickerConfig['mode'] ?? 'scroll') === 'scroll' || !empty($state['ticker_changed'])) {
+            echo render_ticker_update($frame, $cols, $rows, $color, $theme);
+            $state['ticker_changed'] = false;
+        }
         $renderMs = (microtime(true) - $renderStart) * 1000;
     }
     maybe_log_timing($state, $cols, $rows, $theme, $tickerConfig, $fullRedraw, $renderMs, (microtime(true) - $loopStart) * 1000, $frame);
@@ -172,6 +182,18 @@ function apply_startup_unicode_defaults(array $opts): void
     }
     if (getenv('SOCX_FORCE_UNICODE') === false) {
         putenv('SOCX_FORCE_UNICODE=true');
+    }
+    if (wall_theme($opts) === 'modern-btop' && getenv('SOCX_EVENT_FEED_MODE') === false) {
+        putenv('SOCX_EVENT_FEED_MODE=rotate');
+    }
+    if (getenv('SOCX_EVENT_ROTATE_SECONDS') === false) {
+        putenv('SOCX_EVENT_ROTATE_SECONDS=3');
+    }
+    if (getenv('SOCX_EVENT_HIGH_SECONDS') === false) {
+        putenv('SOCX_EVENT_HIGH_SECONDS=6');
+    }
+    if (getenv('SOCX_EVENT_CRIT_SECONDS') === false) {
+        putenv('SOCX_EVENT_CRIT_SECONDS=8');
     }
     if (!empty($opts['force_unicode'])) {
         putenv('SOCX_FORCE_UNICODE=true');
@@ -288,6 +310,10 @@ function parse_args(array $argv): array
         'force_unicode' => false,
         'unicode_test' => false,
         'capture' => '',
+        'event_feed_mode' => '',
+        'event_rotate_seconds' => 0,
+        'event_high_seconds' => 0,
+        'event_crit_seconds' => 0,
     ];
 
     for ($i = 1; $i < count($argv); $i++) {
@@ -354,6 +380,22 @@ function parse_args(array $argv): array
             $opts['capture'] = (string)$argv[++$i];
         } elseif (str_starts_with($arg, '--capture=')) {
             $opts['capture'] = (string)substr($arg, 10);
+        } elseif ($arg === '--event-feed-mode' && isset($argv[$i + 1])) {
+            $opts['event_feed_mode'] = (string)$argv[++$i];
+        } elseif (str_starts_with($arg, '--event-feed-mode=')) {
+            $opts['event_feed_mode'] = (string)substr($arg, 18);
+        } elseif ($arg === '--event-rotate-seconds' && isset($argv[$i + 1])) {
+            $opts['event_rotate_seconds'] = (int)$argv[++$i];
+        } elseif (str_starts_with($arg, '--event-rotate-seconds=')) {
+            $opts['event_rotate_seconds'] = (int)substr($arg, 23);
+        } elseif ($arg === '--event-high-seconds' && isset($argv[$i + 1])) {
+            $opts['event_high_seconds'] = (int)$argv[++$i];
+        } elseif (str_starts_with($arg, '--event-high-seconds=')) {
+            $opts['event_high_seconds'] = (int)substr($arg, 21);
+        } elseif ($arg === '--event-crit-seconds' && isset($argv[$i + 1])) {
+            $opts['event_crit_seconds'] = (int)$argv[++$i];
+        } elseif (str_starts_with($arg, '--event-crit-seconds=')) {
+            $opts['event_crit_seconds'] = (int)substr($arg, 21);
         }
     }
 
@@ -366,12 +408,22 @@ function print_help(): void
     echo "Usage: socx-wall.php [--mode wall] [--theme modern-btop] [--demo] [--once] [--interval SEC] [--hosts FILE]\n";
     echo "       [--ticker-speed slow|normal|fast|turbo] [--ticker-step N] [--ticker-interval-ms N]\n";
     echo "       [--force-unicode] [--unicode-test] [--capture FILE]\n";
+    echo "       [--event-feed-mode scroll|rotate|stack] [--event-rotate-seconds N]\n";
     echo "Demo preview: socx-wall.php --demo --mode wall --theme modern-btop --ticker-smooth --width 160 --height 42\n";
+    echo "Rotate preview: socx-wall.php --demo --mode wall --theme modern-btop --event-feed-mode rotate\n";
     echo "Capture preview: socx-wall.php --demo --once --mode wall --theme modern-btop --force-unicode --capture /tmp/socx-frame.txt\n";
 }
 
 function ticker_config(array $opts): array
 {
+    $theme = wall_theme($opts);
+    $envMode = getenv('SOCX_EVENT_FEED_MODE');
+    $defaultMode = $theme === 'modern-btop' ? 'rotate' : 'scroll';
+    $mode = strtolower((string)($opts['event_feed_mode'] ?: ($envMode !== false && $envMode !== '' ? $envMode : $defaultMode)));
+    if (!in_array($mode, ['scroll', 'rotate', 'stack'], true)) {
+        $mode = $defaultMode;
+    }
+
     $speed = strtolower((string)($opts['ticker_speed'] ?: getenv('SOCX_TICKER_SPEED') ?: 'fast'));
     $speedSteps = ['slow' => 1, 'normal' => 2, 'fast' => 4, 'turbo' => 6];
     $step = $speedSteps[$speed] ?? $speedSteps['fast'];
@@ -385,12 +437,14 @@ function ticker_config(array $opts): array
     $step = max(1, min(12, $step));
 
     $envInterval = getenv('SOCX_TICKER_INTERVAL_MS');
-    $defaultInterval = ((bool)($opts['ticker_smooth'] ?? false) || getenv('SOCX_TICKER_SMOOTH') === 'true') ? 75 : 25;
+    $defaultInterval = $mode === 'scroll'
+        ? (((bool)($opts['ticker_smooth'] ?? false) || getenv('SOCX_TICKER_SMOOTH') === 'true') ? 75 : 25)
+        : 500;
     $intervalMs = (int)$opts['ticker_interval_ms'] > 0 ? (int)$opts['ticker_interval_ms'] : (is_numeric($envInterval) ? (int)$envInterval : $defaultInterval);
     if (tmux_detected()) {
         $intervalMs = max(50, $intervalMs);
     }
-    $intervalMs = max(25, min(500, $intervalMs));
+    $intervalMs = $mode === 'scroll' ? max(25, min(500, $intervalMs)) : max(250, min(1000, $intervalMs));
 
     $envMax = getenv('SOCX_TICKER_MAX_EVENTS');
     $maxEvents = (int)$opts['ticker_max_events'] > 0 ? (int)$opts['ticker_max_events'] : (is_numeric($envMax) ? (int)$envMax : 25);
@@ -400,12 +454,29 @@ function ticker_config(array $opts): array
     $dedupe = (int)$opts['ticker_dedupe_seconds'] > 0 ? (int)$opts['ticker_dedupe_seconds'] : (is_numeric($envDedupe) ? (int)$envDedupe : 10);
     $dedupe = max(1, min(120, $dedupe));
 
+    $envRotate = getenv('SOCX_EVENT_ROTATE_SECONDS');
+    $rotateSeconds = (int)$opts['event_rotate_seconds'] > 0 ? (int)$opts['event_rotate_seconds'] : (is_numeric($envRotate) ? (int)$envRotate : 3);
+    $rotateSeconds = max(1, min(10, $rotateSeconds));
+
+    $envHigh = getenv('SOCX_EVENT_HIGH_SECONDS');
+    $highSeconds = (int)$opts['event_high_seconds'] > 0 ? (int)$opts['event_high_seconds'] : (is_numeric($envHigh) ? (int)$envHigh : 6);
+    $highSeconds = max(1, min(10, $highSeconds));
+
+    $envCrit = getenv('SOCX_EVENT_CRIT_SECONDS');
+    $critSeconds = (int)$opts['event_crit_seconds'] > 0 ? (int)$opts['event_crit_seconds'] : (is_numeric($envCrit) ? (int)$envCrit : 8);
+    $critSeconds = max(1, min(10, $critSeconds));
+
     return [
+        'mode' => $mode,
         'speed' => $speed,
         'step' => $step,
         'interval_ms' => $intervalMs,
         'max_events' => $maxEvents,
         'dedupe_seconds' => $dedupe,
+        'rotate_seconds' => $rotateSeconds,
+        'med_seconds' => max($rotateSeconds, 4),
+        'high_seconds' => $highSeconds,
+        'crit_seconds' => $critSeconds,
         'separator' => '   ◆   ',
     ];
 }
@@ -726,10 +797,24 @@ function render_ticker_update(array $frame, int $cols, int $rows, bool $color, s
         return '';
     }
     $layout = $theme === 'modern-btop' ? modern_btop_layout($cols, $rows) : wall_layout($cols, $rows);
-    $panel = panel_obj(0, $layout['ticker_y'], $cols, $layout['ticker_h'], 'EVENT TICKER', static fn(array $f, array $p): array => ticker_rows($f, $p));
-    $ticker = ticker_rows($frame, $panel)[0] ?? '';
+    $style = $theme === 'modern-btop' ? 'ticker' : 'box';
+    $title = $theme === 'modern-btop' ? ticker_title() : 'EVENT TICKER';
+    $panel = panel_obj(0, $layout['ticker_y'], $cols, $layout['ticker_h'], $title, static fn(array $f, array $p): array => ticker_rows($f, $p), $style);
+    $tickerRows = ticker_rows($frame, $panel);
     $v = ($theme === 'modern-btop' && modern_border_style() === 'unicode') ? unicode_border_chars()['v'] : '|';
-    $line = $v . pad_or_clip($ticker, $cols - 2) . $v;
+    $ticker = $tickerRows[0] ?? '';
+    if ($theme === 'modern-btop') {
+        [$contentX, , $contentW] = modern_content_bounds($panel);
+        $lineCells = utf8_cells($v . str_repeat(' ', max(0, $cols - 2)) . $v);
+        $tickerText = pad_or_clip($ticker, $contentW);
+        $tickerCells = utf8_cells($tickerText);
+        for ($i = 0; $i < count($tickerCells) && ($contentX + $i) < $cols - 1; $i++) {
+            $lineCells[$contentX + $i] = $tickerCells[$i];
+        }
+        $line = implode('', $lineCells);
+    } else {
+        $line = $v . pad_or_clip($ticker, $cols - 2) . $v;
+    }
     $ansiRow = $layout['ticker_y'] + 2;
     return "\033[" . $ansiRow . ";1H" . colorize_line($line, $color);
 }
@@ -1174,8 +1259,12 @@ function modern_content_width(array $panel): int
 
 function ticker_title(): string
 {
-    $speed = strtoupper((string)(getenv('SOCX_TICKER_SPEED') ?: 'FAST'));
-    return 'EVENT FEED [' . truncate_text($speed, 6) . ']';
+    $mode = strtoupper((string)(getenv('SOCX_EVENT_FEED_MODE') ?: 'rotate'));
+    if ($mode === 'SCROLL') {
+        $speed = strtoupper((string)(getenv('SOCX_TICKER_SPEED') ?: 'FAST'));
+        return 'EVENT FEED [' . truncate_text($speed, 6) . ']';
+    }
+    return 'EVENT FEED [' . truncate_text($mode, 6) . ']';
 }
 
 function modern_header_rows(array $f, array $p): array
@@ -1570,6 +1659,15 @@ function ticker_rows(array $f, array $p): array
         $events = ['[LOW] SOCX wall mode live - waiting for firewall events'];
     }
     $width = modern_content_width($p);
+    $cfg = $f['ticker_config'] ?? ticker_config([]);
+    $mode = (string)($f['event_feed_mode'] ?? ($cfg['mode'] ?? 'scroll'));
+    if ($mode === 'rotate') {
+        return [event_feed_rotate_line($events, (int)($f['ticker_index'] ?? 0), $width)];
+    }
+    if ($mode === 'stack') {
+        return event_feed_stack_rows($events, (int)($f['ticker_index'] ?? 0), $width, max(1, ((int)($p['height'] ?? 3)) - 2));
+    }
+
     $now = (float)($f['ticker_now'] ?? microtime(true));
     $holdUntil = (float)($f['ticker_hold_until'] ?? 0.0);
     $holdText = (string)($f['ticker_hold_text'] ?? '');
@@ -1587,6 +1685,43 @@ function ticker_rows(array $f, array $p): array
     $cycle = $pad . $line . $pad;
     $offset = (int)($f['ticker_offset'] ?? 0);
     return [ticker_view($cycle, $offset, $width)];
+}
+
+function event_feed_rotate_line(array $events, int $index, int $width): string
+{
+    $events = array_values(array_filter(array_map('strval', $events), static fn(string $event): bool => trim($event) !== ''));
+    if (!$events) {
+        return pad_or_clip('[LOW] SOCX wall mode live', $width);
+    }
+    $count = count($events);
+    $index = (($index % $count) + $count) % $count;
+    $active = clean_ticker_event($events[$index]);
+    $line = $active;
+
+    if ($count > 1 && $width >= 92) {
+        $next = clean_ticker_event($events[($index + 1) % $count]);
+        $preview = $active . '   ◆ next: ' . $next;
+        if (cell_len($preview) <= $width) {
+            $line = $preview;
+        }
+    }
+    return pad_or_clip(truncate_modern_text($line, $width), $width);
+}
+
+function event_feed_stack_rows(array $events, int $index, int $width, int $height): array
+{
+    $events = array_values(array_filter(array_map('strval', $events), static fn(string $event): bool => trim($event) !== ''));
+    if (!$events) {
+        return [pad_or_clip('[LOW] SOCX wall mode live', $width)];
+    }
+    $rows = [];
+    $count = count($events);
+    $height = max(1, min(3, $height));
+    for ($i = 0; $i < $height; $i++) {
+        $event = clean_ticker_event($events[(($index + $i) % $count + $count) % $count]);
+        $rows[] = pad_or_clip(truncate_modern_text($event, $width), $width);
+    }
+    return $rows;
 }
 
 function ticker_view(string $text, int $offset, int $width): string
@@ -1935,6 +2070,7 @@ function update_ticker_queue(array &$state, array $events, float $now): void
     $cfg = $state['ticker_config'] ?? ticker_config([]);
     $maxEvents = (int)$cfg['max_events'];
     $dedupeSeconds = (int)$cfg['dedupe_seconds'];
+    $mode = (string)($cfg['mode'] ?? 'scroll');
 
     foreach ($events as $event) {
         $text = clean_ticker_event((string)$event);
@@ -1951,6 +2087,7 @@ function update_ticker_queue(array &$state, array $events, float $now): void
                     $item['last'] = $now;
                     $item['count'] = (int)$state['ticker_seen'][$key]['count'];
                     $item['text'] = $text;
+                    $state['ticker_changed'] = true;
                     break;
                 }
             }
@@ -1960,8 +2097,11 @@ function update_ticker_queue(array &$state, array $events, float $now): void
 
         $state['ticker_seen'][$key] = ['last' => $now, 'count' => 1];
         array_unshift($state['ticker_queue'], ['key' => $key, 'text' => $text, 'count' => 1, 'last' => $now]);
+        $state['ticker_index'] = 0;
+        $state['ticker_changed'] = true;
+        $state['last_ticker_advance_at'] = $now;
 
-        if (is_high_or_crit($text)) {
+        if ($mode === 'scroll' && is_high_or_crit($text)) {
             $state['ticker_hold_text'] = $text;
             $state['ticker_hold_until'] = $now + (str_contains($text, '[CRIT]') ? 2.0 : 1.25);
             $state['ticker_offset'] = 0;
@@ -2016,11 +2156,17 @@ function ticker_event_texts(array $state): array
 
 function advance_ticker(array &$state, float $now): void
 {
+    $cfg = $state['ticker_config'] ?? ticker_config([]);
+    $mode = (string)($cfg['mode'] ?? 'scroll');
+    if ($mode !== 'scroll') {
+        advance_rotating_event_feed($state, $cfg, $now);
+        return;
+    }
+
     if ($now < (float)($state['ticker_hold_until'] ?? 0.0)) {
         $state['last_ticker_advance_at'] = $now;
         return;
     }
-    $cfg = $state['ticker_config'] ?? ticker_config([]);
     $interval = max(0.001, ((int)$cfg['interval_ms']) / 1000);
     $last = (float)($state['last_ticker_advance_at'] ?? 0.0);
     if ($last <= 0.0) {
@@ -2033,6 +2179,52 @@ function advance_ticker(array &$state, float $now): void
     }
     $state['last_ticker_advance_at'] = $last + ($ticks * $interval);
     $state['ticker_offset'] = ((int)($state['ticker_offset'] ?? 0) + ($ticks * (int)$cfg['step'])) % 1000000;
+    $state['ticker_changed'] = true;
+}
+
+function advance_rotating_event_feed(array &$state, array $cfg, float $now): void
+{
+    $count = count($state['ticker_queue'] ?? []);
+    if ($count <= 0) {
+        $state['last_ticker_advance_at'] = $now;
+        $state['ticker_index'] = 0;
+        return;
+    }
+    $index = (int)($state['ticker_index'] ?? 0);
+    if ($index < 0 || $index >= $count) {
+        $state['ticker_index'] = 0;
+        $state['ticker_changed'] = true;
+        $state['last_ticker_advance_at'] = $now;
+        return;
+    }
+    $last = (float)($state['last_ticker_advance_at'] ?? 0.0);
+    if ($last <= 0.0) {
+        $state['last_ticker_advance_at'] = $now;
+        return;
+    }
+    $item = $state['ticker_queue'][$index] ?? [];
+    $text = (string)($item['text'] ?? '');
+    $duration = event_feed_duration($text, $cfg);
+    if (($now - $last) < $duration) {
+        return;
+    }
+    $state['ticker_index'] = ($index + 1) % $count;
+    $state['last_ticker_advance_at'] = $now;
+    $state['ticker_changed'] = true;
+}
+
+function event_feed_duration(string $event, array $cfg): int
+{
+    if (str_contains($event, '[CRIT]')) {
+        return (int)($cfg['crit_seconds'] ?? 8);
+    }
+    if (str_contains($event, '[HIGH]')) {
+        return (int)($cfg['high_seconds'] ?? 6);
+    }
+    if (str_contains($event, '[MED]')) {
+        return (int)($cfg['med_seconds'] ?? 4);
+    }
+    return (int)($cfg['rotate_seconds'] ?? 3);
 }
 
 function tail_lines(string $file, int $count): array

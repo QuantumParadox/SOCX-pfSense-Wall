@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.38
+
+- Changed the modern-btop Event Feed default from horizontal scrolling to rotating whole-event display.
+- Added `SOCX_EVENT_FEED_MODE=scroll|rotate|stack` with `rotate` as the modern-btop default.
+- Added rotate timing controls for normal, HIGH, and CRIT events while keeping repeated-event `xN` counts.
+- Preserved the old scrolling ticker as an explicit fallback with `SOCX_EVENT_FEED_MODE=scroll`.
+- Updated partial Event Feed redraws so rotate mode clears and rewrites only the event row without corrupting Unicode borders.
+
 ## v0.1.37
 
 - Polished the successful Unicode `modern-btop` wall without changing the overall layout.
