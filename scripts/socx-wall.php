@@ -450,7 +450,7 @@ function ticker_config(array $opts): array
     $intervalMs = $mode === 'scroll' ? max(25, min(500, $intervalMs)) : max(250, min(1000, $intervalMs));
 
     $envMax = getenv('SOCX_TICKER_MAX_EVENTS');
-    $maxEvents = (int)$opts['ticker_max_events'] > 0 ? (int)$opts['ticker_max_events'] : (is_numeric($envMax) ? (int)$envMax : 25);
+    $maxEvents = (int)$opts['ticker_max_events'] > 0 ? (int)$opts['ticker_max_events'] : (is_numeric($envMax) ? (int)$envMax : 40);
     $maxEvents = max(5, min(100, $maxEvents));
 
     $envDedupe = getenv('SOCX_TICKER_DEDUPE_SECONDS');
@@ -617,10 +617,14 @@ function collect_live_frame(array &$state, array $hosts): array
     ]);
     $state['command_events_fresh'] = !empty($commandEvents);
     $events = array_merge($events, $commandEvents);
-    $events = prioritize_events($events);
+    $events = balance_events_for_feed(prioritize_events($events), 80);
     $flows = collect_pf_state_flows($state, $hosts, $now);
     if (!$flows) {
         $flows = flows_from_events($events);
+    }
+    $activityEvents = collect_activity_summary_events($state, $events, $flows, $ups, $wan, $lan, $pf, $now);
+    if ($activityEvents) {
+        $events = balance_events_for_feed(prioritize_events(array_merge($events, $activityEvents)), 80);
     }
     $packets = packets_from_events($events);
 
@@ -2213,7 +2217,7 @@ function clean_event_message(string $message): string
 function collect_events(array $hosts): array
 {
     $events = [];
-    $filter = tail_lines('/var/log/filter.log', 120);
+    $filter = tail_lines('/var/log/filter.log', 180);
     foreach ($filter as $line) {
         $event = parse_filter_event($line, $hosts);
         if ($event !== null) {
@@ -2221,7 +2225,7 @@ function collect_events(array $hosts): array
         }
     }
     foreach (['/var/log/pfblockerng/dnsbl.log', '/var/log/pfblockerng/dns_reply.log'] as $file) {
-        foreach (tail_lines($file, 20) as $line) {
+        foreach (tail_lines($file, 80) as $line) {
             $event = parse_dnsbl_event($line, $hosts);
             if ($event !== null) {
                 $events[] = $event;
@@ -2229,7 +2233,7 @@ function collect_events(array $hosts): array
         }
     }
     foreach (suricata_log_files() as $file) {
-        foreach (tail_lines($file, 20) as $line) {
+        foreach (tail_lines($file, 40) as $line) {
             $event = parse_suricata_event($line, $hosts);
             if ($event !== null) {
                 $events[] = $event;
@@ -2237,7 +2241,7 @@ function collect_events(array $hosts): array
         }
     }
     foreach (['/var/log/dhcpd.log', '/var/log/dhcp.log'] as $file) {
-        foreach (tail_lines($file, 30) as $line) {
+        foreach (tail_lines($file, 50) as $line) {
             $event = parse_dhcp_event($line, $hosts);
             if ($event !== null) {
                 $events[] = $event;
@@ -2245,13 +2249,13 @@ function collect_events(array $hosts): array
         }
     }
     foreach (['/var/log/system.log', '/var/log/resolver.log', '/var/log/openvpn.log', '/var/log/ipsec.log', '/var/log/wireguard.log'] as $file) {
-        foreach (tail_lines($file, 30) as $line) {
+        foreach (tail_lines($file, 60) as $line) {
             foreach (parse_command_log_events($line, $hosts) as $event) {
                 $events[] = $event;
             }
         }
     }
-    return array_slice(prioritize_events($events), 0, 60);
+    return balance_events_for_feed(prioritize_events($events), 80);
 }
 
 function collect_events_cached(array &$state, array $hosts, float $now): array
@@ -2308,13 +2312,21 @@ function collect_soc_command_events(array &$state, array $hosts, float $now, arr
     $wanRate = (int)($wan['rx'] ?? 0) + (int)($wan['tx'] ?? 0);
     $lanRate = (int)($lan['rx'] ?? 0) + (int)($lan['tx'] ?? 0);
     if (($wan['rx'] ?? null) === null && ($wan['tx'] ?? null) === null) {
-        $events[] = soc_event('WAN', 'HIGH', 'WAN counters unavailable | check link');
+        $state['wan_counter_misses'] = (int)($state['wan_counter_misses'] ?? 0) + 1;
+        if ((int)$state['wan_counter_misses'] >= 3) {
+            $events[] = soc_event('WAN', 'HIGH', 'WAN counters unavailable | check link');
+        }
     } elseif ($wanRate > 50 * 1024 * 1024) {
+        $state['wan_counter_misses'] = 0;
         $events[] = soc_event('FLOW', 'WARN', sprintf('High-rate WAN burst %s/s | watch', short_bytes($wanRate)));
     } elseif ($lanRate > 80 * 1024 * 1024) {
+        $state['wan_counter_misses'] = 0;
         $events[] = soc_event('FLOW', 'WARN', sprintf('High-rate LAN burst %s/s | inspect top talker', short_bytes($lanRate)));
     } elseif ($routineDue) {
+        $state['wan_counter_misses'] = 0;
         $events[] = soc_event('WAN', 'INFO', sprintf('Frontier gateway stable, WAN %s/s | watch', short_bytes(max(0, $wanRate))));
+    } else {
+        $state['wan_counter_misses'] = 0;
     }
 
     $procs = $metrics['procs'] ?? [];
@@ -2340,6 +2352,91 @@ function collect_soc_command_events(array &$state, array $hosts, float $now, arr
     }
 
     return $events;
+}
+
+function collect_activity_summary_events(array &$state, array $events, array $flows, array $ups, array $wan, array $lan, array $pf, float $now): array
+{
+    $interval = max(3, (int)(getenv('SOCX_ACTIVITY_SUMMARY_SECONDS') ?: 5));
+    if (($now - (float)($state['last_activity_summary_at'] ?? 0.0)) < $interval) {
+        return [];
+    }
+    $state['last_activity_summary_at'] = $now;
+
+    $summary = [];
+    $fwBlocked = 0;
+    $fwAllowed = 0;
+    $dnsblHits = 0;
+    $idsHits = 0;
+    foreach ($events as $event) {
+        $category = event_category($event);
+        $verdict = strtoupper((string)($event['verdict'] ?? ''));
+        if ($category === 'FW' && $verdict === 'DROP') {
+            $fwBlocked++;
+        } elseif ($category === 'FW' && $verdict === 'PASS') {
+            $fwAllowed++;
+        } elseif ($category === 'DNSBL') {
+            $dnsblHits++;
+        } elseif ($category === 'IDS' || $category === 'IPS') {
+            $idsHits++;
+        }
+    }
+
+    if ($fwBlocked > 0) {
+        $summary[] = soc_event('FW', 'INFO', sprintf('Firewall blocked %d recent attempts | WAN/LAN protected', $fwBlocked));
+    }
+    if ($fwAllowed > 0) {
+        $summary[] = soc_event('FW', 'LOW', sprintf('Firewall allowed %d recent sessions | normal traffic', $fwAllowed));
+    }
+    if ($dnsblHits > 0) {
+        $summary[] = soc_event('DNSBL', 'INFO', sprintf('%d DNSBL hits observed | query-level filtering active', $dnsblHits));
+    }
+    if ($idsHits > 0) {
+        $summary[] = soc_event('IDS', 'WARN', sprintf('%d IDS/IPS alerts in recent logs | inspect if repeated', $idsHits));
+    }
+
+    $topFlow = first_useful_flow($flows);
+    if ($topFlow !== null) {
+        $summary[] = soc_event('FLOW', 'INFO', sprintf('Top flow %s %s %s | live pf state',
+            flow_path_text($topFlow, 28),
+            compact_rate_pair((string)$topFlow['up'], (string)$topFlow['down'], 10),
+            service_human_label((string)($topFlow['service'] ?? ''))));
+    }
+
+    $wanRate = (int)($wan['rx'] ?? 0) + (int)($wan['tx'] ?? 0);
+    $lanRate = (int)($lan['rx'] ?? 0) + (int)($lan['tx'] ?? 0);
+    if ($wanRate > 0 || $lanRate > 0) {
+        $summary[] = soc_event('FLOW', 'INFO', sprintf('Traffic now WAN %s/s, LAN %s/s | live counters',
+            short_bytes(max(0, $wanRate)),
+            short_bytes(max(0, $lanRate))));
+    }
+    if (!empty($ups['online'])) {
+        $summary[] = soc_event('UPS', 'INFO', sprintf('UPS load %sW at %s%%, battery %s%%, runtime %s',
+            $ups['watts'],
+            $ups['load'],
+            $ups['battery'],
+            $ups['runtime']));
+    }
+    if (isset($pf['states'])) {
+        $summary[] = soc_event('PF', 'INFO', sprintf('PF state table %s states, search %s | firewall healthy',
+            $pf['states'],
+            compact_pf_rate((string)($pf['searches_rate'] ?? '?'))));
+    }
+
+    return $summary;
+}
+
+function first_useful_flow(array $flows): ?array
+{
+    foreach ($flows as $flow) {
+        if (($flow['class'] ?? '') === 'idle') {
+            continue;
+        }
+        $path = flow_path_text($flow, 30);
+        if ($path !== '' && !str_contains($path, 'waiting')) {
+            return $flow;
+        }
+    }
+    return null;
 }
 
 function disk_status_events(): array
@@ -2435,6 +2532,19 @@ function parse_suricata_event(string $line, array $hosts): ?array
 
 function parse_dhcp_event(string $line, array $hosts): ?array
 {
+    $lower = strtolower($line);
+    if (str_contains($lower, 'dhclient') || str_contains($lower, 'dhcp client')) {
+        if (preg_match('/bound to\s+(\d{1,3}(?:\.\d{1,3}){3})/i', $line, $m)) {
+            return soc_event('WAN', 'INFO', sprintf('WAN DHCP lease active: %s | ISP lease renewed', lan_label($m[1])));
+        }
+        if (preg_match('/dhcpack from\s+(\d{1,3}(?:\.\d{1,3}){3})/i', $line, $m)) {
+            return soc_event('WAN', 'INFO', sprintf('WAN DHCP acknowledged by ISP gateway %s', lan_label($m[1])));
+        }
+        if (preg_match('/\brenew\b/i', $line)) {
+            return soc_event('WAN', 'INFO', 'WAN DHCP lease renewal started');
+        }
+        return null;
+    }
     if (!preg_match('/DHCP(ACK|OFFER|REQUEST).*?\b(\d{1,3}(?:\.\d{1,3}){3})\b/i', $line, $m)) {
         return null;
     }
@@ -2552,7 +2662,7 @@ function category_weight(string $category, string $severity): int
         'FW' => 30,
         'ARP', 'DHCP', 'DEVICE', 'IFACE' => 20,
         'SYS' => 15,
-        'FLOW' => 10,
+        'FLOW', 'PF' => 10,
         'DNSBL' => in_array($severity, ['WARN', 'MED', 'HIGH', 'CRIT'], true) ? 0 : -20,
         default => 0,
     };
@@ -2568,6 +2678,62 @@ function prioritize_events(array $events): array
         return strcmp((string)($b['time'] ?? ''), (string)($a['time'] ?? ''));
     });
     return $events;
+}
+
+function balance_events_for_feed(array $events, int $limit): array
+{
+    $caps = [
+        'FW' => 8,
+        'DNSBL' => 8,
+        'FLOW' => 5,
+        'PF' => 5,
+        'SYS' => 5,
+        'DNS' => 5,
+        'WAN' => 5,
+        'VPN' => 5,
+        'UPS' => 5,
+        'DHCP' => 4,
+        'ARP' => 4,
+        'IFACE' => 4,
+        'IDS' => 6,
+        'IPS' => 6,
+    ];
+    $counts = [];
+    $balanced = [];
+    $overflow = [];
+
+    foreach ($events as $event) {
+        $category = event_category($event);
+        $cap = $caps[$category] ?? 4;
+        $counts[$category] = (int)($counts[$category] ?? 0);
+        if ($counts[$category] < $cap) {
+            $balanced[] = $event;
+            $counts[$category]++;
+            continue;
+        }
+        $overflow[] = $event;
+    }
+
+    foreach ($overflow as $event) {
+        if (count($balanced) >= $limit) {
+            break;
+        }
+        $balanced[] = $event;
+    }
+
+    return array_slice($balanced, 0, $limit);
+}
+
+function event_category($event): string
+{
+    if (is_array($event)) {
+        $category = strtoupper((string)($event['category'] ?? ''));
+        if ($category !== '') {
+            return $category;
+        }
+        return event_text_parts((string)($event['ticker'] ?? ''))['category'];
+    }
+    return event_text_parts((string)$event)['category'];
 }
 
 function event_ticker_texts(array $events): array
@@ -2607,9 +2773,13 @@ function update_ticker_queue(array &$state, array $events, float $now): void
 
         $state['ticker_seen'][$key] = ['last' => $now, 'count' => 1];
         array_unshift($state['ticker_queue'], ['key' => $key, 'text' => $text, 'count' => 1, 'last' => $now]);
-        $state['ticker_index'] = 0;
         $state['ticker_changed'] = true;
-        $state['last_ticker_advance_at'] = $now;
+        if ($mode === 'scroll' || is_high_or_crit($text)) {
+            $state['ticker_index'] = 0;
+            $state['last_ticker_advance_at'] = $now;
+        } elseif ((float)($state['last_ticker_advance_at'] ?? 0.0) <= 0.0) {
+            $state['last_ticker_advance_at'] = $now;
+        }
 
         if ($mode === 'scroll' && is_high_or_crit($text)) {
             $state['ticker_hold_text'] = $text;
@@ -2659,6 +2829,23 @@ function ticker_event_texts(array $state): array
 
     $dnsblShown = 0;
     $dnsblOverflow = 0;
+    $categoryShown = [];
+    $categoryCaps = [
+        'FW' => 6,
+        'DNSBL' => 8,
+        'FLOW' => 5,
+        'PF' => 5,
+        'UPS' => 5,
+        'WAN' => 5,
+        'DNS' => 5,
+        'VPN' => 5,
+        'SYS' => 5,
+        'DHCP' => 4,
+        'ARP' => 4,
+        'IFACE' => 4,
+        'IDS' => 6,
+        'IPS' => 6,
+    ];
     foreach ($items as $item) {
         $text = (string)$item['text'];
         $count = (int)($item['count'] ?? 1);
@@ -2666,6 +2853,12 @@ function ticker_event_texts(array $state): array
             $text .= ' x' . $count;
         }
         $parts = event_text_parts($text);
+        $category = $parts['category'];
+        $categoryShown[$category] = (int)($categoryShown[$category] ?? 0);
+        if ($categoryShown[$category] >= ($categoryCaps[$category] ?? 4)) {
+            continue;
+        }
+        $categoryShown[$category]++;
         $lowDnsbl = $parts['category'] === 'DNSBL' && in_array($parts['severity'], ['INFO', 'LOW'], true);
         if ($lowDnsbl) {
             if ($dnsblShown >= 6) {
@@ -2685,7 +2878,42 @@ function ticker_event_texts(array $state): array
         }
         usort($rows, static fn(string $a, string $b): int => event_priority_score($b) <=> event_priority_score($a));
     }
-    return $rows;
+    return interleave_event_rows($rows);
+}
+
+function interleave_event_rows(array $rows): array
+{
+    $urgent = [];
+    $buckets = [];
+    $categoryOrder = ['FLOW', 'UPS', 'PF', 'DNSBL', 'WAN', 'DNS', 'VPN', 'IDS', 'IPS', 'DHCP', 'ARP', 'IFACE', 'SYS', 'DEVICE', 'FW'];
+    foreach ($rows as $row) {
+        $parts = event_text_parts((string)$row);
+        if (in_array($parts['severity'], ['CRIT', 'HIGH'], true)) {
+            $urgent[] = (string)$row;
+            continue;
+        }
+        $buckets[$parts['category']][] = (string)$row;
+    }
+
+    $mixed = [];
+    do {
+        $added = false;
+        foreach ($categoryOrder as $category) {
+            if (!empty($buckets[$category])) {
+                $mixed[] = array_shift($buckets[$category]);
+                $added = true;
+            }
+        }
+        foreach (array_keys($buckets) as $category) {
+            if (!in_array($category, $categoryOrder, true) && !empty($buckets[$category])) {
+                $mixed[] = array_shift($buckets[$category]);
+                $added = true;
+            }
+        }
+    } while ($added);
+
+    usort($urgent, static fn(string $a, string $b): int => event_priority_score($b) <=> event_priority_score($a));
+    return array_values(array_unique(array_merge($urgent, $mixed)));
 }
 
 function advance_ticker(array &$state, float $now): void
@@ -2814,8 +3042,7 @@ function parse_filter_event(string $line, array $hosts): ?array
     $svc = service_name($dport ?: $sport);
     $time = preg_match('/(\d{2}:\d{2}:\d{2})/', $line, $m) ? $m[1] : date('H:i:s');
     $severity = $verdict === 'DROP' ? 'MED' : 'LOW';
-    $tickerSrc = compact_endpoint_label($srcLabel, true);
-    $tickerDst = compact_endpoint_label($dstLabel, true);
+    $ticker = firewall_ticker_text($action, $severity, (string)$dir, $srcLabel, $dstLabel, $svc);
     return [
         'time' => $time,
         'proto' => $proto,
@@ -2827,8 +3054,34 @@ function parse_filter_event(string $line, array $hosts): ?array
         'bytes' => (int)$len,
         'verdict' => $verdict,
         'class' => $verdict === 'DROP' ? 'blocked' : (($svc === 'dns' || $svc === 'https') ? 'internet' : 'firewall'),
-        'ticker' => sprintf('[FW][%s] %s -> %s %s', $severity, $tickerSrc, $tickerDst, strtolower($verdict)),
+        'category' => 'FW',
+        'severity' => $severity,
+        'ticker' => $ticker,
     ];
+}
+
+function firewall_ticker_text(string $action, string $severity, string $dir, string $srcLabel, string $dstLabel, string $svc): string
+{
+    $src = compact_endpoint_label($srcLabel, true);
+    $dst = compact_endpoint_label($dstLabel, true);
+    $service = service_human_label($svc);
+    $blocked = strtolower($action) === 'block';
+    $dir = strtoupper($dir);
+
+    if ($blocked) {
+        if ($dir === 'IN' && endpoint_is_external($srcLabel) && endpoint_is_external($dstLabel)) {
+            return sprintf('[FW][%s] WAN scan blocked: %s -> WAN %s', $severity, $src, $service);
+        }
+        if (endpoint_is_lan($srcLabel)) {
+            return sprintf('[FW][%s] Firewall blocked %s -> %s %s', $severity, $src, $dst, $service);
+        }
+        return sprintf('[FW][%s] Firewall blocked %s -> %s %s', $severity, $src, $dst, $service);
+    }
+
+    if (endpoint_is_lan($srcLabel) || endpoint_is_lan($dstLabel)) {
+        return sprintf('[FW][LOW] Firewall allowed %s -> %s %s', $src, $dst, $service);
+    }
+    return sprintf('[FW][LOW] Firewall observed %s -> %s %s', $src, $dst, $service);
 }
 
 function parse_dnsbl_event(string $line, array $hosts): ?array
@@ -2853,7 +3106,9 @@ function parse_dnsbl_event(string $line, array $hosts): ?array
         'bytes' => 0,
         'verdict' => $verdict,
         'class' => 'dnsbl',
-        'ticker' => sprintf('[DNSBL][LOW] %s DNSBL hit: %s', $src, $domain),
+        'category' => 'DNSBL',
+        'severity' => 'LOW',
+        'ticker' => sprintf('[DNSBL][LOW] %s DNSBL hit: %s', compact_endpoint_label($src, true), $domain),
     ];
 }
 
@@ -3296,6 +3551,22 @@ function service_short(string $service): string
     };
 }
 
+function service_human_label(string $service): string
+{
+    $short = service_short($service);
+    return match ($short) {
+        'tls' => 'HTTPS/TLS',
+        'web' => 'HTTP',
+        'dns' => 'DNS',
+        'vpn' => 'VPN',
+        'ssh' => 'SSH',
+        'ntp' => 'NTP',
+        'smb' => 'SMB',
+        'unk', '?' => 'unknown service',
+        default => preg_match('/^p(\d+)/', $short, $m) ? 'port ' . $m[1] : strtoupper($short),
+    };
+}
+
 function flow_path_text(array $flow, int $width): string
 {
     $mini = $width < 40;
@@ -3310,6 +3581,16 @@ function packet_flow_text(array $packet, int $width): string
     $src = compact_endpoint_label((string)($packet['src'] ?? ''), $mini);
     $dst = compact_endpoint_label((string)($packet['dst'] ?? ''), $mini);
     return truncate_modern_text($src . '->' . $dst, $width);
+}
+
+function endpoint_is_lan(string $label): bool
+{
+    return str_contains($label, '/LAN.') || preg_match('/^LAN\.\d+$/', $label) === 1 || preg_match('/^L\d+$/', $label) === 1;
+}
+
+function endpoint_is_external(string $label): bool
+{
+    return str_starts_with($label, 'EXT.') || preg_match('/^E\d/', $label) === 1 || $label === 'EXTv6' || $label === 'E6';
 }
 
 function compact_endpoint_label(string $label, bool $mini = false): string
@@ -3743,7 +4024,7 @@ function colorize_line(string $line, bool $color): string
     $line = color_replace('/(\[HIGH\])|\b(FW BLOCK|DROP|REJECT|BLOCK|blocked|HIGH)\b/', $c['red'] . '$0' . $c['reset'], $line);
     $line = color_replace('/(\[WARN\]|\[MED\])|\b(DNS DENY|WARN|warning|MED)\b/', $c['yellow'] . '$0' . $c['reset'], $line);
     $line = color_replace('/(\[INFO\]|\[LOW\])/', $c['green'] . '$1' . $c['reset'], $line);
-    $line = color_replace('/(\[DNSBL\]|\[FW\]|\[IDS\]|\[IPS\]|\[VPN\]|\[WAN\]|\[DHCP\]|\[ARP\]|\[FLOW\]|\[UPS\]|\[SYS\]|\[DNS\]|\[IFACE\]|\[DEVICE\])/', $c['cyan'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/(\[DNSBL\]|\[FW\]|\[IDS\]|\[IPS\]|\[VPN\]|\[WAN\]|\[DHCP\]|\[ARP\]|\[FLOW\]|\[PF\]|\[UPS\]|\[SYS\]|\[DNS\]|\[IFACE\]|\[DEVICE\])/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/\b(DNSBL HIT|SINKHOLE)\b/', $c['yellow'] . '$1' . $c['reset'], $line);
     $line = color_replace('/\b(CPU|RAM|ARC|PF|LAN|WAN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES)\b/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[[#!.]+\])/', $c['green'] . '$1' . $c['reset'], $line);

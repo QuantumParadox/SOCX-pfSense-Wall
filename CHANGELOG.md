@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.1.44
+
+- Rebalanced the Modern Wall Event Feed so firewall drops no longer crowd out DNSBL, UPS, WAN/DNS/VPN, DHCP/ARP, IDS/IPS, PF, and flow-status events.
+- Increased the default event queue from 25 to 40 entries and added per-category caps for the rotating feed.
+- Changed firewall feed wording from terse `drop` lines to human-readable messages like `WAN scan blocked`, `Firewall blocked`, and `Firewall allowed`.
+- Added periodic SOC activity summaries for recent firewall blocks, DNSBL hit counts, top live flow, WAN/LAN traffic, UPS load, and PF state health.
+- Debounced WAN counter warnings so first-sample network counters do not pin the Event Feed above real traffic events.
+- Interleaved rotate-mode feed categories so firewall scans, DNSBL, flow, UPS, PF, WAN/DNS/VPN, IDS, DHCP, and ARP items appear as a mixed command feed instead of long runs of firewall events.
+- Prevented routine LOW/MED events from resetting the rotate index, so frequent firewall/DNSBL updates no longer keep the feed pinned near the front of the queue.
+- Lowered the routine firewall cap and moved FW behind flow/UPS/PF/DNSBL in rotate order so scan noise cannot dominate the wall.
+- Reworded pfSense WAN DHCP client renewals as WAN lease events instead of misleading LAN DHCP device renewals.
+- Kept DNSBL wording accurate as `DNSBL hit` / query-level filtering instead of implying the whole app/site is blocked.
+
 ## v0.1.43
 
 - Removed the wide-mode IFTOPX `MTR` column that formed a large vertical white block on wider wall displays.
