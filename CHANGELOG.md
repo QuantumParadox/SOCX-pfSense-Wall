@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.28
+
+- Changed wall-mode ticker rendering to update only the bottom ticker row between full 500ms dashboard refreshes, reducing whole-screen redraw jitter.
+- Switched the default ticker feel to one-character smooth scrolling with `SOCX_TICKER_STEP=1` and `SOCX_TICKER_INTERVAL_MS=25`.
+- Prevented the diamond event separator from being split mid-scroll during fast ticker movement.
+- Forced unbuffered wall renderer output so ticker-only frames are pushed immediately instead of bunching together.
+- Removed repeated full-screen clears after startup; full dashboard refreshes now repaint in place to avoid ticker hiccups.
+
 ## v0.1.27
 
 - Changed wall-mode ticker defaults to turbo speed with `SOCX_TICKER_STEP=6` and `SOCX_TICKER_INTERVAL_MS=50`.

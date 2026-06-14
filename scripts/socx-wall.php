@@ -23,12 +23,13 @@ if ($mode !== 'wall') {
     fwrite(STDERR, "Only --mode wall is implemented by " . APP_NAME . ".\n");
     exit(2);
 }
+stream_set_write_buffer(STDOUT, 0);
 
 $color = !$opts['no_color'] && (getenv('NO_COLOR') === false || getenv('NO_COLOR') === '');
 $interval = max(0.5, (float)$opts['interval']);
 $tickerConfig = ticker_config($opts);
 $renderInterval = min($interval, $tickerConfig['interval_ms'] / 1000);
-$renderInterval = max(0.05, $renderInterval);
+$renderInterval = max(0.025, $renderInterval);
 $once = (bool)$opts['once'];
 $state = [
     'net' => [],
@@ -58,19 +59,24 @@ if (!$once) {
     register_shutdown_function(static function (): void {
         echo "\033[?25h\033[0m";
     });
-    echo "\033[?25l";
+    echo "\033[?25l\033[H\033[2J";
 }
 
 do {
     $now = microtime(true);
+    $fullRedraw = false;
     try {
         if ((int)$state['cols'] <= 0 || $now >= (float)$state['next_size_at']) {
+            $oldCols = (int)$state['cols'];
+            $oldRows = (int)$state['rows'];
             [$state['cols'], $state['rows']] = term_size($opts);
             $state['next_size_at'] = $now + 1.0;
+            $fullRedraw = $fullRedraw || $oldCols !== (int)$state['cols'] || $oldRows !== (int)$state['rows'];
         }
         $cols = (int)$state['cols'];
         $rows = (int)$state['rows'];
         if ($state['last_frame'] === null || $once || $now >= (float)$state['next_frame_at']) {
+            $fullRedraw = true;
             $state['tick']++;
             $hosts = load_host_map((string)$opts['hosts']);
             $frame = $opts['demo'] ? demo_frame($hosts, $state) : collect_live_frame($state, $hosts);
@@ -90,6 +96,7 @@ do {
         $cols = (int)$state['cols'];
         $rows = (int)$state['rows'];
         $frame = $state['last_frame'] ?: error_frame($e);
+        $fullRedraw = true;
     }
     advance_ticker($state, $now);
     $frame['ticker_events'] = ticker_event_texts($state);
@@ -97,16 +104,22 @@ do {
     $frame['ticker_hold_until'] = (float)$state['ticker_hold_until'];
     $frame['ticker_hold_text'] = (string)$state['ticker_hold_text'];
     $frame['ticker_now'] = $now;
-    $screen = render_wall($frame, $cols, $rows, $color, $state);
     if ($once) {
+        $screen = render_wall($frame, $cols, $rows, $color, $state);
         echo $screen;
         if (!str_ends_with($screen, "\n")) {
             echo "\n";
         }
         break;
     }
-    echo "\033[H\033[2J" . $screen;
+    if ($fullRedraw) {
+        $screen = render_wall($frame, $cols, $rows, $color, $state);
+        echo "\033[H" . $screen;
+    } else {
+        echo render_ticker_update($frame, $cols, $rows, $color);
+    }
     flush();
+    fflush(STDOUT);
     usleep((int)($renderInterval * 1000000));
 } while (true);
 
@@ -201,7 +214,7 @@ function print_help(): void
 
 function ticker_config(array $opts): array
 {
-    $speed = strtolower((string)($opts['ticker_speed'] ?: getenv('SOCX_TICKER_SPEED') ?: 'turbo'));
+    $speed = strtolower((string)($opts['ticker_speed'] ?: getenv('SOCX_TICKER_SPEED') ?: 'fast'));
     $speedSteps = ['slow' => 1, 'normal' => 2, 'fast' => 4, 'turbo' => 6];
     $step = $speedSteps[$speed] ?? $speedSteps['fast'];
 
@@ -214,8 +227,8 @@ function ticker_config(array $opts): array
     $step = max(1, min(12, $step));
 
     $envInterval = getenv('SOCX_TICKER_INTERVAL_MS');
-    $intervalMs = (int)$opts['ticker_interval_ms'] > 0 ? (int)$opts['ticker_interval_ms'] : (is_numeric($envInterval) ? (int)$envInterval : 50);
-    $intervalMs = max(50, min(500, $intervalMs));
+    $intervalMs = (int)$opts['ticker_interval_ms'] > 0 ? (int)$opts['ticker_interval_ms'] : (is_numeric($envInterval) ? (int)$envInterval : 25);
+    $intervalMs = max(25, min(500, $intervalMs));
 
     $envMax = getenv('SOCX_TICKER_MAX_EVENTS');
     $maxEvents = (int)$opts['ticker_max_events'] > 0 ? (int)$opts['ticker_max_events'] : (is_numeric($envMax) ? (int)$envMax : 25);
@@ -458,6 +471,19 @@ function render_wall(array $frame, int $cols, int $rows, bool $color, array &$st
         $lines[] = colorize_line($line, $color);
     }
     return implode("\n", $lines);
+}
+
+function render_ticker_update(array $frame, int $cols, int $rows, bool $color): string
+{
+    if ($cols < 4 || $rows < 3) {
+        return '';
+    }
+    $layout = wall_layout($cols, $rows);
+    $panel = panel_obj(0, $layout['ticker_y'], $cols, $layout['ticker_h'], 'EVENT TICKER', static fn(array $f, array $p): array => ticker_rows($f, $p));
+    $ticker = ticker_rows($frame, $panel)[0] ?? '';
+    $line = '|' . pad_or_clip($ticker, $cols - 2) . '|';
+    $ansiRow = $layout['ticker_y'] + 2;
+    return "\033[" . $ansiRow . ";1H" . colorize_line($line, $color);
 }
 
 function wall_layout(int $cols, int $rows): array
@@ -758,7 +784,8 @@ function ticker_rows(array $f, array $p): array
         return [ticker_view('!!! ' . $holdText, 0, $width)];
     }
 
-    $separator = '   ◆   ';
+    $marker = ticker_separator_marker();
+    $separator = '   ' . $marker . '   ';
     $line = implode($separator, $events);
     $pad = str_repeat(' ', max(8, min(28, intdiv($width, 3))));
     $cycle = $line . $separator . $pad;
@@ -774,11 +801,18 @@ function ticker_view(string $text, int $offset, int $width): string
     }
     $cycleLen = max(1, strlen($text));
     $offset %= $cycleLen;
-    $scroll = substr($text, $offset) . '   ◆   ' . $text;
+    $marker = ticker_separator_marker();
+    $separator = '   ' . $marker . '   ';
+    $scroll = substr($text, $offset) . $separator . $text;
     while (strlen($scroll) < $width) {
-        $scroll .= '   ◆   ' . $text;
+        $scroll .= $separator . $text;
     }
     return substr($scroll, 0, $width);
+}
+
+function ticker_separator_marker(): string
+{
+    return '~';
 }
 
 function parse_load(string $top): array
@@ -1066,6 +1100,7 @@ function update_ticker_queue(array &$state, array $events, float $now): void
 
 function clean_ticker_event(string $event): string
 {
+    $event = str_replace(ticker_separator_marker(), '-', $event);
     $event = preg_replace('/[\x00-\x1F\x7F]+/', ' ', $event) ?? '';
     $event = preg_replace('/\s+/', ' ', $event) ?? '';
     return trim($event);
@@ -1407,8 +1442,9 @@ function graph_bar(int $value, int $max, bool $alert): string
 
 function colorize_line(string $line, bool $color): string
 {
+    $separatorMarker = ticker_separator_marker();
     if (!$color) {
-        return $line;
+        return str_replace($separatorMarker, '◆', $line);
     }
     $c = [
         'reset' => "\033[0m",
@@ -1429,6 +1465,7 @@ function colorize_line(string $line, bool $color): string
     $line = preg_replace('/\b(CPU|RAM|ARC|PF|LAN|WAN|UPS|TOTAL|IFTOPX|TCPDUMPX|SOCX WALL)\b/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = preg_replace('/(\[[#!.]+\])/', $c['green'] . '$1' . $c['reset'], $line);
     $line = str_replace('◆', $c['cyan'] . '◆' . $c['reset'], $line);
+    $line = str_replace($separatorMarker, $c['cyan'] . '◆' . $c['reset'], $line);
     $line = preg_replace('/\bx(\d+)\b/', $c['yellow'] . 'x$1' . $c['reset'], $line);
     return $line . $c['reset'];
 }
