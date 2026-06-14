@@ -501,6 +501,15 @@ function run_cmd(string $cmd): string
     return implode("\n", $out);
 }
 
+function process_running(string $pattern): bool
+{
+    $pgrep = is_executable('/bin/pgrep') ? '/bin/pgrep' : '/usr/bin/pgrep';
+    if (!is_executable($pgrep)) {
+        return false;
+    }
+    return trim(run_cmd($pgrep . ' -f ' . escapeshellarg($pattern) . ' | /usr/bin/head -1')) !== '';
+}
+
 function term_size(array $opts): array
 {
     if ((int)$opts['width'] > 0 && (int)$opts['height'] > 0) {
@@ -682,12 +691,24 @@ function demo_frame(array $hosts, array $state = []): array
         'tick' => $tick,
         'ups' => [
             'online' => true,
+            'source' => 'snmp',
+            'ups_name' => '192.168.1.114',
+            'model' => 'Smart-UPS 2200',
             'status' => 'ONLINE',
             'watts' => $upsWatts,
             'load' => max(1, min(100, (int)round($upsWatts / 22))),
             'battery' => 100,
+            'runtime_seconds' => 2400,
             'runtime' => '40m',
             'linev' => '120.1',
+            'inputv' => '120.1',
+            'inputfreq' => '60.0',
+            'outputv' => '119.8',
+            'outputfreq' => '60.0',
+            'output_current' => sprintf('%.1f', max(0.5, $upsWatts / 120)),
+            'battery_voltage' => '54.6',
+            'battery_temp' => '20',
+            'nominal_watts' => '1980',
             'updated_age' => 0.1,
             'peak60' => 1200,
             'avg60' => 603,
@@ -732,7 +753,7 @@ function demo_frame(array $hosts, array $state = []): array
             '[FW][MED] ' . host_label('192.168.1.127', $hosts) . ' -> 147.185.133.70:137 drop',
             '[DHCP][WARN] Unknown device LAN.203 joined | verify MAC',
             '[FLOW][WARN] ' . host_label('192.168.1.164', $hosts) . ' unusual DNS burst x84 | inspect',
-            '[UPS][INFO] UPS online, load 40%, runtime 40m | power normal',
+            '[UPS][INFO] UPS online 552W, load 28%, batt 100%, run 36m, out 118V/5.2A | source snmp',
             '[VPN][INFO] WireGuard tunnel stable 14ms',
             '[DNS][INFO] Unbound healthy | resolver online',
             '[DNSBL][LOW] ' . host_label('192.168.1.161', $hosts) . ' DNSBL hit: beacons.gvt2.com',
@@ -1469,18 +1490,20 @@ function modern_ups_rows(array $f, array $p): array
         return ['UPS unavailable', 'collector waiting', sparkline([], max(8, $w))];
     }
     $watts = center_text(sprintf('%s W', $ups['watts']), $w);
-    if ($w < 22) {
+    $source = strtoupper(truncate_text((string)($ups['source'] ?? 'UPS'), 4));
+    if ($w < 18) {
+        $v = is_numeric($ups['outputv']) ? (string)(int)round((float)$ups['outputv']) . 'V' : '?V';
         return [
             $watts,
-            sprintf('load %s%% batt %s%%', $ups['load'], $ups['battery']),
-            sprintf('run %s', $ups['runtime']),
-            fit_sparkline($ups['history'], $w),
+            truncate_text(sprintf('%s%% b%s%% %s', $ups['load'], $ups['battery'], $ups['runtime']), $w),
+            truncate_text(sprintf('%s %sA %s', $v, $ups['output_current'], $source), $w),
         ];
     }
     return [
         $watts,
-        sprintf('load %s%% batt %s%% run %s', $ups['load'], $ups['battery'], $ups['runtime']),
-        sprintf('pk %s avg %s', $ups['peak60'], $ups['avg60']),
+        truncate_text(sprintf('load %s%% batt %s%% run %s', $ups['load'], $ups['battery'], $ups['runtime']), $w),
+        truncate_text(sprintf('out %sV %sA  in %sV', $ups['outputv'], $ups['output_current'], $ups['inputv']), $w),
+        truncate_text(sprintf('bat %sV %sC %s', $ups['battery_voltage'], $ups['battery_temp'], $source), $w),
         fit_sparkline($ups['history'], $w),
     ];
 }
@@ -2028,21 +2051,46 @@ function collect_ups_metrics(array &$state, float $now): array
     $peak = $history ? (int)round(max($history)) : ($watts ?? 0);
     $updated = isset($raw['updated']) && is_numeric($raw['updated']) ? max(0.0, $now - (float)$raw['updated']) : null;
     $runtimeSeconds = isset($raw['runtime']) && is_numeric($raw['runtime']) ? (float)$raw['runtime'] : null;
+    $linev = ups_number_text($raw['linev'] ?? ($raw['inputv'] ?? null), 1);
+    $inputv = ups_number_text($raw['inputv'] ?? ($raw['linev'] ?? null), 1);
+    $outputv = ups_number_text($raw['outputv'] ?? null, 1);
+    if ($outputv === '?') {
+        $outputv = $linev;
+    }
 
     return [
         'online' => $watts !== null,
+        'source' => (string)($raw['source'] ?? ''),
+        'ups_name' => (string)($raw['ups_name'] ?? ''),
+        'model' => (string)($raw['model'] ?? ''),
         'status' => (string)($raw['status'] ?? ($watts !== null ? 'ONLINE' : '')),
         'watts' => $watts ?? '?',
         'load' => isset($raw['load']) && is_numeric($raw['load']) ? (string)(int)round((float)$raw['load']) : '?',
         'battery' => isset($raw['battery']) && is_numeric($raw['battery']) ? (string)(int)round((float)$raw['battery']) : '?',
         'runtime_seconds' => $runtimeSeconds,
         'runtime' => $runtimeSeconds !== null ? format_runtime($runtimeSeconds) : '?',
-        'linev' => isset($raw['linev']) && is_numeric($raw['linev']) ? sprintf('%.1f', (float)$raw['linev']) : '?',
+        'linev' => $linev,
+        'inputv' => $inputv,
+        'inputfreq' => ups_number_text($raw['inputfreq'] ?? null, 1),
+        'outputv' => $outputv,
+        'outputfreq' => ups_number_text($raw['outputfreq'] ?? null, 1),
+        'output_current' => ups_number_text($raw['output_current'] ?? null, 1),
+        'battery_voltage' => ups_number_text($raw['battery_voltage'] ?? null, 1),
+        'battery_temp' => ups_number_text($raw['battery_temp'] ?? null, 0),
+        'nominal_watts' => ups_number_text($raw['nominal_watts'] ?? null, 0),
         'updated_age' => $updated,
         'peak60' => $peak,
         'avg60' => $avg,
         'history' => $history,
     ];
+}
+
+function ups_number_text($value, int $decimals): string
+{
+    if (!is_numeric($value)) {
+        return '?';
+    }
+    return $decimals > 0 ? sprintf('%.' . $decimals . 'f', (float)$value) : (string)(int)round((float)$value);
 }
 
 function collect_ups_status_line(): string
@@ -2203,7 +2251,14 @@ function collect_soc_command_events(array &$state, array $hosts, float $now, arr
     } elseif (is_numeric($ups['runtime_seconds'] ?? null) && (float)$ups['runtime_seconds'] < 1200) {
         $events[] = soc_event('UPS', 'WARN', sprintf('Runtime below 20m: %s | reduce load', $ups['runtime']));
     } elseif ($routineDue) {
-        $events[] = soc_event('UPS', 'INFO', sprintf('UPS online, load %s%%, runtime %s | power normal', $ups['load'], $ups['runtime']));
+        $events[] = soc_event('UPS', 'INFO', sprintf('UPS online %sW, load %s%%, batt %s%%, run %s, out %sV/%sA | source %s',
+            $ups['watts'],
+            $ups['load'],
+            $ups['battery'],
+            $ups['runtime'],
+            $ups['outputv'],
+            $ups['output_current'],
+            $ups['source'] ?: 'collector'));
     }
 
     $mem = $metrics['mem'] ?? [];
@@ -2234,12 +2289,14 @@ function collect_soc_command_events(array &$state, array $hosts, float $now, arr
 
     $procs = $metrics['procs'] ?? [];
     $procNames = strtolower(implode(' ', array_map(static fn(array $p): string => (string)($p['name'] ?? '') . ' ' . (string)($p['cmd'] ?? ''), $procs)));
-    if (!str_contains($procNames, 'unbound')) {
+    $unboundRunning = str_contains($procNames, 'unbound') || process_running('unbound');
+    $ntopngRunning = str_contains($procNames, 'ntopng') || process_running('ntopng');
+    if (!$unboundRunning) {
         $events[] = soc_event('DNS', 'HIGH', 'Unbound resolver process missing | check DNS');
     } elseif ($routineDue) {
         $events[] = soc_event('DNS', 'INFO', 'Unbound healthy | resolver online');
     }
-    if ($routineDue && str_contains($procNames, 'ntopng')) {
+    if ($routineDue && $ntopngRunning) {
         $events[] = soc_event('FLOW', 'INFO', 'ntopng flow intelligence online | watch top talkers');
     }
 
@@ -3249,6 +3306,9 @@ function normalize_ups($ups): array
     if (is_array($ups)) {
         return $ups + [
             'online' => false,
+            'source' => '',
+            'ups_name' => '',
+            'model' => '',
             'status' => '',
             'watts' => '?',
             'load' => '?',
@@ -3256,6 +3316,14 @@ function normalize_ups($ups): array
             'runtime_seconds' => null,
             'runtime' => '?',
             'linev' => '?',
+            'inputv' => '?',
+            'inputfreq' => '?',
+            'outputv' => '?',
+            'outputfreq' => '?',
+            'output_current' => '?',
+            'battery_voltage' => '?',
+            'battery_temp' => '?',
+            'nominal_watts' => '?',
             'peak60' => '?',
             'avg60' => '?',
             'history' => [],
@@ -3263,12 +3331,23 @@ function normalize_ups($ups): array
     }
     return parse_ups_status_line((string)$ups) + [
         'online' => $ups !== '',
+        'source' => '',
+        'ups_name' => '',
+        'model' => '',
         'watts' => '?',
         'load' => '?',
         'battery' => '?',
         'runtime_seconds' => null,
         'runtime' => '?',
         'linev' => '?',
+        'inputv' => '?',
+        'inputfreq' => '?',
+        'outputv' => '?',
+        'outputfreq' => '?',
+        'output_current' => '?',
+        'battery_voltage' => '?',
+        'battery_temp' => '?',
+        'nominal_watts' => '?',
         'peak60' => '?',
         'avg60' => '?',
         'history' => [],
@@ -3281,7 +3360,7 @@ function ups_summary($ups): string
     if (empty($ups['online'])) {
         return 'UPS --';
     }
-    return sprintf('UPS %sW load %s%% batt %s%% run %s', $ups['watts'], $ups['load'], $ups['battery'], $ups['runtime']);
+    return sprintf('UPS %sW load %s%% batt %s%% run %s out %sV %sA', $ups['watts'], $ups['load'], $ups['battery'], $ups['runtime'], $ups['outputv'], $ups['output_current']);
 }
 
 function format_runtime(float $seconds): string

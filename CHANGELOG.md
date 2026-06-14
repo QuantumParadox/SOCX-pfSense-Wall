@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.41
+
+- Fixed stale UPS telemetry by making `socx-ups-cache` fall back to direct Schneider/APC SNMP polling when NUT `upsc` cannot reach `upsd`.
+- Changed the SOC launcher UPS source default to `auto` and added Schneider NMC SNMP defaults for `192.168.1.114`.
+- Added sub-second cache timestamps so 500 ms UPS refreshes are visible to the wall renderer.
+- Expanded cached UPS fields with model/source, input/output voltage and frequency, output current, battery voltage, battery temperature, and nominal watt rating.
+- Updated the Modern Wall UPS card and UPS command-feed event to show richer live power details.
+
 ## v0.1.40
 
 - Expanded the Modern Wall Event Feed into a prioritized SOC command ticker.

@@ -1,45 +1,98 @@
 #!/bin/sh
 # Background UPS cache collector for SOCX wall mode.
+#
+# Preferred path is NUT/upsc. If upsd is unavailable, fall back to the
+# Schneider/APC Network Management Card over SNMP so wall telemetry keeps
+# updating every SOCX_UPS_REFRESH_MS.
 
 UPSC=${UPSC:-/usr/local/bin/upsc}
+SNMPGET=${SNMPGET:-/usr/local/bin/snmpget}
 CACHE=${SOCX_UPS_CACHE_FILE:-/tmp/socx-ups-cache.env}
 INTERVAL_MS=${SOCX_UPS_REFRESH_MS:-500}
+SOURCE=${SOCX_UPS_SOURCE:-auto}
+
+nut_conf_value() {
+    key=$1
+    awk -v key="$key" '
+        $1 == key && $2 == "=" { print $3; exit }
+        $1 == key && index($0, "=") { sub(/^[^=]*=[ \t]*/, ""); print; exit }
+    ' /usr/local/etc/nut/ups.conf 2>/dev/null
+}
+
+UPS_SNMP_HOST=${SOCX_UPS_SNMP_HOST:-$(nut_conf_value port)}
+[ -n "$UPS_SNMP_HOST" ] || UPS_SNMP_HOST=192.168.1.114
+UPS_SNMP_COMMUNITY=${SOCX_UPS_SNMP_COMMUNITY:-$(nut_conf_value community)}
+[ -n "$UPS_SNMP_COMMUNITY" ] || UPS_SNMP_COMMUNITY=public
+UPS_SNMP_VERSION=${SOCX_UPS_SNMP_VERSION:-v2c}
 
 sleep_interval() {
     awk -v ms="$INTERVAL_MS" 'BEGIN { if (ms < 250) ms = 250; printf "%.3f", ms / 1000 }'
 }
 
+now_epoch() {
+    /usr/local/bin/perl -MTime::HiRes=time -e 'printf "%.3f\n", time' 2>/dev/null || date +%s
+}
+
+clean_value() {
+    printf '%s' "$1" | tr -d '\r' | sed 's/^"//; s/"$//; s/[[:cntrl:]]//g'
+}
+
 write_cache() {
     tmp="${CACHE}.$$"
     {
-        printf 'updated=%s\n' "$(date +%s)"
-        printf 'status=%s\n' "$1"
-        printf 'watts=%s\n' "$2"
-        printf 'load=%s\n' "$3"
-        printf 'battery=%s\n' "$4"
-        printf 'runtime=%s\n' "$5"
-        printf 'linev=%s\n' "$6"
+        printf 'updated=%s\n' "$(now_epoch)"
+        printf 'source=%s\n' "$(clean_value "$1")"
+        printf 'ups_name=%s\n' "$(clean_value "$2")"
+        printf 'model=%s\n' "$(clean_value "$3")"
+        printf 'status=%s\n' "$(clean_value "$4")"
+        printf 'watts=%s\n' "$(clean_value "$5")"
+        printf 'load=%s\n' "$(clean_value "$6")"
+        printf 'battery=%s\n' "$(clean_value "$7")"
+        printf 'runtime=%s\n' "$(clean_value "$8")"
+        printf 'linev=%s\n' "$(clean_value "$9")"
+        printf 'inputv=%s\n' "$(clean_value "${10}")"
+        printf 'inputfreq=%s\n' "$(clean_value "${11}")"
+        printf 'outputv=%s\n' "$(clean_value "${12}")"
+        printf 'outputfreq=%s\n' "$(clean_value "${13}")"
+        printf 'output_current=%s\n' "$(clean_value "${14}")"
+        printf 'battery_voltage=%s\n' "$(clean_value "${15}")"
+        printf 'battery_temp=%s\n' "$(clean_value "${16}")"
+        printf 'nominal_watts=%s\n' "$(clean_value "${17}")"
     } > "$tmp"
     mv "$tmp" "$CACHE"
 }
 
-collect_once() {
+collect_nut() {
     [ -x "$UPSC" ] || return 1
     raw=''
-    for ups in $("$UPSC" -l 2>/dev/null); do
-        raw=$("$UPSC" "$ups" 2>/dev/null) || raw=''
-        [ -n "$raw" ] && break
+    ups_name=''
+    for ups in $(NUT_DEFAULT_CONNECT_TIMEOUT=1 "$UPSC" -l 2>/dev/null); do
+        raw=$(NUT_DEFAULT_CONNECT_TIMEOUT=1 "$UPSC" "$ups" 2>/dev/null) || raw=''
+        if [ -n "$raw" ]; then
+            ups_name=$ups
+            break
+        fi
     done
     [ -n "$raw" ] || return 1
 
     status=$(printf '%s\n' "$raw" | awk -F': ' '$1=="ups.status"{print $2; exit}')
+    model=$(printf '%s\n' "$raw" | awk -F': ' '$1=="device.model" || $1=="ups.model"{print $2; exit}')
     load=$(printf '%s\n' "$raw" | awk -F': ' '$1=="ups.load"{print $2; exit}')
     battery=$(printf '%s\n' "$raw" | awk -F': ' '$1=="battery.charge"{print $2; exit}')
     runtime=$(printf '%s\n' "$raw" | awk -F': ' '$1=="battery.runtime"{print $2; exit}')
-    linev=$(printf '%s\n' "$raw" | awk -F': ' '$1=="input.voltage" || $1=="line.voltage"{print $2; exit}')
+    inputv=$(printf '%s\n' "$raw" | awk -F': ' '$1=="input.voltage" || $1=="line.voltage"{print $2; exit}')
+    inputfreq=$(printf '%s\n' "$raw" | awk -F': ' '$1=="input.frequency"{print $2; exit}')
+    outputv=$(printf '%s\n' "$raw" | awk -F': ' '$1=="output.voltage"{print $2; exit}')
+    outputfreq=$(printf '%s\n' "$raw" | awk -F': ' '$1=="output.frequency"{print $2; exit}')
+    output_current=$(printf '%s\n' "$raw" | awk -F': ' '$1=="output.current"{print $2; exit}')
+    battery_voltage=$(printf '%s\n' "$raw" | awk -F': ' '$1=="battery.voltage"{print $2; exit}')
+    battery_temp=$(printf '%s\n' "$raw" | awk -F': ' '$1=="battery.temperature" || $1=="ups.temperature" || $1=="ambient.temperature"{print $2; exit}')
+    nominal_watts=$(printf '%s\n' "$raw" | awk -F': ' '$1=="ups.realpower.nominal" || $1=="ups.power.nominal"{print $2; exit}')
     watts=$(printf '%s\n' "$raw" | awk -F': ' '
         $1=="ups.realpower"{w=$2}
+        $1=="output.realpower" && w==""{w=$2}
         $1=="ups.power" && w==""{w=$2}
+        $1=="output.power" && w==""{w=$2}
         $1=="output.voltage"{v=$2}
         $1=="output.current"{c=$2}
         END {
@@ -48,12 +101,94 @@ collect_once() {
         }')
 
     [ -n "$watts" ] || return 1
-    [ -n "$status" ] || status='ONLINE'
+    [ -n "$status" ] || status='OL'
     [ -n "$load" ] || load='?'
     [ -n "$battery" ] || battery='?'
     [ -n "$runtime" ] || runtime='0'
-    [ -n "$linev" ] || linev='?'
-    write_cache "$status" "$watts" "$load" "$battery" "$runtime" "$linev"
+    [ -n "$inputv" ] || inputv='?'
+    [ -n "$outputv" ] || outputv="$inputv"
+    write_cache nut "$ups_name" "$model" "$status" "$watts" "$load" "$battery" "$runtime" "$inputv" "$inputv" "$inputfreq" "$outputv" "$outputfreq" "$output_current" "$battery_voltage" "$battery_temp" "$nominal_watts"
+}
+
+collect_snmp() {
+    [ -x "$SNMPGET" ] || return 1
+    [ -n "$UPS_SNMP_HOST" ] || return 1
+    raw=$("$SNMPGET" "-$UPS_SNMP_VERSION" -c "$UPS_SNMP_COMMUNITY" -Oqv "$UPS_SNMP_HOST" \
+        .1.3.6.1.2.1.33.1.1.2.0 \
+        .1.3.6.1.2.1.33.1.2.3.0 \
+        .1.3.6.1.2.1.33.1.2.4.0 \
+        .1.3.6.1.2.1.33.1.2.5.0 \
+        .1.3.6.1.2.1.33.1.2.7.0 \
+        .1.3.6.1.2.1.33.1.3.3.1.2.1 \
+        .1.3.6.1.2.1.33.1.3.3.1.3.1 \
+        .1.3.6.1.2.1.33.1.4.1.0 \
+        .1.3.6.1.2.1.33.1.4.2.0 \
+        .1.3.6.1.2.1.33.1.4.4.1.2.1 \
+        .1.3.6.1.2.1.33.1.4.4.1.3.1 \
+        .1.3.6.1.2.1.33.1.4.4.1.4.1 \
+        .1.3.6.1.2.1.33.1.4.4.1.5.1 \
+        .1.3.6.1.2.1.33.1.5.1.0 \
+        .1.3.6.1.2.1.33.1.9.6.0 2>/dev/null) || return 1
+
+    printf '%s\n' "$raw" | awk -v host="$UPS_SNMP_HOST" '
+        function clean(s) { gsub(/^"/, "", s); gsub(/"$/, "", s); return s }
+        NR==1 { model=clean($0) }
+        NR==2 { runtime=$0 * 60 }
+        NR==3 { battery=$0 }
+        NR==4 { battery_voltage=sprintf("%.1f", $0 / 10) }
+        NR==5 { battery_temp=$0 }
+        NR==6 { inputfreq=sprintf("%.1f", $0 / 10) }
+        NR==7 { inputv=$0 }
+        NR==8 { source=$0 }
+        NR==9 { outputfreq=sprintf("%.1f", $0 / 10) }
+        NR==10 { outputv=$0 }
+        NR==11 { output_current=sprintf("%.1f", $0 / 10) }
+        NR==12 { watts=$0 }
+        NR==13 { load=$0 }
+        NR==14 { outfreq2=sprintf("%.1f", $0 / 10) }
+        NR==15 { nominal=$0 }
+        END {
+            if (watts == "" || watts < 0) exit 1
+            status = source == 4 ? "OB" : "OL"
+            if (outputfreq == "" && outfreq2 != "") outputfreq = outfreq2
+            printf "snmp\n%s\n%s\n%s\n%d\n%s\n%s\n%d\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n",
+                host, model, status, watts + 0.5, load, battery, runtime + 0.5,
+                inputv, inputv, inputfreq, outputv, outputfreq, output_current,
+                battery_voltage, battery_temp, nominal
+        }' | {
+            IFS= read -r source || exit 1
+            IFS= read -r ups_name || exit 1
+            IFS= read -r model || exit 1
+            IFS= read -r status || exit 1
+            IFS= read -r watts || exit 1
+            IFS= read -r load || exit 1
+            IFS= read -r battery || exit 1
+            IFS= read -r runtime || exit 1
+            IFS= read -r linev || exit 1
+            IFS= read -r inputv || exit 1
+            IFS= read -r inputfreq || exit 1
+            IFS= read -r outputv || exit 1
+            IFS= read -r outputfreq || exit 1
+            IFS= read -r output_current || exit 1
+            IFS= read -r battery_voltage || exit 1
+            IFS= read -r battery_temp || exit 1
+            IFS= read -r nominal || exit 1
+            write_cache "$source" "$ups_name" "$model" "$status" "$watts" "$load" "$battery" "$runtime" "$linev" "$inputv" "$inputfreq" "$outputv" "$outputfreq" "$output_current" "$battery_voltage" "$battery_temp" "$nominal"
+        }
+}
+
+collect_once() {
+    case "$SOURCE" in
+    snmp)
+        collect_snmp || collect_nut
+        ;;
+    nut)
+        collect_nut || collect_snmp
+        ;;
+    *)
+        collect_nut || collect_snmp
+        ;;
+    esac
 }
 
 case "${1:-loop}" in

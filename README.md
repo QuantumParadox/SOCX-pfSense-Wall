@@ -160,11 +160,16 @@ UPS cache settings:
 
 ```sh
 SOCX_UPS_ENABLED=true
-SOCX_UPS_SOURCE=nut
+SOCX_UPS_SOURCE=auto
 SOCX_UPS_REFRESH_MS=500
 SOCX_UPS_HISTORY_SECONDS=60
 SOCX_UPS_SHOW_SPARKLINE=true
+SOCX_UPS_SNMP_HOST=192.168.1.114
+SOCX_UPS_SNMP_COMMUNITY=public
+SOCX_UPS_SNMP_VERSION=v2c
 ```
+
+`SOCX_UPS_SOURCE=auto` tries NUT/`upsc` first and falls back to direct Schneider/APC UPS-MIB SNMP polling, which keeps wattage, load, battery, runtime, voltage, amps, battery voltage, and battery temperature fresh even if `upsd` is not listening.
 
 Modern btop rendering defaults to Unicode/ANSI cards, block meters, and sparklines inside pfSense/tmux:
 
