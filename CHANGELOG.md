@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.36
+
+- Fixed the active `/usr/local/sbin/socx-wall` renderer path so `modern-btop` no longer reaches the unconditional ASCII `render_box()` wrapper.
+- Added Unicode startup defaults with `SOCX_FORCE_UNICODE=true` and `SOCX_DISABLE_ASCII_FALLBACK=true`.
+- Added an ASCII fallback guard that logs `BUG: render_box_ascii called in modern-btop` to `/tmp/socx-wall.err` and skips ASCII drawing unless fallback is explicitly allowed.
+- Added `--force-unicode`, `--unicode-test`, and `--capture FILE` support to `socx-wall`.
+- Added capture validation for modern-btop to fail on ASCII panel-border markers such as `+==`, `====`, and `| NETWORK`.
+
 ## v0.1.35
 
 - Added `socweb`, a browser-first Option C dashboard for the modern btop-style SOC wall when terminal/tmux rendering is too limiting.

@@ -110,6 +110,14 @@ Preview the wall renderer safely with fake data:
 socx-wall --demo --mode wall --theme modern-btop --ticker-smooth --once --width 160 --height 42
 ```
 
+Force and test Unicode rendering:
+
+```sh
+socx-wall --unicode-test
+SOCX_FORCE_UNICODE=true SOCX_DISABLE_ASCII_FALLBACK=true SOCX_BORDER_STYLE=unicode SOCX_GRAPH_STYLE=unicode \
+  socx-wall --demo --once --mode wall --theme modern-btop --force-unicode --capture /tmp/socx-frame.txt --width 160 --height 42
+```
+
 Use the older single-pane wall if needed:
 
 ```sh

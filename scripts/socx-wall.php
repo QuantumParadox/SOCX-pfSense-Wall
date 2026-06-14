@@ -13,8 +13,13 @@ const APP_NAME = 'socx-wall';
 const APP_VERSION = '0.1.0';
 
 $opts = parse_args($argv);
+apply_startup_unicode_defaults($opts);
 if ($opts['help']) {
     print_help();
+    exit(0);
+}
+if ($opts['unicode_test']) {
+    echo unicode_test_output();
     exit(0);
 }
 
@@ -29,6 +34,7 @@ $color = !$opts['no_color'] && (getenv('NO_COLOR') === false || getenv('NO_COLOR
 $interval = max(0.5, (float)$opts['interval']);
 $tickerConfig = ticker_config($opts);
 $theme = wall_theme($opts);
+putenv('SOCX_THEME=' . $theme);
 $renderInterval = min($interval, $tickerConfig['interval_ms'] / 1000);
 $renderInterval = max(0.025, $renderInterval);
 $once = (bool)$opts['once'];
@@ -118,15 +124,23 @@ do {
     $frame['ticker_now'] = $now;
     if ($once) {
         $screen = render_wall($frame, $cols, $rows, $color, $state, $theme);
+        $captureOk = capture_screen($opts, $screen, $theme);
         echo $screen;
         if (!str_ends_with($screen, "\n")) {
             echo "\n";
+        }
+        if (!$captureOk) {
+            exit(3);
         }
         break;
     }
     if ($fullRedraw) {
         $renderStart = microtime(true);
         $screen = render_wall($frame, $cols, $rows, $color, $state, $theme);
+        $captureOk = capture_screen($opts, $screen, $theme);
+        if (!$captureOk) {
+            exit(3);
+        }
         echo "\033[H" . $screen;
         $renderMs = (microtime(true) - $renderStart) * 1000;
     } else {
@@ -144,6 +158,82 @@ function log_wall_error(Throwable $e): void
 {
     $line = sprintf("[%s] %s: %s in %s:%d\n", date('c'), get_class($e), $e->getMessage(), $e->getFile(), $e->getLine());
     @file_put_contents('/tmp/socx-wall.err', $line, FILE_APPEND);
+}
+
+function log_wall_bug(string $message): void
+{
+    @file_put_contents('/tmp/socx-wall.err', '[' . date('c') . '] ' . $message . "\n", FILE_APPEND);
+}
+
+function apply_startup_unicode_defaults(array $opts): void
+{
+    if (getenv('SOCX_DISABLE_ASCII_FALLBACK') === false) {
+        putenv('SOCX_DISABLE_ASCII_FALLBACK=true');
+    }
+    if (getenv('SOCX_FORCE_UNICODE') === false) {
+        putenv('SOCX_FORCE_UNICODE=true');
+    }
+    if (!empty($opts['force_unicode'])) {
+        putenv('SOCX_FORCE_UNICODE=true');
+        putenv('SOCX_UNICODE=true');
+        putenv('SOCX_BORDER_STYLE=unicode');
+        putenv('SOCX_GRAPH_STYLE=unicode');
+    }
+}
+
+function unicode_test_output(): string
+{
+    return "┌──────────── SOCX UNICODE TEST ────────────┐\n"
+        . "│ Box drawing:  ┌─┬─┐ │ └─┴─┘               │\n"
+        . "│ Blocks:       ▁▂▃▄▅▆▇█ ████████ ░░░░      │\n"
+        . "│ Braille:      ⣀⣤⣶⣿                    │\n"
+        . "│ Separator:    ◆                            │\n"
+        . "└───────────────────────────────────────────┘\n";
+}
+
+function capture_screen(array $opts, string $screen, string $theme): bool
+{
+    $path = (string)($opts['capture'] ?? '');
+    if ($path === '') {
+        return true;
+    }
+    $plain = strip_ansi($screen);
+    $ok = @file_put_contents($path, $plain) !== false;
+    if (!$ok) {
+        fwrite(STDERR, "Failed to write capture file: {$path}\n");
+        return false;
+    }
+    if ($theme === 'modern-btop') {
+        return validate_modern_capture($plain, $path);
+    }
+    return true;
+}
+
+function strip_ansi(string $text): string
+{
+    return preg_replace('/\x1B\[[0-?]*[ -\/]*[@-~]/', '', $text) ?? $text;
+}
+
+function validate_modern_capture(string $plain, string $path): bool
+{
+    $forbidden = [
+        '+==',
+        '+===',
+        '====',
+        '| NETWORK',
+        '| PF STATES',
+        '| CPU',
+        '| MEMORY',
+        '| UPS',
+        '| EVENT TICKER',
+    ];
+    foreach ($forbidden as $needle) {
+        if (str_contains($plain, $needle)) {
+            fwrite(STDERR, "Capture validation failed for {$path}: found forbidden ASCII border marker {$needle}\n");
+            return false;
+        }
+    }
+    return true;
 }
 
 function maybe_log_timing(array &$state, int $cols, int $rows, string $theme, array $tickerConfig, bool $fullRedraw, float $renderMs, float $loopMs, array $frame): void
@@ -195,6 +285,9 @@ function parse_args(array $argv): array
         'ticker_dedupe_seconds' => 0,
         'theme' => '',
         'ticker_smooth' => false,
+        'force_unicode' => false,
+        'unicode_test' => false,
+        'capture' => '',
     ];
 
     for ($i = 1; $i < count($argv); $i++) {
@@ -253,6 +346,14 @@ function parse_args(array $argv): array
             $opts['theme'] = (string)substr($arg, 8);
         } elseif ($arg === '--ticker-smooth') {
             $opts['ticker_smooth'] = true;
+        } elseif ($arg === '--force-unicode') {
+            $opts['force_unicode'] = true;
+        } elseif ($arg === '--unicode-test') {
+            $opts['unicode_test'] = true;
+        } elseif ($arg === '--capture' && isset($argv[$i + 1])) {
+            $opts['capture'] = (string)$argv[++$i];
+        } elseif (str_starts_with($arg, '--capture=')) {
+            $opts['capture'] = (string)substr($arg, 10);
         }
     }
 
@@ -264,7 +365,9 @@ function print_help(): void
     echo APP_NAME . ' ' . APP_VERSION . "\n";
     echo "Usage: socx-wall.php [--mode wall] [--theme modern-btop] [--demo] [--once] [--interval SEC] [--hosts FILE]\n";
     echo "       [--ticker-speed slow|normal|fast|turbo] [--ticker-step N] [--ticker-interval-ms N]\n";
+    echo "       [--force-unicode] [--unicode-test] [--capture FILE]\n";
     echo "Demo preview: socx-wall.php --demo --mode wall --theme modern-btop --ticker-smooth --width 160 --height 42\n";
+    echo "Capture preview: socx-wall.php --demo --once --mode wall --theme modern-btop --force-unicode --capture /tmp/socx-frame.txt\n";
 }
 
 function ticker_config(array $opts): array
@@ -702,8 +805,16 @@ function unicode_render_status(): array
     $term = (string)(getenv('TERM') ?: '');
     $tmux = tmux_detected();
     $envUnicode = getenv('SOCX_UNICODE');
+    $forceUnicode = getenv('SOCX_FORCE_UNICODE');
+    $theme = strtolower((string)(getenv('SOCX_THEME') ?: 'modern-btop'));
+    $modern = $theme === 'modern-btop';
     $enabled = true;
-    $reason = 'default modern-btop unicode';
+    $reason = $modern ? 'default modern-btop unicode' : 'default unicode';
+
+    if ($forceUnicode !== false && strtolower(trim((string)$forceUnicode)) !== 'false') {
+        $enabled = true;
+        $reason = 'SOCX_FORCE_UNICODE=' . $forceUnicode;
+    }
 
     if ($envUnicode !== false && $envUnicode !== '') {
         $value = strtolower(trim((string)$envUnicode));
@@ -716,13 +827,15 @@ function unicode_render_status(): array
         }
     }
 
-    if ($enabled && in_array(strtolower($term), ['dumb', 'ascii'], true)) {
+    if ($enabled && strtolower(trim((string)$forceUnicode)) === 'false' && in_array(strtolower($term), ['dumb', 'ascii'], true)) {
         $enabled = false;
         $reason = 'TERM=' . ($term !== '' ? $term : 'empty') . ' does not support Unicode';
     }
 
-    $border = normalize_style((string)(getenv('SOCX_BORDER_STYLE') ?: ($enabled ? 'unicode' : 'ascii')), $enabled);
-    $graph = normalize_style((string)(getenv('SOCX_GRAPH_STYLE') ?: ($enabled ? 'unicode' : 'ascii')), $enabled);
+    $borderEnv = getenv('SOCX_BORDER_STYLE');
+    $graphEnv = getenv('SOCX_GRAPH_STYLE');
+    $border = normalize_style((string)($borderEnv !== false && $borderEnv !== '' ? $borderEnv : 'unicode'), $enabled);
+    $graph = normalize_style((string)($graphEnv !== false && $graphEnv !== '' ? $graphEnv : 'unicode'), $enabled);
 
     return [
         'enabled' => $enabled,
@@ -759,6 +872,17 @@ function modern_border_style(): string
 function modern_graph_style(): string
 {
     return (string)unicode_render_status()['graph'];
+}
+
+function modern_theme_active(): bool
+{
+    return strtolower((string)(getenv('SOCX_THEME') ?: 'modern-btop')) === 'modern-btop';
+}
+
+function ascii_fallback_disabled(): bool
+{
+    $value = getenv('SOCX_DISABLE_ASCII_FALLBACK');
+    return $value === false || strtolower(trim((string)$value)) !== 'false';
 }
 
 function unicode_border_chars(): array
@@ -882,11 +1006,19 @@ function draw_vline(array &$canvas, int $x, int $y, int $height): void
 
 function render_box(array &$canvas, int $x, int $y, int $width, int $height, string $title): void
 {
-    render_box_ascii($canvas, $x, $y, $width, $height, $title);
+    if (modern_border_style() === 'unicode') {
+        render_box_unicode($canvas, $x, $y, $width, $height, $title);
+    } else {
+        render_box_ascii($canvas, $x, $y, $width, $height, $title);
+    }
 }
 
 function render_box_ascii(array &$canvas, int $x, int $y, int $width, int $height, string $title): void
 {
+    if (modern_theme_active() && ascii_fallback_disabled()) {
+        log_wall_bug('BUG: render_box_ascii called in modern-btop');
+        return;
+    }
     if ($width < 4 || $height < 3) {
         return;
     }
@@ -1042,7 +1174,8 @@ function ticker_title(): string
 function modern_header_rows(array $f, array $p): array
 {
     $w = $p['width'];
-    $badges = implode(' | ', $f['badges']);
+    $badgeSep = modern_border_style() === 'unicode' ? ' ◆ ' : ' | ';
+    $badges = implode($badgeSep, $f['badges']);
     $ups = normalize_ups($f['ups'] ?? []);
     $left = sprintf('SOCX MODERN WALL  %s  refresh %s', $f['time'], $f['refresh']);
     $space = max(1, $w - cell_len($left) - cell_len($badges));
