@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.40
+
+- Expanded the Modern Wall Event Feed into a prioritized SOC command ticker.
+- Added command-center event categories for DNSBL, FW, IDS, IPS, VPN, WAN, DHCP, ARP, FLOW, UPS, SYS, DNS, IFACE, and DEVICE style alerts.
+- Prioritized CRIT/HIGH security, outage, VPN, WAN, DNS, and UPS events above routine low-severity DNSBL hits.
+- Added DNSBL spam control so low-priority repeats get `xN` counts and overflow summary lines instead of taking over the feed.
+- Added two-line rotate behavior on taller walls: the highest-priority event stays visible while a secondary event rotates below it.
+- Kept DNSBL wording accurate as `DNSBL hit`/`SINKHOLE`; actual firewall/IPS drops continue to use `DROP`, `REJECT`, or `blocked` wording.
+
 ## v0.1.39
 
 - Tightened the modern-btop wall layout to reclaim rows from the top metric cards and inner padding.

@@ -154,6 +154,8 @@ Set `SOCX_EVENT_FEED_MODE=scroll` to use the older horizontal ticker, or `SOCX_E
 
 DNSBL Event Feed entries describe DNS query-level hits. A line such as `DNSBL hit: discord.com` means the hostname matched DNSBL/sinkhole logic; it does not claim the entire app or service is unreachable. Actual pf firewall blocks are shown separately as `DROP`/`REJECT` style events.
 
+The Modern Wall Event Feed acts as a SOC command ticker. It rotates and prioritizes events such as `[IDS][HIGH]`, `[WAN][WARN]`, `[VPN][INFO]`, `[UPS][INFO]`, `[DHCP][WARN]`, `[ARP][MED]`, `[FLOW][WARN]`, `[DNS][HIGH]`, `[FW][MED]`, and `[DNSBL][LOW]`. Repeated events are deduplicated with `xN`, and routine low-severity DNSBL hits are capped/summarized so outage and security alerts stay visible.
+
 UPS cache settings:
 
 ```sh
