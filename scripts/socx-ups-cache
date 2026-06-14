@@ -1,0 +1,73 @@
+#!/bin/sh
+# Background UPS cache collector for SOCX wall mode.
+
+UPSC=${UPSC:-/usr/local/bin/upsc}
+CACHE=${SOCX_UPS_CACHE_FILE:-/tmp/socx-ups-cache.env}
+INTERVAL_MS=${SOCX_UPS_REFRESH_MS:-500}
+
+sleep_interval() {
+    awk -v ms="$INTERVAL_MS" 'BEGIN { if (ms < 250) ms = 250; printf "%.3f", ms / 1000 }'
+}
+
+write_cache() {
+    tmp="${CACHE}.$$"
+    {
+        printf 'updated=%s\n' "$(date +%s)"
+        printf 'status=%s\n' "$1"
+        printf 'watts=%s\n' "$2"
+        printf 'load=%s\n' "$3"
+        printf 'battery=%s\n' "$4"
+        printf 'runtime=%s\n' "$5"
+        printf 'linev=%s\n' "$6"
+    } > "$tmp"
+    mv "$tmp" "$CACHE"
+}
+
+collect_once() {
+    [ -x "$UPSC" ] || return 1
+    raw=''
+    for ups in $("$UPSC" -l 2>/dev/null); do
+        raw=$("$UPSC" "$ups" 2>/dev/null) || raw=''
+        [ -n "$raw" ] && break
+    done
+    [ -n "$raw" ] || return 1
+
+    status=$(printf '%s\n' "$raw" | awk -F': ' '$1=="ups.status"{print $2; exit}')
+    load=$(printf '%s\n' "$raw" | awk -F': ' '$1=="ups.load"{print $2; exit}')
+    battery=$(printf '%s\n' "$raw" | awk -F': ' '$1=="battery.charge"{print $2; exit}')
+    runtime=$(printf '%s\n' "$raw" | awk -F': ' '$1=="battery.runtime"{print $2; exit}')
+    linev=$(printf '%s\n' "$raw" | awk -F': ' '$1=="input.voltage" || $1=="line.voltage"{print $2; exit}')
+    watts=$(printf '%s\n' "$raw" | awk -F': ' '
+        $1=="ups.realpower"{w=$2}
+        $1=="ups.power" && w==""{w=$2}
+        $1=="output.voltage"{v=$2}
+        $1=="output.current"{c=$2}
+        END {
+            if (w != "") printf "%d", w + 0.5
+            else if (v != "" && c != "") printf "%d", (v * c) + 0.5
+        }')
+
+    [ -n "$watts" ] || return 1
+    [ -n "$status" ] || status='ONLINE'
+    [ -n "$load" ] || load='?'
+    [ -n "$battery" ] || battery='?'
+    [ -n "$runtime" ] || runtime='0'
+    [ -n "$linev" ] || linev='?'
+    write_cache "$status" "$watts" "$load" "$battery" "$runtime" "$linev"
+}
+
+case "${1:-loop}" in
+once)
+    collect_once
+    ;;
+loop)
+    while :; do
+        collect_once || true
+        sleep "$(sleep_interval)"
+    done
+    ;;
+*)
+    echo "Usage: socx-ups-cache [once|loop]" >&2
+    exit 2
+    ;;
+esac

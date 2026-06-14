@@ -2,9 +2,10 @@
 # SOCX: colorized SOC console dashboard.
 IFLAN=ix0; IFWAN=ix1
 MODE="${SOCX_MODE:-wall}"
+THEME="${SOCX_THEME:-modern-btop}"
 TOPR="pfbtop --interval 0.5 --top 24"
 if [ "$MODE" = "wall" ]; then
-    TOPR="/bin/sh -c 'while :; do /usr/local/sbin/socx-wall --mode wall --interval 0.5 2>>/tmp/socx-wall.err; printf \"\\033[0m\\nSOCX wall renderer exited; restarting in 3s\\n\"; sleep 3; done'"
+    TOPR="/bin/sh -c 'while :; do /usr/local/sbin/socx-wall --mode wall --theme \"$THEME\" --ticker-smooth --interval 0.5 2>>/tmp/socx-wall.err; printf \"\\033[0m\\nSOCX wall renderer exited; restarting in 3s\\n\"; sleep 3; done'"
 fi
 ZK=/var/spool/zeek/zeek
 SURI=$(ls -d /var/log/suricata/suricata_* 2>/dev/null | head -1)
@@ -13,23 +14,41 @@ DNSBL=/var/log/pfblockerng/dnsbl.log
 [ -f "$DNSBL" ] || DNSBL=/var/log/pfblockerng/dns_reply.log
 
 export TMUX_TMPDIR=/tmp
+export SOCX_THEME="${SOCX_THEME:-modern-btop}"
+export SOCX_TMUX_MODE="${SOCX_TMUX_MODE:-auto}"
+export SOCX_FORCE_256COLOR="${SOCX_FORCE_256COLOR:-true}"
+export SOCX_UPS_ENABLED="${SOCX_UPS_ENABLED:-true}"
+export SOCX_UPS_SOURCE="${SOCX_UPS_SOURCE:-nut}"
+export SOCX_UPS_REFRESH_MS="${SOCX_UPS_REFRESH_MS:-500}"
+export SOCX_UPS_HISTORY_SECONDS="${SOCX_UPS_HISTORY_SECONDS:-60}"
+export SOCX_UPS_SHOW_SPARKLINE="${SOCX_UPS_SHOW_SPARKLINE:-true}"
 
 # WALL MODE ticker controls:
 #   SOCX_TICKER_SPEED=slow|normal|fast|turbo
 #   SOCX_TICKER_STEP=1|2|3|4|6
-#   SOCX_TICKER_INTERVAL_MS=25
+#   SOCX_TICKER_INTERVAL_MS=75
 #   SOCX_TICKER_MAX_EVENTS=25
 #   SOCX_TICKER_DEDUPE_SECONDS=10
 export SOCX_TICKER_SPEED="${SOCX_TICKER_SPEED:-fast}"
 export SOCX_TICKER_STEP="${SOCX_TICKER_STEP:-1}"
-export SOCX_TICKER_INTERVAL_MS="${SOCX_TICKER_INTERVAL_MS:-25}"
+export SOCX_TICKER_INTERVAL_MS="${SOCX_TICKER_INTERVAL_MS:-75}"
 export SOCX_TICKER_MAX_EVENTS="${SOCX_TICKER_MAX_EVENTS:-25}"
 export SOCX_TICKER_DEDUPE_SECONDS="${SOCX_TICKER_DEDUPE_SECONDS:-10}"
 /sbin/conscontrol mute on 2>/dev/null
 mesg n 2>/dev/null || true
 chmod go-w /dev/ttyv0 /dev/pts/* 2>/dev/null || true
+if [ "$SOCX_FORCE_256COLOR" = "true" ] && command -v tput >/dev/null 2>&1; then
+    export TERM="${TERM:-tmux-256color}"
+fi
 
 tmux kill-session -t socx 2>/dev/null
+if [ "$MODE" = "wall" ] && [ "$SOCX_UPS_ENABLED" = "true" ] && command -v /usr/local/sbin/socx-ups-cache >/dev/null 2>&1; then
+    if [ -f /tmp/socx-ups-cache.pid ]; then
+        kill "$(cat /tmp/socx-ups-cache.pid)" 2>/dev/null || true
+    fi
+    /usr/local/sbin/socx-ups-cache loop >/tmp/socx-ups-cache.log 2>&1 &
+    echo $! >/tmp/socx-ups-cache.pid
+fi
 
 # W1 NETX: pfSense cockpit top, color iftop/tcpdump clones underneath.
 tmux new-session -d -s socx -n NETX "$TOPR"

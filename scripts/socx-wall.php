@@ -28,6 +28,7 @@ stream_set_write_buffer(STDOUT, 0);
 $color = !$opts['no_color'] && (getenv('NO_COLOR') === false || getenv('NO_COLOR') === '');
 $interval = max(0.5, (float)$opts['interval']);
 $tickerConfig = ticker_config($opts);
+$theme = wall_theme($opts);
 $renderInterval = min($interval, $tickerConfig['interval_ms'] / 1000);
 $renderInterval = max(0.025, $renderInterval);
 $once = (bool)$opts['once'];
@@ -48,6 +49,16 @@ $state = [
     'last_events' => [],
     'last_events_at' => 0.0,
     'events_fresh' => false,
+    'wan_history' => [],
+    'lan_history' => [],
+    'pf_history' => [],
+    'ups_history' => [],
+    'ups_cache' => [],
+    'debug_timing' => getenv('SOCX_DEBUG_TIMING') === 'true',
+    'tmux_mode' => tmux_detected(),
+    'term' => getenv('TERM') ?: '',
+    'theme' => $theme,
+    'last_debug_at' => 0.0,
     'last_frame' => null,
     'next_frame_at' => 0.0,
     'cols' => 0,
@@ -64,6 +75,7 @@ if (!$once) {
 
 do {
     $now = microtime(true);
+    $loopStart = $now;
     $fullRedraw = false;
     try {
         if ((int)$state['cols'] <= 0 || $now >= (float)$state['next_size_at']) {
@@ -105,7 +117,7 @@ do {
     $frame['ticker_hold_text'] = (string)$state['ticker_hold_text'];
     $frame['ticker_now'] = $now;
     if ($once) {
-        $screen = render_wall($frame, $cols, $rows, $color, $state);
+        $screen = render_wall($frame, $cols, $rows, $color, $state, $theme);
         echo $screen;
         if (!str_ends_with($screen, "\n")) {
             echo "\n";
@@ -113,11 +125,16 @@ do {
         break;
     }
     if ($fullRedraw) {
-        $screen = render_wall($frame, $cols, $rows, $color, $state);
+        $renderStart = microtime(true);
+        $screen = render_wall($frame, $cols, $rows, $color, $state, $theme);
         echo "\033[H" . $screen;
+        $renderMs = (microtime(true) - $renderStart) * 1000;
     } else {
-        echo render_ticker_update($frame, $cols, $rows, $color);
+        $renderStart = microtime(true);
+        echo render_ticker_update($frame, $cols, $rows, $color, $theme);
+        $renderMs = (microtime(true) - $renderStart) * 1000;
     }
+    maybe_log_timing($state, $cols, $rows, $theme, $tickerConfig, $fullRedraw, $renderMs, (microtime(true) - $loopStart) * 1000, $frame);
     flush();
     fflush(STDOUT);
     usleep((int)($renderInterval * 1000000));
@@ -127,6 +144,36 @@ function log_wall_error(Throwable $e): void
 {
     $line = sprintf("[%s] %s: %s in %s:%d\n", date('c'), get_class($e), $e->getMessage(), $e->getFile(), $e->getLine());
     @file_put_contents('/tmp/socx-wall.err', $line, FILE_APPEND);
+}
+
+function maybe_log_timing(array &$state, int $cols, int $rows, string $theme, array $tickerConfig, bool $fullRedraw, float $renderMs, float $loopMs, array $frame): void
+{
+    if (empty($state['debug_timing'])) {
+        return;
+    }
+    $now = microtime(true);
+    if (($now - (float)($state['last_debug_at'] ?? 0.0)) < 1.0) {
+        return;
+    }
+    $state['last_debug_at'] = $now;
+    $ups = normalize_ups($frame['ups'] ?? []);
+    $age = isset($ups['updated_age']) && is_numeric($ups['updated_age']) ? sprintf('%.2fs', (float)$ups['updated_age']) : '?';
+    $line = sprintf(
+        "[%s] size=%dx%d tmux=%s term=%s theme=%s redraw=%s ticker=%dms/%dcol render=%.2fms loop=%.2fms ups_age=%s\n",
+        date('c'),
+        $cols,
+        $rows,
+        !empty($state['tmux_mode']) ? 'yes' : 'no',
+        (string)($state['term'] ?? ''),
+        $theme,
+        $fullRedraw ? 'full' : 'ticker',
+        (int)$tickerConfig['interval_ms'],
+        (int)$tickerConfig['step'],
+        $renderMs,
+        $loopMs,
+        $age
+    );
+    @file_put_contents('/tmp/socx-wall-timing.log', $line, FILE_APPEND);
 }
 
 function parse_args(array $argv): array
@@ -146,6 +193,8 @@ function parse_args(array $argv): array
         'ticker_interval_ms' => 0,
         'ticker_max_events' => 0,
         'ticker_dedupe_seconds' => 0,
+        'theme' => '',
+        'ticker_smooth' => false,
     ];
 
     for ($i = 1; $i < count($argv); $i++) {
@@ -198,6 +247,12 @@ function parse_args(array $argv): array
             $opts['ticker_dedupe_seconds'] = (int)$argv[++$i];
         } elseif (str_starts_with($arg, '--ticker-dedupe-seconds=')) {
             $opts['ticker_dedupe_seconds'] = (int)substr($arg, 24);
+        } elseif ($arg === '--theme' && isset($argv[$i + 1])) {
+            $opts['theme'] = (string)$argv[++$i];
+        } elseif (str_starts_with($arg, '--theme=')) {
+            $opts['theme'] = (string)substr($arg, 8);
+        } elseif ($arg === '--ticker-smooth') {
+            $opts['ticker_smooth'] = true;
         }
     }
 
@@ -207,9 +262,9 @@ function parse_args(array $argv): array
 function print_help(): void
 {
     echo APP_NAME . ' ' . APP_VERSION . "\n";
-    echo "Usage: socx-wall.php [--mode wall] [--demo] [--once] [--interval SEC] [--hosts FILE]\n";
+    echo "Usage: socx-wall.php [--mode wall] [--theme modern-btop] [--demo] [--once] [--interval SEC] [--hosts FILE]\n";
     echo "       [--ticker-speed slow|normal|fast|turbo] [--ticker-step N] [--ticker-interval-ms N]\n";
-    echo "Demo preview: socx-wall.php --demo --mode wall --ticker-speed fast --width 140 --height 36\n";
+    echo "Demo preview: socx-wall.php --demo --mode wall --theme modern-btop --ticker-smooth --width 160 --height 42\n";
 }
 
 function ticker_config(array $opts): array
@@ -227,7 +282,11 @@ function ticker_config(array $opts): array
     $step = max(1, min(12, $step));
 
     $envInterval = getenv('SOCX_TICKER_INTERVAL_MS');
-    $intervalMs = (int)$opts['ticker_interval_ms'] > 0 ? (int)$opts['ticker_interval_ms'] : (is_numeric($envInterval) ? (int)$envInterval : 25);
+    $defaultInterval = ((bool)($opts['ticker_smooth'] ?? false) || getenv('SOCX_TICKER_SMOOTH') === 'true') ? 75 : 25;
+    $intervalMs = (int)$opts['ticker_interval_ms'] > 0 ? (int)$opts['ticker_interval_ms'] : (is_numeric($envInterval) ? (int)$envInterval : $defaultInterval);
+    if (tmux_detected()) {
+        $intervalMs = max(50, $intervalMs);
+    }
     $intervalMs = max(25, min(500, $intervalMs));
 
     $envMax = getenv('SOCX_TICKER_MAX_EVENTS');
@@ -246,6 +305,17 @@ function ticker_config(array $opts): array
         'dedupe_seconds' => $dedupe,
         'separator' => '   ◆   ',
     ];
+}
+
+function wall_theme(array $opts): string
+{
+    $theme = strtolower((string)($opts['theme'] ?: getenv('SOCX_THEME') ?: 'modern-btop'));
+    return in_array($theme, ['modern-btop', 'classic'], true) ? $theme : 'modern-btop';
+}
+
+function tmux_detected(): bool
+{
+    return (getenv('TMUX') !== false && getenv('TMUX') !== '') || (getenv('TMUX_PANE') !== false && getenv('TMUX_PANE') !== '');
 }
 
 function run_cmd(string $cmd): string
@@ -338,7 +408,6 @@ function collect_live_frame(array &$state, array $hosts): array
     $procs = parse_processes(run_cmd('/bin/ps auxww'), 12);
     $temp = parse_temp(run_cmd("/sbin/sysctl -a | /usr/bin/grep -E 'dev.cpu\\.[0-9]+\\.temperature|hw.acpi.thermal.*temperature' | /usr/bin/head -8"));
     $freq = trim(run_cmd('/sbin/sysctl -n dev.cpu.0.freq'));
-    $ups = collect_ups_status();
     $events = collect_events_cached($state, $hosts, $now);
     $flows = flows_from_events($events);
     $packets = packets_from_events($events);
@@ -348,6 +417,8 @@ function collect_live_frame(array &$state, array $hosts): array
     $ifwan = getenv('SOCX_IFWAN') ?: 'ix1';
     $wan = $net[$ifwan] ?? first_net($net);
     $lan = $net[$iflan] ?? first_net($net);
+    $ups = collect_ups_metrics($state, $now);
+    update_metric_histories($state, $now, $wan, $lan, $pf);
 
     return [
         'time' => date('H:i:s'),
@@ -356,6 +427,9 @@ function collect_live_frame(array &$state, array $hosts): array
         'badges' => health_badges($ups),
         'wan' => ['name' => $ifwan, 'down' => rate_text($wan['rx'] ?? null), 'up' => rate_text($wan['tx'] ?? null), 'link' => 'DHCP OK', 'rtt' => 'RTT --', 'loss' => 'LOSS --'],
         'lan' => ['name' => $iflan, 'down' => rate_text($lan['rx'] ?? null), 'up' => rate_text($lan['tx'] ?? null)],
+        'wan_history' => history_values($state['wan_history']),
+        'lan_history' => history_values($state['lan_history']),
+        'pf_history' => history_values($state['pf_history']),
         'pf' => $pf,
         'mem' => $mem,
         'cpu' => [
@@ -378,6 +452,11 @@ function collect_live_frame(array &$state, array $hosts): array
 
 function demo_frame(array $hosts, array $state = []): array
 {
+    $tick = (int)($state['tick'] ?? 0);
+    $upsWatts = 420 + (int)(sin($tick / 4) * 80);
+    if (($tick % 36) > 22) {
+        $upsWatts = 900 + (($tick % 6) * 50);
+    }
     $hosts = $hosts + [
         '192.168.1.161' => 'JupiterLXI',
         '192.168.1.102' => 'Enceladus',
@@ -391,6 +470,9 @@ function demo_frame(array $hosts, array $state = []): array
         'badges' => ['WAN UP', 'VPN UP', 'DNS OK', 'UPS ONLINE'],
         'wan' => ['name' => 'ix1', 'down' => '3.50K/s', 'up' => '9.13K/s', 'link' => '2.5G DHCP OK', 'rtt' => 'RTT 9ms', 'loss' => 'LOSS 0%'],
         'lan' => ['name' => 'ix0', 'down' => '4.50K/s', 'up' => '7.79K/s'],
+        'wan_history' => demo_wave($tick, 28, 12, 4),
+        'lan_history' => demo_wave($tick + 5, 28, 18, 6),
+        'pf_history' => demo_wave($tick + 11, 28, 1600, 300),
         'pf' => ['states' => '1264', 'searches_rate' => '9579/s', 'passed' => 405900000, 'blocked' => 137800],
         'mem' => ['total' => parse_size('31.7G'), 'used' => parse_size('24.6G'), 'free' => parse_size('7.1G'), 'arc_total' => parse_size('17.0G'), 'used_pct' => 78],
         'cpu' => [
@@ -405,8 +487,20 @@ function demo_frame(array $hosts, array $state = []): array
             'processes' => '152 processes: 1 running, 151 sleeping',
             'uptime' => '1+00:42:01',
         ],
-        'tick' => (int)($state['tick'] ?? 0),
-        'ups' => 'UPS 540W 0.5s 27% batt 100% 40m',
+        'tick' => $tick,
+        'ups' => [
+            'online' => true,
+            'status' => 'ONLINE',
+            'watts' => $upsWatts,
+            'load' => max(1, min(100, (int)round($upsWatts / 22))),
+            'battery' => 100,
+            'runtime' => '40m',
+            'linev' => '120.1',
+            'updated_age' => 0.1,
+            'peak60' => 1200,
+            'avg60' => 603,
+            'history' => demo_wave($tick, 40, 620, 300),
+        ],
         'procs' => [
             ['pid' => '60684', 'name' => 'tmux', 'user' => 'root', 'rss' => parse_size('572M'), 'cpu' => 3.1, 'cmd' => 'tmux socx wall'],
             ['pid' => '8809', 'name' => 'ntopng', 'user' => 'ntopng', 'rss' => parse_size('540M'), 'cpu' => 2.9, 'cmd' => 'ntopng flow telemetry'],
@@ -446,7 +540,15 @@ function error_frame(Throwable $e): array
     return $frame;
 }
 
-function render_wall(array $frame, int $cols, int $rows, bool $color, array &$state): string
+function render_wall(array $frame, int $cols, int $rows, bool $color, array &$state, string $theme = 'classic'): string
+{
+    if ($theme === 'modern-btop') {
+        return render_modern_btop_wall($frame, $cols, $rows, $color, $state);
+    }
+    return render_classic_wall($frame, $cols, $rows, $color, $state);
+}
+
+function render_classic_wall(array $frame, int $cols, int $rows, bool $color, array &$state): string
 {
     $canvas = make_canvas($cols, $rows);
     $layout = wall_layout($cols, $rows);
@@ -473,17 +575,83 @@ function render_wall(array $frame, int $cols, int $rows, bool $color, array &$st
     return implode("\n", $lines);
 }
 
-function render_ticker_update(array $frame, int $cols, int $rows, bool $color): string
+function render_modern_btop_wall(array $frame, int $cols, int $rows, bool $color, array &$state): string
+{
+    $canvas = make_canvas($cols, $rows);
+    $layout = modern_btop_layout($cols, $rows);
+
+    $cardWidths = split_widths($cols, 5);
+    $x = 0;
+    $cards = [];
+    foreach (['NETWORK', 'PF STATES', 'CPU', 'MEMORY', 'UPS'] as $idx => $title) {
+        $cards[] = panel_obj($x, $layout['cards_y'], $cardWidths[$idx], $layout['cards_h'], $title, match ($title) {
+            'NETWORK' => static fn(array $f, array $p): array => modern_network_rows($f, $p),
+            'PF STATES' => static fn(array $f, array $p): array => modern_pf_rows($f, $p),
+            'CPU' => static fn(array $f, array $p): array => modern_cpu_card_rows($f, $p),
+            'MEMORY' => static fn(array $f, array $p): array => modern_memory_rows($f, $p),
+            default => static fn(array $f, array $p): array => modern_ups_rows($f, $p),
+        });
+        $x += $cardWidths[$idx] - 1;
+    }
+
+    $panels = [
+        panel_obj(0, 0, $cols, $layout['header_h'], 'SOCX MODERN WALL', static fn(array $f, array $p): array => modern_header_rows($f, $p)),
+        ...$cards,
+        panel_obj(0, $layout['middle_y'], $layout['left_w'], $layout['middle_h'], 'PROCESS TREE / FILTER', static fn(array $f, array $p): array => modern_process_rows($f, $p)),
+        panel_obj($layout['right_x'], $layout['middle_y'], $layout['right_w'], $layout['middle_h'], 'NETWORK FLOWS / IFTOPX', static fn(array $f, array $p): array => modern_flow_rows($f, $p)),
+        panel_obj(0, $layout['packets_y'], $cols, $layout['packets_h'], 'LIVE PACKETS', static fn(array $f, array $p): array => modern_packet_rows($f, $p)),
+        panel_obj(0, $layout['ticker_y'], $cols, $layout['ticker_h'], 'EVENT TICKER', static fn(array $f, array $p): array => ticker_rows($f, $p)),
+    ];
+
+    foreach ($panels as $panel) {
+        draw_panel($canvas, $panel, $frame);
+    }
+
+    $lines = [];
+    foreach ($canvas as $line) {
+        $lines[] = colorize_line($line, $color);
+    }
+    return implode("\n", $lines);
+}
+
+function render_ticker_update(array $frame, int $cols, int $rows, bool $color, string $theme = 'classic'): string
 {
     if ($cols < 4 || $rows < 3) {
         return '';
     }
-    $layout = wall_layout($cols, $rows);
+    $layout = $theme === 'modern-btop' ? modern_btop_layout($cols, $rows) : wall_layout($cols, $rows);
     $panel = panel_obj(0, $layout['ticker_y'], $cols, $layout['ticker_h'], 'EVENT TICKER', static fn(array $f, array $p): array => ticker_rows($f, $p));
     $ticker = ticker_rows($frame, $panel)[0] ?? '';
     $line = '|' . pad_or_clip($ticker, $cols - 2) . '|';
     $ansiRow = $layout['ticker_y'] + 2;
     return "\033[" . $ansiRow . ";1H" . colorize_line($line, $color);
+}
+
+function modern_btop_layout(int $cols, int $rows): array
+{
+    $headerH = 3;
+    $cardsH = $rows >= 38 ? 9 : 8;
+    $tickerH = 3;
+    $packetsH = max(6, min(10, intdiv($rows, 4)));
+    $middleY = $headerH + $cardsH;
+    $packetsY = max($middleY + 5, $rows - $tickerH - $packetsH);
+    $middleH = max(5, $packetsY - $middleY);
+    $mid = intdiv($cols, 2);
+
+    return [
+        'header_h' => $headerH,
+        'cards_y' => $headerH,
+        'cards_h' => $cardsH,
+        'middle_y' => $middleY,
+        'middle_h' => $middleH,
+        'packets_y' => $packetsY,
+        'packets_h' => $packetsH,
+        'ticker_y' => $rows - $tickerH,
+        'ticker_h' => $tickerH,
+        'left_w' => $mid + 1,
+        'right_x' => $mid,
+        'right_w' => $cols - $mid,
+    ];
 }
 
 function wall_layout(int $cols, int $rows): array
@@ -621,6 +789,188 @@ function draw_panel(array &$canvas, array $panel, array $frame): void
     }
 }
 
+function modern_header_rows(array $f, array $p): array
+{
+    $badges = implode(' | ', $f['badges']);
+    $left = sprintf('SOCX MODERN WALL | %s | refresh %s | uptime %s', $f['time'], $f['refresh'], $f['cpu']['uptime'] ?? '?');
+    $space = max(1, ($p['width'] - 2) - strlen($left) - strlen($badges));
+    return [$left . str_repeat(' ', $space) . $badges];
+}
+
+function modern_network_rows(array $f, array $p): array
+{
+    $w = $p['width'] - 2;
+    if ($w < 22) {
+        return [
+            sprintf('WAN d %s', compact_rate($f['wan']['down'])),
+            sprintf('WAN u %s', compact_rate($f['wan']['up'])),
+            sprintf('LAN d %s', compact_rate($f['lan']['down'])),
+            sprintf('LAN u %s', compact_rate($f['lan']['up'])),
+            sparkline($f['wan_history'] ?? [], max(6, $w - 2)),
+        ];
+    }
+    return [
+        sprintf('WAN %-9s v  %-9s ^', $f['wan']['down'], $f['wan']['up']),
+        sprintf('LAN %-9s v  %-9s ^', $f['lan']['down'], $f['lan']['up']),
+        'WAN ' . sparkline($f['wan_history'] ?? [], max(8, $w - 6)),
+        'LAN ' . sparkline($f['lan_history'] ?? [], max(8, $w - 6)),
+        truncate_text(($f['wan']['link'] ?? '') . '  ' . ($f['wan']['rtt'] ?? ''), $w),
+    ];
+}
+
+function modern_pf_rows(array $f, array $p): array
+{
+    $pf = $f['pf'];
+    $w = $p['width'] - 2;
+    if ($w < 22) {
+        return [
+            sprintf('st %s', $pf['states'] ?? '?'),
+            sprintf('sr %s', compact_rate($pf['searches_rate'] ?? '?')),
+            sprintf('blk %s', compact_num((int)($pf['blocked'] ?? 0))),
+            sprintf('pass %s', compact_num((int)($pf['passed'] ?? 0))),
+            sparkline($f['pf_history'] ?? [], max(6, $w - 2)),
+        ];
+    }
+    return [
+        sprintf('states  %s', $pf['states'] ?? '?'),
+        sprintf('search  %s', $pf['searches_rate'] ?? '?'),
+        sprintf('blocked %s', compact_num((int)($pf['blocked'] ?? 0))),
+        sprintf('passed  %s', compact_num((int)($pf['passed'] ?? 0))),
+        sparkline($f['pf_history'] ?? [], max(8, $w - 2)),
+    ];
+}
+
+function modern_cpu_card_rows(array $f, array $p): array
+{
+    $cpu = $f['cpu'];
+    $w = $p['width'] - 2;
+    if ($w < 22) {
+        $rows = [sprintf('%d%% %s', $cpu['used'], str_replace('GHz', 'G', $cpu['freq']))];
+        foreach (array_slice($cpu['cores'], 0, max(1, $p['height'] - 4)) as $core) {
+            $used = (int)round((float)$core['used']);
+            $rows[] = sprintf('C%s %s %d%%', $core['id'], bar($used, 4), $used);
+        }
+        $rows[] = 'ld ' . implode(' ', array_slice($cpu['load'], 0, 2));
+        return $rows;
+    }
+    $barW = max(6, min(14, $w - 11));
+    $rows = [sprintf('%3d%%  %-7s  %s', $cpu['used'], $cpu['freq'], $cpu['temp'])];
+    foreach (array_slice($cpu['cores'], 0, max(1, $p['height'] - 4)) as $core) {
+        $used = (int)round((float)$core['used']);
+        $rows[] = sprintf('C%-2s %s %3d%%', $core['id'], bar($used, $barW), $used);
+    }
+    $rows[] = 'load ' . implode(' ', $cpu['load']);
+    return $rows;
+}
+
+function modern_memory_rows(array $f, array $p): array
+{
+    $mem = $f['mem'];
+    $w = $p['width'] - 2;
+    $barW = max(6, min(16, $w - 21));
+    $arcPct = percent((int)$mem['arc_total'], max(1, (int)$mem['total']));
+    if ($w < 22) {
+        return [
+            sprintf('RAM %d%%', (int)$mem['used_pct']),
+            sprintf('%s/%s', bytes_text((int)$mem['used']), bytes_text((int)$mem['total'])),
+            sprintf('ARC %d%%', $arcPct),
+            sprintf('%s used', bytes_text((int)$mem['arc_total'])),
+            'free ' . bytes_text((int)$mem['free']),
+        ];
+    }
+    return [
+        sprintf('RAM %s / %s', bytes_text((int)$mem['used']), bytes_text((int)$mem['total'])),
+        sprintf('%3d%% %s', (int)$mem['used_pct'], bar((int)$mem['used_pct'], $barW)),
+        sprintf('ARC %s / %s', bytes_text((int)$mem['arc_total']), bytes_text((int)$mem['total'])),
+        sprintf('%3d%% %s', $arcPct, bar($arcPct, $barW)),
+        'free ' . bytes_text((int)$mem['free']),
+    ];
+}
+
+function modern_ups_rows(array $f, array $p): array
+{
+    $ups = normalize_ups($f['ups'] ?? []);
+    $w = $p['width'] - 2;
+    if (!$ups['online']) {
+        return ['UPS unavailable', 'collector waiting', '', sparkline([], max(8, $w))];
+    }
+    if ($w < 22) {
+        return [
+            sprintf('%s W', $ups['watts']),
+            sprintf('load %s%%', $ups['load']),
+            sprintf('batt %s%%', $ups['battery']),
+            sprintf('run %s', $ups['runtime']),
+            sprintf('pk %s av %s', $ups['peak60'], $ups['avg60']),
+        ];
+    }
+    return [
+        sprintf('%s W', $ups['watts']),
+        sprintf('load %s%%  batt %s%%', $ups['load'], $ups['battery']),
+        sprintf('run %s  line %sV', $ups['runtime'], $ups['linev']),
+        sprintf('peak60 %sW  avg60 %sW', $ups['peak60'], $ups['avg60']),
+        sparkline($ups['history'], max(8, $w - 2)),
+    ];
+}
+
+function modern_process_rows(array $f, array $p): array
+{
+    $w = $p['width'] - 2;
+    $cmdW = max(10, $w - 35);
+    $rows = [sprintf('%-6s %-8s %-7s %5s %s', 'PID', 'USER', 'MEM', 'CPU%', 'COMMAND')];
+    foreach (array_slice($f['procs'], 0, max(1, $p['height'] - 3)) as $proc) {
+        $rows[] = sprintf('%-6s %-8s %-7s %5.1f %s',
+            truncate_text((string)$proc['pid'], 6),
+            truncate_text((string)$proc['user'], 8),
+            bytes_text((int)$proc['rss']),
+            (float)$proc['cpu'],
+            truncate_text((string)$proc['cmd'], $cmdW));
+    }
+    return $rows;
+}
+
+function modern_flow_rows(array $f, array $p): array
+{
+    $w = $p['width'] - 2;
+    if ($w < 66) {
+        $rows = ['# flow                                      up/down'];
+        $max = max(1, intdiv($p['height'] - 3, 2));
+        foreach (array_slice($f['flows'], 0, $max) as $idx => $flow) {
+            $flowText = truncate_text($flow['src'] . ' -> ' . $flow['dst'], max(12, $w - 4));
+            $rows[] = sprintf('%02d %s', $idx + 1, $flowText);
+            $rows[] = sprintf('   %-7s %-7s %-8s %s', truncate_text($flow['up'], 7), truncate_text($flow['down'], 7), truncate_text($flow['class'], 8), truncate_text($flow['graph'], 10));
+        }
+        return $rows;
+    }
+    $srcW = max(10, min(22, intdiv($w, 4)));
+    $dstW = max(10, $w - $srcW - 45);
+    $rows = [sprintf('%-2s %-*s -> %-*s %-7s %-7s %-8s %s', '#', $srcW, 'SOURCE', $dstW, 'DESTINATION', 'UP', 'DOWN', 'CLASS', 'GRAPH')];
+    foreach (array_slice($f['flows'], 0, max(1, $p['height'] - 3)) as $idx => $flow) {
+        $rows[] = sprintf('%02d %-*s -> %-*s %-7s %-7s %-8s %s',
+            $idx + 1,
+            $srcW, truncate_text($flow['src'], $srcW),
+            $dstW, truncate_text($flow['dst'], $dstW),
+            truncate_text($flow['up'], 7),
+            truncate_text($flow['down'], 7),
+            truncate_text($flow['class'], 8),
+            truncate_text($flow['graph'], 10));
+    }
+    return $rows;
+}
+
+function modern_packet_rows(array $f, array $p): array
+{
+    $w = $p['width'] - 2;
+    $flowW = max(24, $w - 45);
+    $rows = [sprintf('%-8s %-5s %-4s %-*s %-7s %-5s %-7s', 'TIME', 'PROTO', 'DIR', $flowW, 'SOURCE -> DESTINATION', 'SVC', 'SIZE', 'VERDICT')];
+    foreach (array_slice($f['packets'], 0, max(1, $p['height'] - 3)) as $pkt) {
+        $flow = $pkt['src'] . ' -> ' . $pkt['dst'];
+        $rows[] = sprintf('%-8s %-5s %-4s %-*s %-7s %-5s %-7s',
+            $pkt['time'], $pkt['proto'], $pkt['dir'], $flowW, truncate_text($flow, $flowW),
+            truncate_text($pkt['service'], 7), truncate_text($pkt['size'], 5), $pkt['verdict']);
+    }
+    return $rows;
+}
+
 function header_rows(array $f, array $p): array
 {
     $badges = $f['badges'];
@@ -682,7 +1032,7 @@ function cpu_rows(array $f, array $p): array
 function live_rows(array $f, array $p): array
 {
     $ram = $f['mem'];
-    $ups = $f['ups'] ?: 'UPS --';
+    $ups = ups_summary($f['ups'] ?? []);
     return [
         sprintf('RAM %s/%s  ARC %s  free %s', bytes_text((int)$ram['used']), bytes_text((int)$ram['total']), bytes_text((int)$ram['arc_total']), bytes_text((int)$ram['free'])),
         sprintf('WAN D %-8s U %-8s | LAN D %-8s U %-8s', $f['wan']['down'], $f['wan']['up'], $f['lan']['down'], $f['lan']['up']),
@@ -1001,7 +1351,51 @@ function parse_temp(string $raw): string
     return $max === null ? '--C' : (int)round($max) . 'C';
 }
 
-function collect_ups_status(): string
+function update_metric_histories(array &$state, float $now, array $wan, array $lan, array $pf): void
+{
+    push_history($state['wan_history'], $now, (float)(($wan['rx'] ?? 0) + ($wan['tx'] ?? 0)), 60.0);
+    push_history($state['lan_history'], $now, (float)(($lan['rx'] ?? 0) + ($lan['tx'] ?? 0)), 60.0);
+    push_history($state['pf_history'], $now, (float)pf_states_number($pf), 60.0);
+}
+
+function pf_states_number(array $pf): int
+{
+    $states = (string)($pf['states'] ?? '0');
+    return (int)preg_replace('/\D/', '', $states);
+}
+
+function collect_ups_metrics(array &$state, float $now): array
+{
+    $cacheFile = getenv('SOCX_UPS_CACHE_FILE') ?: '/tmp/socx-ups-cache.env';
+    $raw = is_readable($cacheFile) ? parse_env_file($cacheFile) : [];
+    if (!$raw && getenv('SOCX_UPS_DIRECT_FALLBACK') === 'true') {
+        $raw = parse_ups_status_line(collect_ups_status_line());
+    }
+    $watts = isset($raw['watts']) && is_numeric($raw['watts']) ? (int)round((float)$raw['watts']) : null;
+    if ($watts !== null) {
+        push_history($state['ups_history'], $now, (float)$watts, (float)(getenv('SOCX_UPS_HISTORY_SECONDS') ?: 60));
+    }
+    $history = history_values($state['ups_history']);
+    $avg = $history ? (int)round(array_sum($history) / count($history)) : ($watts ?? 0);
+    $peak = $history ? (int)round(max($history)) : ($watts ?? 0);
+    $updated = isset($raw['updated']) && is_numeric($raw['updated']) ? max(0.0, $now - (float)$raw['updated']) : null;
+
+    return [
+        'online' => $watts !== null,
+        'status' => (string)($raw['status'] ?? ($watts !== null ? 'ONLINE' : '')),
+        'watts' => $watts ?? '?',
+        'load' => isset($raw['load']) && is_numeric($raw['load']) ? (string)(int)round((float)$raw['load']) : '?',
+        'battery' => isset($raw['battery']) && is_numeric($raw['battery']) ? (string)(int)round((float)$raw['battery']) : '?',
+        'runtime' => isset($raw['runtime']) && is_numeric($raw['runtime']) ? format_runtime((float)$raw['runtime']) : '?',
+        'linev' => isset($raw['linev']) && is_numeric($raw['linev']) ? sprintf('%.1f', (float)$raw['linev']) : '?',
+        'updated_age' => $updated,
+        'peak60' => $peak,
+        'avg60' => $avg,
+        'history' => $history,
+    ];
+}
+
+function collect_ups_status_line(): string
 {
     $line = trim(run_cmd('/bin/sh -c "SOCX_UPS_TINY=1 /usr/local/sbin/socx-ups-status"'));
     if ($line === '' || stripos($line, 'unavailable') !== false) {
@@ -1013,9 +1407,47 @@ function collect_ups_status(): string
     return $line;
 }
 
-function health_badges(string $ups): array
+function parse_ups_status_line(string $line): array
 {
-    return ['WAN UP', 'VPN UP', 'DNS OK', $ups !== '' ? 'UPS ONLINE' : 'UPS --'];
+    if ($line === '') {
+        return [];
+    }
+    $raw = [];
+    if (preg_match('/UPS\s+([0-9.]+)W/i', $line, $m)) {
+        $raw['watts'] = $m[1];
+    }
+    if (preg_match('/\s([0-9.]+)%\s+batt\s+([0-9.]+)%/i', $line, $m)) {
+        $raw['load'] = $m[1];
+        $raw['battery'] = $m[2];
+    }
+    if (preg_match('/\s([0-9]+)m\b/i', $line, $m)) {
+        $raw['runtime'] = (string)((int)$m[1] * 60);
+    }
+    $raw['status'] = 'ONLINE';
+    $raw['updated'] = (string)microtime(true);
+    return $raw;
+}
+
+function parse_env_file(string $file): array
+{
+    $rows = [];
+    foreach (file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+        if (!str_contains($line, '=')) {
+            continue;
+        }
+        [$key, $value] = explode('=', $line, 2);
+        $key = strtolower(trim($key));
+        $value = trim($value, " \t\n\r\0\x0B'\"");
+        if ($key !== '') {
+            $rows[$key] = $value;
+        }
+    }
+    return $rows;
+}
+
+function health_badges(array $ups): array
+{
+    return ['WAN UP', 'VPN UP', 'DNS OK', !empty($ups['online']) ? 'UPS ONLINE' : 'UPS --'];
 }
 
 function collect_events(array $hosts): array
@@ -1412,11 +1844,120 @@ function compact_num(int $num): string
     return (string)$num;
 }
 
+function compact_rate(string $rate): string
+{
+    $rate = str_replace('/s', '', $rate);
+    return truncate_text($rate, 8);
+}
+
+function split_widths(int $total, int $parts): array
+{
+    $parts = max(1, $parts);
+    $target = $total + ($parts - 1);
+    $base = intdiv($target, $parts);
+    $remainder = $target % $parts;
+    $widths = [];
+    for ($i = 0; $i < $parts; $i++) {
+        $widths[] = $base + ($i < $remainder ? 1 : 0);
+    }
+    return array_map(static fn(int $w): int => max(4, $w), $widths);
+}
+
 function bar(int $pct, int $width): string
 {
     $width = max(4, $width);
     $filled = (int)round(($pct / 100) * $width);
     return '[' . str_repeat('#', $filled) . str_repeat('.', $width - $filled) . ']';
+}
+
+function sparkline(array $values, int $width): string
+{
+    $width = max(4, $width);
+    $values = array_values(array_filter($values, static fn($v): bool => is_numeric($v)));
+    if (!$values) {
+        return '[' . str_repeat('.', $width) . ']';
+    }
+    $values = array_slice($values, -$width);
+    $min = min($values);
+    $max = max($values);
+    $range = max(1.0, (float)$max - (float)$min);
+    $chars = ' .:-=+*#%@';
+    $out = '';
+    foreach ($values as $value) {
+        $idx = (int)round((((float)$value - (float)$min) / $range) * (strlen($chars) - 1));
+        $out .= $chars[max(0, min(strlen($chars) - 1, $idx))];
+    }
+    return '[' . str_pad($out, $width, '.', STR_PAD_LEFT) . ']';
+}
+
+function push_history(array &$history, float $now, float $value, float $seconds): void
+{
+    $history[] = ['t' => $now, 'v' => $value];
+    $cutoff = $now - max(1.0, $seconds);
+    $history = array_values(array_filter($history, static fn(array $row): bool => (float)$row['t'] >= $cutoff));
+}
+
+function history_values(array $history): array
+{
+    return array_map(static fn(array $row): float => (float)$row['v'], $history);
+}
+
+function demo_wave(int $tick, int $count, int $base, int $spread): array
+{
+    $rows = [];
+    for ($i = max(0, $tick - $count + 1); $i <= $tick; $i++) {
+        $rows[] = max(0, $base + (int)round(sin($i / 3) * $spread) + (($i % 11) * (int)max(1, $spread / 18)));
+    }
+    return $rows;
+}
+
+function normalize_ups($ups): array
+{
+    if (is_array($ups)) {
+        return $ups + [
+            'online' => false,
+            'status' => '',
+            'watts' => '?',
+            'load' => '?',
+            'battery' => '?',
+            'runtime' => '?',
+            'linev' => '?',
+            'peak60' => '?',
+            'avg60' => '?',
+            'history' => [],
+        ];
+    }
+    return parse_ups_status_line((string)$ups) + [
+        'online' => $ups !== '',
+        'watts' => '?',
+        'load' => '?',
+        'battery' => '?',
+        'runtime' => '?',
+        'linev' => '?',
+        'peak60' => '?',
+        'avg60' => '?',
+        'history' => [],
+    ];
+}
+
+function ups_summary($ups): string
+{
+    $ups = normalize_ups($ups);
+    if (empty($ups['online'])) {
+        return 'UPS --';
+    }
+    return sprintf('UPS %sW load %s%% batt %s%% run %s', $ups['watts'], $ups['load'], $ups['battery'], $ups['runtime']);
+}
+
+function format_runtime(float $seconds): string
+{
+    if ($seconds <= 0) {
+        return '?';
+    }
+    $seconds = (int)round($seconds);
+    $hours = intdiv($seconds, 3600);
+    $minutes = intdiv($seconds % 3600, 60);
+    return $hours > 0 ? sprintf('%dh%02dm', $hours, $minutes) : sprintf('%dm', $minutes);
 }
 
 function animated_bar(int $pct, int $width, int $tick): string

@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.29
+
+- Added `SOCX_THEME=modern-btop` as the default wall theme with a btop-inspired metric-card layout.
+- Added top metric cards for network, pf states, CPU cores/load, memory/ARC, and UPS telemetry.
+- Added a background `socx-ups-cache` collector so UPS wattage, load, battery, runtime, line voltage, 60-second peak/average, and sparkline render from cached data without blocking the ticker.
+- Changed smooth ticker defaults to one-column movement every `75ms` in wall mode, with tmux clamping to avoid over-aggressive repainting.
+- Added `SOCX_DEBUG_TIMING=true` logging to `/tmp/socx-wall-timing.log` for terminal size, tmux mode, render timing, ticker timing, and UPS cache age.
+- Added modern demo support with `socx-wall --demo --mode wall --theme modern-btop --ticker-smooth`.
+
 ## v0.1.28
 
 - Changed wall-mode ticker rendering to update only the bottom ticker row between full 500ms dashboard refreshes, reducing whole-screen redraw jitter.
