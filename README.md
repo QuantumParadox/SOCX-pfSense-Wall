@@ -105,11 +105,15 @@ SOCX_UPS_HISTORY_SECONDS=60
 SOCX_UPS_SHOW_SPARKLINE=true
 ```
 
-Modern graph rendering defaults to ASCII-safe sparklines inside pfSense/tmux:
+Modern btop rendering defaults to Unicode/ANSI cards, block meters, and sparklines inside pfSense/tmux:
 
 ```sh
-SOCX_UNICODE=false
+SOCX_UNICODE=true
+SOCX_BORDER_STYLE=unicode
+SOCX_GRAPH_STYLE=unicode
 ```
+
+Set `SOCX_UNICODE=false` for the ASCII fallback.
 
 Preview speeds in demo mode:
 

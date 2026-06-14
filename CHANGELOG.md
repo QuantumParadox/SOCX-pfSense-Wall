@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.34
+
+- Made `modern-btop` render Unicode by default with box-drawing card borders, block meters, Unicode sparklines, and ANSI coloring.
+- Added `SOCX_BORDER_STYLE=unicode` and `SOCX_GRAPH_STYLE=unicode` defaults alongside `SOCX_UNICODE=true`.
+- Reworked the wall canvas writer to handle UTF-8 cells so Unicode borders and graphs stay aligned in tmux.
+- Added explicit demo-mode render diagnostics for Unicode status, border style, graph style, TERM, and TMUX.
+- Kept ASCII fallback available with `SOCX_UNICODE=false`.
+- Fixed PHP 8.4 `str_getcsv()` deprecation noise that could cause the wall renderer loop to exit.
+
 ## v0.1.33
 
 - Hardened the pfSense autoboot script so SOCX starts correctly when boot calls rc scripts with `faststart`, `onestart`, or `forcestart`.

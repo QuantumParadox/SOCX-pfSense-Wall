@@ -20,7 +20,9 @@ start|faststart|onestart|forcestart)
         export TMUX_TMPDIR=/tmp
         export SOCX_MODE="${SOCX_MODE:-wall}"
         export SOCX_THEME="${SOCX_THEME:-modern-btop}"
-        export SOCX_UNICODE="${SOCX_UNICODE:-false}"
+        export SOCX_UNICODE="${SOCX_UNICODE:-true}"
+        export SOCX_BORDER_STYLE="${SOCX_BORDER_STYLE:-unicode}"
+        export SOCX_GRAPH_STYLE="${SOCX_GRAPH_STYLE:-unicode}"
         export SOCX_TICKER_SMOOTH="${SOCX_TICKER_SMOOTH:-true}"
         /bin/sh /root/socxboard.sh >>"$log_file" 2>&1
     ) &

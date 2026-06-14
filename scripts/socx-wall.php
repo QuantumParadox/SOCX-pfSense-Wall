@@ -464,6 +464,7 @@ function demo_frame(array $hosts, array $state = []): array
         '192.168.1.121' => 'Mediabox',
     ];
     return [
+        'demo' => true,
         'time' => date('H:i:s'),
         'refresh' => '500ms',
         'host' => 'pfSense',
@@ -570,13 +571,14 @@ function render_classic_wall(array $frame, int $cols, int $rows, bool $color, ar
 
     $lines = [];
     foreach ($canvas as $line) {
-        $lines[] = colorize_line($line, $color);
+        $lines[] = colorize_line(canvas_line($line), $color);
     }
     return implode("\n", $lines);
 }
 
 function render_modern_btop_wall(array $frame, int $cols, int $rows, bool $color, array &$state): string
 {
+    $frame['unicode_status'] = unicode_render_status();
     $canvas = make_canvas($cols, $rows);
     $layout = modern_btop_layout($cols, $rows);
 
@@ -610,7 +612,7 @@ function render_modern_btop_wall(array $frame, int $cols, int $rows, bool $color
 
     $lines = [];
     foreach ($canvas as $line) {
-        $lines[] = colorize_line($line, $color);
+        $lines[] = colorize_line(canvas_line($line), $color);
     }
     return implode("\n", $lines);
 }
@@ -623,7 +625,8 @@ function render_ticker_update(array $frame, int $cols, int $rows, bool $color, s
     $layout = $theme === 'modern-btop' ? modern_btop_layout($cols, $rows) : wall_layout($cols, $rows);
     $panel = panel_obj(0, $layout['ticker_y'], $cols, $layout['ticker_h'], 'EVENT TICKER', static fn(array $f, array $p): array => ticker_rows($f, $p));
     $ticker = ticker_rows($frame, $panel)[0] ?? '';
-    $line = '|' . pad_or_clip($ticker, $cols - 2) . '|';
+    $v = ($theme === 'modern-btop' && modern_border_style() === 'unicode') ? unicode_border_chars()['v'] : '|';
+    $line = $v . pad_or_clip($ticker, $cols - 2) . $v;
     $ansiRow = $layout['ticker_y'] + 2;
     return "\033[" . $ansiRow . ";1H" . colorize_line($line, $color);
 }
@@ -694,40 +697,124 @@ function wall_layout(int $cols, int $rows): array
     ];
 }
 
+function unicode_render_status(): array
+{
+    $term = (string)(getenv('TERM') ?: '');
+    $tmux = tmux_detected();
+    $envUnicode = getenv('SOCX_UNICODE');
+    $enabled = true;
+    $reason = 'default modern-btop unicode';
+
+    if ($envUnicode !== false && $envUnicode !== '') {
+        $value = strtolower(trim((string)$envUnicode));
+        if (in_array($value, ['0', 'false', 'no', 'off', 'ascii'], true)) {
+            $enabled = false;
+            $reason = 'SOCX_UNICODE=' . $envUnicode;
+        } elseif (in_array($value, ['1', 'true', 'yes', 'on', 'unicode'], true)) {
+            $enabled = true;
+            $reason = 'SOCX_UNICODE=' . $envUnicode;
+        }
+    }
+
+    if ($enabled && in_array(strtolower($term), ['dumb', 'ascii'], true)) {
+        $enabled = false;
+        $reason = 'TERM=' . ($term !== '' ? $term : 'empty') . ' does not support Unicode';
+    }
+
+    $border = normalize_style((string)(getenv('SOCX_BORDER_STYLE') ?: ($enabled ? 'unicode' : 'ascii')), $enabled);
+    $graph = normalize_style((string)(getenv('SOCX_GRAPH_STYLE') ?: ($enabled ? 'unicode' : 'ascii')), $enabled);
+
+    return [
+        'enabled' => $enabled,
+        'reason' => $enabled ? $reason : $reason,
+        'border' => $border,
+        'graph' => $graph,
+        'term' => $term !== '' ? $term : 'unknown',
+        'tmux' => $tmux,
+    ];
+}
+
+function normalize_style(string $style, bool $unicodeEnabled): string
+{
+    $style = strtolower(trim($style));
+    if ($style === 'ascii') {
+        return 'ascii';
+    }
+    if ($style === 'unicode' && $unicodeEnabled) {
+        return 'unicode';
+    }
+    return $unicodeEnabled ? 'unicode' : 'ascii';
+}
+
+function unicode_rendering_enabled(): bool
+{
+    return (bool)unicode_render_status()['enabled'];
+}
+
+function modern_border_style(): string
+{
+    return (string)unicode_render_status()['border'];
+}
+
+function modern_graph_style(): string
+{
+    return (string)unicode_render_status()['graph'];
+}
+
+function unicode_border_chars(): array
+{
+    return [
+        'tl' => '┌',
+        'tr' => '┐',
+        'bl' => '└',
+        'br' => '┘',
+        'h' => '─',
+        'v' => '│',
+        'lt' => '├',
+        'rt' => '┤',
+        'tt' => '┬',
+        'bt' => '┴',
+        'cross' => '┼',
+    ];
+}
+
 function make_canvas(int $width, int $height): array
 {
-    return array_fill(0, $height, str_repeat(' ', $width));
+    $row = array_fill(0, $width, ' ');
+    return array_fill(0, $height, $row);
 }
 
 function truncate_text(string $text, int $width): string
 {
     $text = preg_replace('/[\x00-\x1F\x7F]+/', ' ', $text) ?? '';
-    $text = trim($text);
     if ($width <= 0) {
         return '';
     }
-    if (strlen($text) <= $width) {
+    $chars = utf8_cells($text);
+    if (count($chars) <= $width) {
         return $text;
     }
     if ($width <= 3) {
-        return substr($text, 0, $width);
+        return implode('', array_slice($chars, 0, $width));
     }
-    return rtrim(substr($text, 0, $width - 3)) . '...';
+    return rtrim(implode('', array_slice($chars, 0, $width - 3))) . '...';
 }
 
 function pad_or_clip(string $text, int $width): string
 {
     $text = truncate_text($text, $width);
-    return str_pad($text, $width);
+    $pad = max(0, $width - cell_len($text));
+    return $text . str_repeat(' ', $pad);
 }
 
 function center_text(string $text, int $width): string
 {
     $text = truncate_text($text, $width);
-    if (strlen($text) >= $width) {
+    $len = cell_len($text);
+    if ($len >= $width) {
         return $text;
     }
-    $left = intdiv($width - strlen($text), 2);
+    $left = intdiv($width - $len, 2);
     return str_repeat(' ', $left) . $text;
 }
 
@@ -736,9 +823,13 @@ function safe_write(array &$canvas, int $x, int $y, string $text, int $maxWidth)
     if ($y < 0 || $y >= count($canvas) || $maxWidth <= 0) {
         return;
     }
-    $lineWidth = strlen($canvas[$y]);
+    if (!is_array($canvas[$y])) {
+        $canvas[$y] = utf8_cells((string)$canvas[$y]);
+    }
+    $lineWidth = count($canvas[$y]);
+    $chars = utf8_cells($text);
     if ($x < 0) {
-        $text = substr($text, abs($x));
+        $chars = array_slice($chars, abs($x));
         $maxWidth += $x;
         $x = 0;
     }
@@ -746,12 +837,35 @@ function safe_write(array &$canvas, int $x, int $y, string $text, int $maxWidth)
         return;
     }
     $maxWidth = min($maxWidth, $lineWidth - $x);
-    $text = pad_or_clip($text, $maxWidth);
+    $text = pad_or_clip(implode('', $chars), $maxWidth);
+    $chars = utf8_cells($text);
     $line = $canvas[$y];
-    for ($i = 0; $i < strlen($text); $i++) {
-        $line[$x + $i] = $text[$i];
+    for ($i = 0; $i < count($chars); $i++) {
+        $line[$x + $i] = $chars[$i];
     }
     $canvas[$y] = $line;
+}
+
+function utf8_cells(string $text): array
+{
+    if ($text === '') {
+        return [];
+    }
+    $chars = preg_split('//u', $text, -1, PREG_SPLIT_NO_EMPTY);
+    if ($chars === false) {
+        return str_split($text);
+    }
+    return $chars;
+}
+
+function cell_len(string $text): int
+{
+    return count(utf8_cells($text));
+}
+
+function canvas_line($line): string
+{
+    return is_array($line) ? implode('', $line) : (string)$line;
 }
 
 function draw_hline(array &$canvas, int $x, int $y, int $width): void
@@ -768,6 +882,11 @@ function draw_vline(array &$canvas, int $x, int $y, int $height): void
 
 function render_box(array &$canvas, int $x, int $y, int $width, int $height, string $title): void
 {
+    render_box_ascii($canvas, $x, $y, $width, $height, $title);
+}
+
+function render_box_ascii(array &$canvas, int $x, int $y, int $width, int $height, string $title): void
+{
     if ($width < 4 || $height < 3) {
         return;
     }
@@ -780,6 +899,28 @@ function render_box(array &$canvas, int $x, int $y, int $width, int $height, str
     safe_write($canvas, $x, $y + $height - 1, '+', 1);
     safe_write($canvas, $x + $width - 1, $y + $height - 1, '+', 1);
     safe_write($canvas, $x + 2, $y, ' ' . $title . ' ', max(0, $width - 4));
+}
+
+function render_box_unicode(array &$canvas, int $x, int $y, int $width, int $height, string $title): void
+{
+    if ($width < 4 || $height < 3) {
+        return;
+    }
+    $b = unicode_border_chars();
+    safe_write($canvas, $x, $y, $b['tl'], 1);
+    safe_write($canvas, $x + $width - 1, $y, $b['tr'], 1);
+    safe_write($canvas, $x, $y + $height - 1, $b['bl'], 1);
+    safe_write($canvas, $x + $width - 1, $y + $height - 1, $b['br'], 1);
+    safe_write($canvas, $x + 1, $y, str_repeat($b['h'], max(0, $width - 2)), $width - 2);
+    safe_write($canvas, $x + 1, $y + $height - 1, str_repeat($b['h'], max(0, $width - 2)), $width - 2);
+    for ($i = 1; $i < $height - 1; $i++) {
+        safe_write($canvas, $x, $y + $i, $b['v'], 1);
+        safe_write($canvas, $x + $width - 1, $y + $i, $b['v'], 1);
+    }
+    if ($title !== '') {
+        $label = ' ' . strtoupper($title) . ' ';
+        safe_write($canvas, $x + 1, $y, $label, min(cell_len($label), max(0, $width - 2)));
+    }
 }
 
 function render_modern_box(array &$canvas, int $x, int $y, int $width, int $height, string $title): void
@@ -806,6 +947,10 @@ function render_modern_card_frame(array &$canvas, int $x, int $y, int $width, in
     if ($width < 4 || $height < 2) {
         return;
     }
+    if (modern_border_style() === 'unicode') {
+        render_box_unicode($canvas, $x, $y, $width, $height, $title);
+        return;
+    }
     $label = ' ' . strtoupper($title) . ' ';
     $line = $label . str_repeat('-', max(0, $width - strlen($label)));
     safe_write($canvas, $x, $y, $line, $width);
@@ -816,7 +961,8 @@ function render_modern_header_frame(array &$canvas, int $x, int $y, int $width, 
     if ($width <= 0 || $height <= 0) {
         return;
     }
-    safe_write($canvas, $x, $y + $height - 1, str_repeat('-', $width), $width);
+    $h = modern_border_style() === 'unicode' ? unicode_border_chars()['h'] : '-';
+    safe_write($canvas, $x, $y + $height - 1, str_repeat($h, $width), $width);
 }
 
 function panel_obj(int $x, int $y, int $width, int $height, string $title, callable $render, string $style = 'box'): array
@@ -848,6 +994,8 @@ function draw_modern_panel(array &$canvas, array $panel, array $frame): void
         render_modern_card_frame($canvas, $panel['x'], $panel['y'], $panel['width'], $panel['height'], $panel['title']);
     } elseif ($style === 'header') {
         render_modern_header_frame($canvas, $panel['x'], $panel['y'], $panel['width'], $panel['height']);
+    } elseif (modern_border_style() === 'unicode') {
+        render_box_unicode($canvas, $panel['x'], $panel['y'], $panel['width'], $panel['height'], $panel['title']);
     } else {
         render_modern_box($canvas, $panel['x'], $panel['y'], $panel['width'], $panel['height'], $panel['title']);
     }
@@ -877,6 +1025,9 @@ function modern_content_bounds(array $panel): array
         return [$x, $y, $width, max(0, $height - 1)];
     }
     if ($style === 'card') {
+        if (modern_border_style() === 'unicode') {
+            return [$x + 1, $y + 1, max(0, $width - 2), max(0, $height - 2)];
+        }
         return [$x + 1, $y + 1, max(0, $width - 2), max(0, $height - 1)];
     }
     return [$x + 1, $y + 1, max(0, $width - 2), max(0, $height - 2)];
@@ -894,7 +1045,25 @@ function modern_header_rows(array $f, array $p): array
     $badges = implode(' | ', $f['badges']);
     $ups = normalize_ups($f['ups'] ?? []);
     $left = sprintf('SOCX MODERN WALL  %s  refresh %s', $f['time'], $f['refresh']);
-    $space = max(1, $w - strlen($left) - strlen($badges));
+    $space = max(1, $w - cell_len($left) - cell_len($badges));
+    if (!empty($f['demo'])) {
+        $status = $f['unicode_status'] ?? unicode_render_status();
+        $debug = sprintf(
+            'Unicode rendering: %s | Border style: %s | Graph style: %s | TERM: %s | TMUX: %s',
+            !empty($status['enabled']) ? 'enabled' : 'disabled',
+            $status['border'] ?? '?',
+            $status['graph'] ?? '?',
+            $status['term'] ?? 'unknown',
+            !empty($status['tmux']) ? 'yes' : 'no'
+        );
+        if (empty($status['enabled']) && !empty($status['reason'])) {
+            $debug .= ' | reason: ' . $status['reason'];
+        }
+        return [
+            pad_or_clip($left . str_repeat(' ', $space) . $badges, $w),
+            pad_or_clip($debug, $w),
+        ];
+    }
     $status = sprintf(
         'WAN %s/%s   LAN %s/%s   PF %s states   UPS %sW %s%%',
         compact_rate($f['wan']['down']),
@@ -916,17 +1085,17 @@ function modern_network_rows(array $f, array $p): array
     $w = $p['width'] - 2;
     if ($w < 22) {
         return [
-            sprintf('WAN dn %s', compact_rate($f['wan']['down'])),
-            sprintf('WAN up %s', compact_rate($f['wan']['up'])),
-            sprintf('LAN dn %s', compact_rate($f['lan']['down'])),
-            sprintf('LAN up %s', compact_rate($f['lan']['up'])),
+            sprintf('WAN %s %s', down_marker(), compact_rate($f['wan']['down'])),
+            sprintf('WAN %s %s', up_marker(), compact_rate($f['wan']['up'])),
+            sprintf('LAN %s %s', down_marker(), compact_rate($f['lan']['down'])),
+            sprintf('LAN %s %s', up_marker(), compact_rate($f['lan']['up'])),
             fit_sparkline($f['wan_history'] ?? [], $w),
         ];
     }
     return [
-        sprintf('WAN  D %-8s U %-8s', $f['wan']['down'], $f['wan']['up']),
+        sprintf('WAN  %s %-8s %s %-8s', down_marker(), $f['wan']['down'], up_marker(), $f['wan']['up']),
         'WAN  ' . fit_sparkline($f['wan_history'] ?? [], $w - 5),
-        sprintf('LAN  D %-8s U %-8s', $f['lan']['down'], $f['lan']['up']),
+        sprintf('LAN  %s %-8s %s %-8s', down_marker(), $f['lan']['down'], up_marker(), $f['lan']['up']),
         'LAN  ' . fit_sparkline($f['lan_history'] ?? [], $w - 5),
         truncate_text(($f['wan']['link'] ?? '') . '  ' . ($f['wan']['rtt'] ?? ''), $w),
     ];
@@ -960,20 +1129,20 @@ function modern_cpu_card_rows(array $f, array $p): array
     $tick = (int)($f['tick'] ?? 0);
     $w = $p['width'] - 2;
     if ($w < 22) {
-        $rows = [sprintf('%d%% %s', $cpu['used'], str_replace('GHz', 'G', $cpu['freq']))];
+        $rows = [sprintf('%d%% %s %s', $cpu['used'], str_replace('GHz', 'G', $cpu['freq']), modern_temp_text($cpu['temp']) )];
         foreach (array_slice($cpu['cores'], 0, max(1, $p['height'] - 4)) as $core) {
             $used = (int)round((float)$core['used']);
             $barW = max(2, min(6, $w - 9));
-            $rows[] = sprintf('C%s %s %2d%%', $core['id'], animated_bar($used, $barW, $tick + (int)$core['id']), $used);
+            $rows[] = sprintf('C%s %s %2d%%', $core['id'], animated_meter($used, $barW, $tick + (int)$core['id']), $used);
         }
         $rows[] = 'ld ' . implode(' ', array_slice($cpu['load'], 0, 2));
         return $rows;
     }
     $barW = max(8, min(18, $w - 11));
-    $rows = [sprintf('%3d%%  %-7s  %s', $cpu['used'], $cpu['freq'], $cpu['temp'])];
+    $rows = [sprintf('%3d%%  %-7s  %s', $cpu['used'], $cpu['freq'], modern_temp_text($cpu['temp']))];
     foreach (array_slice($cpu['cores'], 0, max(1, $p['height'] - 4)) as $core) {
         $used = (int)round((float)$core['used']);
-        $rows[] = sprintf('C%-2s %s %3d%%', $core['id'], animated_bar($used, $barW, $tick + (int)$core['id']), $used);
+        $rows[] = sprintf('C%-2s %s %3d%%', $core['id'], animated_meter($used, $barW, $tick + (int)$core['id']), $used);
     }
     $rows[] = 'load ' . implode(' ', $cpu['load']);
     return $rows;
@@ -1734,7 +1903,7 @@ function parse_filter_event(string $line, array $hosts): ?array
     if (!str_contains($payload, ',')) {
         return null;
     }
-    $fields = str_getcsv($payload);
+    $fields = str_getcsv($payload, ',', '"', '\\');
     if (count($fields) < 20) {
         return null;
     }
@@ -1979,6 +2148,27 @@ function compact_rate(string $rate): string
     return truncate_text($rate, 8);
 }
 
+function down_marker(): string
+{
+    return modern_graph_style() === 'unicode' ? '↓' : 'D';
+}
+
+function up_marker(): string
+{
+    return modern_graph_style() === 'unicode' ? '↑' : 'U';
+}
+
+function modern_temp_text(string $temp): string
+{
+    if (modern_graph_style() !== 'unicode') {
+        return $temp;
+    }
+    if (preg_match('/^([0-9-]+)C$/', $temp, $m)) {
+        return $m[1] . '°C';
+    }
+    return $temp;
+}
+
 function compact_rate_pair(string $up, string $down, int $width): string
 {
     $text = strip_decimal_unit($up) . '/' . strip_decimal_unit($down);
@@ -2007,6 +2197,9 @@ function flow_class_short(string $class): string
 
 function compact_flow_bar(string $class, int $width): string
 {
+    if (modern_graph_style() === 'unicode') {
+        return render_meter_unicode(100, max(1, $width));
+    }
     $inner = max(1, $width - 2);
     $char = ($class === 'dnsbl' || $class === 'blocked') ? '!' : '#';
     return '[' . str_repeat($char, $inner) . ']';
@@ -2075,17 +2268,56 @@ function weighted_widths(int $total, array $weights): array
 
 function bar(int $pct, int $width): string
 {
+    return render_meter_ascii($pct, $width);
+}
+
+function render_meter_ascii(int $pct, int $width): string
+{
     $width = max(4, $width);
     $filled = (int)round(($pct / 100) * $width);
     return '[' . str_repeat('#', $filled) . str_repeat('.', $width - $filled) . ']';
 }
 
+function render_meter_unicode(int $pct, int $width): string
+{
+    $width = max(1, $width);
+    $filled = (int)round((max(0, min(100, $pct)) / 100) * $width);
+    return str_repeat('█', $filled) . str_repeat('▁', max(0, $width - $filled));
+}
+
+function animated_meter(int $pct, int $width, int $tick): string
+{
+    if (modern_graph_style() !== 'unicode') {
+        return animated_bar($pct, $width, $tick);
+    }
+    $width = max(1, $width);
+    $filled = (int)round((max(0, min(100, $pct)) / 100) * $width);
+    $chars = array_fill(0, $width, '▁');
+    for ($i = 0; $i < $filled; $i++) {
+        $chars[$i] = '█';
+    }
+    $pulse = $tick % $width;
+    $chars[$pulse] = $pulse < $filled ? '▇' : '▃';
+    return implode('', $chars);
+}
+
 function fit_bar(int $pct, int $totalWidth): string
 {
-    return bar($pct, max(2, $totalWidth - 2));
+    if (modern_graph_style() === 'unicode') {
+        return render_meter_unicode($pct, max(1, $totalWidth));
+    }
+    return render_meter_ascii($pct, max(2, $totalWidth - 2));
 }
 
 function sparkline(array $values, int $width): string
+{
+    if (modern_graph_style() === 'unicode') {
+        return render_sparkline_unicode($values, $width);
+    }
+    return render_sparkline_ascii($values, $width);
+}
+
+function render_sparkline_ascii(array $values, int $width): string
 {
     $width = max(4, $width);
     $values = array_values(array_filter($values, static fn($v): bool => is_numeric($v)));
@@ -2105,14 +2337,37 @@ function sparkline(array $values, int $width): string
     return '[' . str_pad($out, $width, '.', STR_PAD_LEFT) . ']';
 }
 
+function render_sparkline_unicode(array $values, int $width): string
+{
+    $width = max(1, $width);
+    $values = array_values(array_filter($values, static fn($v): bool => is_numeric($v)));
+    if (!$values) {
+        return str_repeat('▁', $width);
+    }
+    $values = array_slice($values, -$width);
+    $min = min($values);
+    $max = max($values);
+    $range = max(1.0, (float)$max - (float)$min);
+    $chars = utf8_cells('▁▂▃▄▅▆▇█');
+    $out = '';
+    foreach ($values as $value) {
+        $idx = (int)round((((float)$value - (float)$min) / $range) * (count($chars) - 1));
+        $out .= $chars[max(0, min(count($chars) - 1, $idx))];
+    }
+    return str_repeat('▁', max(0, $width - cell_len($out))) . $out;
+}
+
 function fit_sparkline(array $values, int $totalWidth): string
 {
+    if (modern_graph_style() === 'unicode') {
+        return sparkline($values, max(1, $totalWidth));
+    }
     return sparkline($values, max(2, $totalWidth - 2));
 }
 
 function sparkline_chars(): string
 {
-    return getenv('SOCX_UNICODE') === 'true' ? '.:-=+*#%@' : '.:-=+*#%@';
+    return '.:-=+*#%@';
 }
 
 function push_history(array &$history, float $now, float $value, float $seconds): void
@@ -2202,6 +2457,9 @@ function graph_bar(int $value, int $max, bool $alert): string
 {
     $width = 8;
     $filled = max(1, min($width, (int)round(($value / max(1, $max)) * $width)));
+    if (modern_graph_style() === 'unicode') {
+        return str_repeat($alert ? '▓' : '█', $filled) . str_repeat('▁', $width - $filled);
+    }
     $char = $alert ? '!' : '#';
     return '[' . str_repeat($char, $filled) . str_repeat('.', $width - $filled) . ']';
 }
@@ -2223,16 +2481,25 @@ function colorize_line(string $line, bool $color): string
         'white' => "\033[38;5;255;1m",
         'crit' => "\033[5;7;38;5;196;1m",
     ];
-    $line = preg_replace('/(-{2,})/', $c['cyan'] . '$1' . $c['reset'], $line);
-    $line = preg_replace('/([+=|])/', $c['cyan'] . '$1' . $c['reset'], $line);
-    $line = preg_replace('/\b(WAN UP|VPN UP|DNS OK|UPS ONLINE|PASS|ONLINE|UP)\b/', $c['green'] . '$1' . $c['reset'], $line);
-    $line = preg_replace('/\b(BLOCK|blocked|HIGH|\[HIGH\])\b/', $c['red'] . '$1' . $c['reset'], $line);
-    $line = preg_replace('/\b(DNSBL|WARN|warning|MED|LOW|\[LOW\]|\[FW\]|\[IDS\]|\[MED\]|\[DNSBL\])\b/', $c['yellow'] . '$1' . $c['reset'], $line);
-    $line = preg_replace('/(\[CRIT\])/', $c['crit'] . '$1' . $c['reset'], $line);
-    $line = preg_replace('/\b(CPU|RAM|ARC|PF|LAN|WAN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES)\b/', $c['cyan'] . '$1' . $c['reset'], $line);
-    $line = preg_replace('/(\[[#!.]+\])/', $c['green'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/(-{2,})/', $c['cyan'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/([+=|])/', $c['cyan'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/([┌┐└┘─│├┤┬┴┼])/', $c['cyan'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/\b(WAN UP|VPN UP|DNS OK|UPS ONLINE|PASS|ONLINE|UP)\b/', $c['green'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/\b(BLOCK|blocked|HIGH|\[HIGH\])\b/', $c['red'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/\b(DNSBL|WARN|warning|MED|LOW|\[LOW\]|\[FW\]|\[IDS\]|\[MED\]|\[DNSBL\])\b/', $c['yellow'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/(\[CRIT\])/', $c['crit'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/\b(CPU|RAM|ARC|PF|LAN|WAN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES)\b/', $c['cyan'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/(\[[#!.]+\])/', $c['green'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/([█▇▆▅▄▃▂▁▓]+)/u', $c['green'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/([↓↑])/u', $c['yellow'] . '$1' . $c['reset'], $line);
     $line = str_replace('◆', $c['cyan'] . '◆' . $c['reset'], $line);
     $line = str_replace($separatorMarker, $c['cyan'] . '◆' . $c['reset'], $line);
-    $line = preg_replace('/\bx(\d+)\b/', $c['yellow'] . 'x$1' . $c['reset'], $line);
+    $line = color_replace('/\bx(\d+)\b/', $c['yellow'] . 'x$1' . $c['reset'], $line);
     return $line . $c['reset'];
+}
+
+function color_replace(string $pattern, string $replacement, string $line): string
+{
+    $next = preg_replace($pattern, $replacement, $line);
+    return is_string($next) ? $next : $line;
 }
