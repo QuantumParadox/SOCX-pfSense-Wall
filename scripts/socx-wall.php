@@ -1156,13 +1156,20 @@ function modern_content_bounds(array $panel): array
     if ($style === 'header') {
         return [$x, $y, $width, max(0, $height - 1)];
     }
+    $pad = modern_border_style() === 'unicode' && $width >= 10 ? 2 : 1;
     if ($style === 'card') {
         if (modern_border_style() === 'unicode') {
-            return [$x + 1, $y + 1, max(0, $width - 2), max(0, $height - 2)];
+            return [$x + $pad, $y + 1, max(0, $width - ($pad * 2)), max(0, $height - 2)];
         }
-        return [$x + 1, $y + 1, max(0, $width - 2), max(0, $height - 1)];
+        return [$x + $pad, $y + 1, max(0, $width - ($pad * 2)), max(0, $height - 1)];
     }
-    return [$x + 1, $y + 1, max(0, $width - 2), max(0, $height - 2)];
+    return [$x + $pad, $y + 1, max(0, $width - ($pad * 2)), max(0, $height - 2)];
+}
+
+function modern_content_width(array $panel): int
+{
+    [, , $width] = modern_content_bounds($panel);
+    return max(1, $width);
 }
 
 function ticker_title(): string
@@ -1197,6 +1204,10 @@ function modern_header_rows(array $f, array $p): array
             pad_or_clip($debug, $w),
         ];
     }
+    $rows = [pad_or_clip($left . str_repeat(' ', $space) . $badges, $w)];
+    if ($w < 126) {
+        return $rows;
+    }
     $status = sprintf(
         'WAN %s/%s   LAN %s/%s   PF %s states   UPS %sW %s%%',
         compact_rate($f['wan']['down']),
@@ -1207,15 +1218,13 @@ function modern_header_rows(array $f, array $p): array
         $ups['watts'] ?? '?',
         $ups['load'] ?? '?'
     );
-    return [
-        pad_or_clip($left . str_repeat(' ', $space) . $badges, $w),
-        pad_or_clip($status, $w),
-    ];
+    $rows[] = pad_or_clip($status, $w);
+    return $rows;
 }
 
 function modern_network_rows(array $f, array $p): array
 {
-    $w = $p['width'] - 2;
+    $w = modern_content_width($p);
     if ($w < 22) {
         return [
             sprintf('WAN %s %s', down_marker(), compact_rate($f['wan']['down'])),
@@ -1237,7 +1246,7 @@ function modern_network_rows(array $f, array $p): array
 function modern_pf_rows(array $f, array $p): array
 {
     $pf = $f['pf'];
-    $w = $p['width'] - 2;
+    $w = modern_content_width($p);
     if ($w < 22) {
         return [
             sprintf('st %s', $pf['states'] ?? '?'),
@@ -1260,7 +1269,7 @@ function modern_cpu_card_rows(array $f, array $p): array
 {
     $cpu = $f['cpu'];
     $tick = (int)($f['tick'] ?? 0);
-    $w = $p['width'] - 2;
+    $w = modern_content_width($p);
     if ($w < 22) {
         $rows = [sprintf('%d%% %s %s', $cpu['used'], str_replace('GHz', 'G', $cpu['freq']), modern_temp_text($cpu['temp']) )];
         foreach (array_slice($cpu['cores'], 0, max(1, $p['height'] - 4)) as $core) {
@@ -1284,7 +1293,7 @@ function modern_cpu_card_rows(array $f, array $p): array
 function modern_memory_rows(array $f, array $p): array
 {
     $mem = $f['mem'];
-    $w = $p['width'] - 2;
+    $w = modern_content_width($p);
     $arcPct = percent((int)$mem['arc_total'], max(1, (int)$mem['total']));
     if ($w < 22) {
         return [
@@ -1308,13 +1317,14 @@ function modern_memory_rows(array $f, array $p): array
 function modern_ups_rows(array $f, array $p): array
 {
     $ups = normalize_ups($f['ups'] ?? []);
-    $w = $p['width'] - 2;
+    $w = modern_content_width($p);
     if (!$ups['online']) {
         return ['UPS unavailable', 'collector waiting', '', sparkline([], max(8, $w))];
     }
+    $watts = center_text(sprintf('%s W', $ups['watts']), $w);
     if ($w < 22) {
         return [
-            center_text(sprintf('%s W', $ups['watts']), $w),
+            $watts,
             sprintf('load %s%% batt %s%%', $ups['load'], $ups['battery']),
             sprintf('run %s', $ups['runtime']),
             sprintf('pk %s av %s', $ups['peak60'], $ups['avg60']),
@@ -1322,45 +1332,45 @@ function modern_ups_rows(array $f, array $p): array
         ];
     }
     return [
-        center_text(sprintf('UPS POWER  %s W', $ups['watts']), $w),
+        $watts,
         sprintf('load %s%%  batt %s%%', $ups['load'], $ups['battery']),
-        sprintf('run %s  line %sV', $ups['runtime'], $ups['linev']),
-        sprintf('peak60 %sW  avg60 %sW', $ups['peak60'], $ups['avg60']),
+        sprintf('run %s', $ups['runtime']),
+        sprintf('pk %s  avg %s', $ups['peak60'], $ups['avg60']),
         fit_sparkline($ups['history'], $w),
     ];
 }
 
 function modern_process_rows(array $f, array $p): array
 {
-    $w = $p['width'] - 2;
-    $cmdW = max(10, $w - 35);
-    $rows = [sprintf('%-6s %-8s %-7s %5s %s', 'PID', 'USER', 'MEM', 'CPU%', 'COMMAND')];
+    $w = modern_content_width($p);
+    $cmdW = max(8, $w - 27);
+    $rows = [sprintf('%-6s %-7s %-6s %5s %s', 'PID', 'USER', 'MEM', 'CPU%', 'COMMAND')];
     foreach (array_slice($f['procs'], 0, max(1, $p['height'] - 3)) as $proc) {
-        $cmd = $cmdW < 18 ? (string)$proc['name'] : (string)$proc['cmd'];
-        $rows[] = sprintf('%-6s %-8s %-7s %5.1f %s',
+        $cmd = $cmdW < 10 ? (string)$proc['name'] : (string)$proc['cmd'];
+        $rows[] = sprintf('%-6s %-7s %-6s %5.1f %s',
             truncate_text((string)$proc['pid'], 6),
-            truncate_text((string)$proc['user'], 8),
-            bytes_text((int)$proc['rss']),
+            truncate_text((string)$proc['user'], 7),
+            truncate_text(bytes_text((int)$proc['rss']), 6),
             (float)$proc['cpu'],
-            truncate_text($cmd, $cmdW));
+            truncate_modern_text($cmd, $cmdW));
     }
     return $rows;
 }
 
 function modern_flow_rows(array $f, array $p): array
 {
-    $w = $p['width'] - 2;
+    $w = modern_content_width($p);
     if ($w < 66) {
-        $rows = ['# FLOW             RATE    CLS BAR'];
+        $rows = ['# FLOW             RATE    CLS METER'];
         $max = max(1, $p['height'] - 3);
         $rateW = 7;
         $classW = 3;
-        $graphW = 5;
-        $flowW = max(8, $w - 24);
+        $graphW = max(4, min(8, $w - 29));
+        $flowW = max(8, $w - $rateW - $classW - $graphW - 8);
         foreach (array_slice($f['flows'], 0, $max) as $idx => $flow) {
-            $flowText = truncate_text($flow['src'] . '>' . $flow['dst'], $flowW);
+            $flowText = truncate_modern_text($flow['src'] . ' -> ' . $flow['dst'], $flowW);
             $rate = compact_rate_pair($flow['up'], $flow['down'], $rateW);
-            $rows[] = sprintf('%02d %-*s %-*s %-*s %s',
+            $rows[] = sprintf('%02d %-*s %-*s %-*s %-*s',
                 $idx + 1,
                 $flowW,
                 $flowText,
@@ -1368,29 +1378,31 @@ function modern_flow_rows(array $f, array $p): array
                 $rate,
                 $classW,
                 flow_class_short($flow['class']),
-                compact_flow_bar($flow['class'], $graphW));
+                $graphW,
+                compact_flow_bar($flow['up'], $flow['down'], $flow['class'], $graphW));
         }
         return $rows;
     }
     $srcW = max(10, min(22, intdiv($w, 4)));
-    $dstW = max(10, $w - $srcW - 45);
-    $rows = [sprintf('%-2s %-*s -> %-*s %-7s %-7s %-8s %s', '#', $srcW, 'SOURCE', $dstW, 'DESTINATION', 'UP', 'DOWN', 'CLASS', 'GRAPH')];
+    $meterW = 8;
+    $dstW = max(10, $w - $srcW - $meterW - 46);
+    $rows = [sprintf('%-2s %-*s -> %-*s %-7s %-7s %-8s %s', '#', $srcW, 'SOURCE', $dstW, 'DESTINATION', 'UP', 'DOWN', 'CLASS', 'METER')];
     foreach (array_slice($f['flows'], 0, max(1, $p['height'] - 3)) as $idx => $flow) {
         $rows[] = sprintf('%02d %-*s -> %-*s %-7s %-7s %-8s %s',
             $idx + 1,
-            $srcW, truncate_text($flow['src'], $srcW),
-            $dstW, truncate_text($flow['dst'], $dstW),
+            $srcW, truncate_modern_text($flow['src'], $srcW),
+            $dstW, truncate_modern_text($flow['dst'], $dstW),
             truncate_text($flow['up'], 7),
             truncate_text($flow['down'], 7),
             truncate_text($flow['class'], 8),
-            truncate_text($flow['graph'], 10));
+            compact_flow_bar($flow['up'], $flow['down'], $flow['class'], $meterW));
     }
     return $rows;
 }
 
 function modern_packet_rows(array $f, array $p): array
 {
-    $w = $p['width'] - 2;
+    $w = modern_content_width($p);
     $flowW = max(24, $w - 45);
     $rows = [sprintf('%-8s %-5s %-4s %-*s %-7s %-5s %-7s', 'TIME', 'PROTO', 'DIR', $flowW, 'SOURCE -> DESTINATION', 'SVC', 'SIZE', 'VERDICT')];
     foreach (array_slice($f['packets'], 0, max(1, $p['height'] - 3)) as $pkt) {
@@ -1557,26 +1569,29 @@ function ticker_rows(array $f, array $p): array
     if (!$events) {
         $events = ['[LOW] SOCX wall mode live - waiting for firewall events'];
     }
-    $width = max(1, $p['width'] - 2);
+    $width = modern_content_width($p);
     $now = (float)($f['ticker_now'] ?? microtime(true));
     $holdUntil = (float)($f['ticker_hold_until'] ?? 0.0);
     $holdText = (string)($f['ticker_hold_text'] ?? '');
     if ($holdText !== '' && $now < $holdUntil) {
-        return [ticker_view('!!! ' . $holdText, 0, $width)];
+        $marker = ticker_separator_marker();
+        $separator = '   ' . $marker . '   ';
+        $pad = str_repeat(' ', max(12, min(34, intdiv($width, 3))));
+        return [pad_or_clip($pad . $separator . '!!! ' . $holdText . $separator, $width)];
     }
 
     $marker = ticker_separator_marker();
     $separator = '   ' . $marker . '   ';
-    $line = implode($separator, $events);
-    $pad = str_repeat(' ', max(8, min(28, intdiv($width, 3))));
-    $cycle = $line . $separator . $pad;
+    $line = $separator . implode($separator, $events) . $separator;
+    $pad = str_repeat(' ', max(12, min(34, intdiv($width, 3))));
+    $cycle = $pad . $line . $pad;
     $offset = (int)($f['ticker_offset'] ?? 0);
     return [ticker_view($cycle, $offset, $width)];
 }
 
 function ticker_view(string $text, int $offset, int $width): string
 {
-    $text = trim($text);
+    $text = rtrim($text);
     if ($text === '') {
         $text = '[LOW] SOCX wall mode live';
     }
@@ -2328,14 +2343,69 @@ function flow_class_short(string $class): string
     };
 }
 
-function compact_flow_bar(string $class, int $width): string
+function truncate_modern_text(string $text, int $width): string
 {
+    $text = preg_replace('/[\x00-\x1F\x7F]+/', ' ', $text) ?? '';
+    if ($width <= 0) {
+        return '';
+    }
+    $chars = utf8_cells($text);
+    if (count($chars) <= $width) {
+        return $text;
+    }
+    if ($width <= 1) {
+        return '…';
+    }
+    return rtrim(implode('', array_slice($chars, 0, $width - 1))) . '…';
+}
+
+function compact_flow_bar(string $up, string $down, string $class, int $width): string
+{
+    $width = max(1, $width);
+    $rate = rate_to_number($up) + rate_to_number($down);
+    $pct = flow_rate_percent($rate, $class);
     if (modern_graph_style() === 'unicode') {
-        return render_meter_unicode(100, max(1, $width));
+        $filled = max(1, min($width, (int)round(($pct / 100) * $width)));
+        return str_repeat('█', $filled) . str_repeat('░', max(0, $width - $filled));
     }
     $inner = max(1, $width - 2);
     $char = ($class === 'dnsbl' || $class === 'blocked') ? '!' : '#';
-    return '[' . str_repeat($char, $inner) . ']';
+    $filled = max(1, min($inner, (int)round(($pct / 100) * $inner)));
+    return '[' . str_repeat($char, $filled) . str_repeat('.', $inner - $filled) . ']';
+}
+
+function rate_to_number(string $rate): float
+{
+    $rate = trim(str_replace(['/s', 'B'], '', $rate));
+    if ($rate === '' || $rate === '?') {
+        return 0.0;
+    }
+    if (!preg_match('/^([0-9]+(?:\.[0-9]+)?)([KMGTP]?)$/i', $rate, $m)) {
+        return (float)preg_replace('/[^0-9.]/', '', $rate);
+    }
+    $value = (float)$m[1];
+    $unit = strtoupper($m[2]);
+    $mult = match ($unit) {
+        'P' => 1024 ** 5,
+        'T' => 1024 ** 4,
+        'G' => 1024 ** 3,
+        'M' => 1024 ** 2,
+        'K' => 1024,
+        default => 1,
+    };
+    return $value * $mult;
+}
+
+function flow_rate_percent(float $rate, string $class): int
+{
+    if ($rate <= 0) {
+        return ($class === 'dnsbl' || $class === 'blocked') ? 25 : 12;
+    }
+    $pct = (int)round(log10($rate + 10) * 18);
+    if ($class === 'dnsbl' || $class === 'blocked') {
+        $pct = max($pct, 35);
+    }
+    return max(12, min(100, $pct));
 }
 
 function split_widths(int $total, int $parts): array

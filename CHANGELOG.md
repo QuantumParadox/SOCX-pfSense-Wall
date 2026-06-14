@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.37
+
+- Polished the successful Unicode `modern-btop` wall without changing the overall layout.
+- Replaced the Network Flows BAR column with per-row horizontal Unicode mini meters.
+- Made UPS wattage cleaner and more prominent, with readable load, battery, runtime, peak/average, and sparkline rows.
+- Simplified the live header so detailed WAN/LAN/PF/UPS values only appear when there is enough width.
+- Added ticker padding/separators and tightened modern card content padding.
+- Improved process table clipping with shorter USER/MEM columns and Unicode ellipsis for long commands.
+
 ## v0.1.36
 
 - Fixed the active `/usr/local/sbin/socx-wall` renderer path so `modern-btop` no longer reaches the unconditional ASCII `render_box()` wrapper.
