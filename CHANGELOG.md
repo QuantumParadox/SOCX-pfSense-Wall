@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.31
+
+- Redesigned the modern-btop wall renderer with thin ASCII borders and spaced cards instead of shared `====` grid borders.
+- Removed the duplicate header title and changed the bottom ticker panel title to `EVENT FEED [FAST]`.
+- Tightened compact 80-column flow rows to stay single-line and avoid wrapping.
+- Made UPS wattage more prominent in the UPS card and reduced visual color noise.
+- Added `SOCX_UNICODE=false` as the default pfSense/tmux-safe graph mode.
+
 ## v0.1.30
 
 - Documented `soc` as the primary launch command while keeping `socx` and `SOCX` aliases.

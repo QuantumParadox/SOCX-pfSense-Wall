@@ -105,6 +105,12 @@ SOCX_UPS_HISTORY_SECONDS=60
 SOCX_UPS_SHOW_SPARKLINE=true
 ```
 
+Modern graph rendering defaults to ASCII-safe sparklines inside pfSense/tmux:
+
+```sh
+SOCX_UNICODE=false
+```
+
 Preview speeds in demo mode:
 
 ```sh

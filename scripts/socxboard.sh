@@ -15,6 +15,7 @@ DNSBL=/var/log/pfblockerng/dnsbl.log
 
 export TMUX_TMPDIR=/tmp
 export SOCX_THEME="${SOCX_THEME:-modern-btop}"
+export SOCX_UNICODE="${SOCX_UNICODE:-false}"
 export SOCX_TMUX_MODE="${SOCX_TMUX_MODE:-auto}"
 export SOCX_FORCE_256COLOR="${SOCX_FORCE_256COLOR:-true}"
 export SOCX_UPS_ENABLED="${SOCX_UPS_ENABLED:-true}"

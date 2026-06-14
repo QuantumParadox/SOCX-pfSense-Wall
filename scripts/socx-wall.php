@@ -580,7 +580,8 @@ function render_modern_btop_wall(array $frame, int $cols, int $rows, bool $color
     $canvas = make_canvas($cols, $rows);
     $layout = modern_btop_layout($cols, $rows);
 
-    $cardWidths = split_widths($cols, 5);
+    $cardGap = $cols >= 74 ? 1 : 0;
+    $cardWidths = split_widths($cols - ($cardGap * 4), 5);
     $x = 0;
     $cards = [];
     foreach (['NETWORK', 'PF STATES', 'CPU', 'MEMORY', 'UPS'] as $idx => $title) {
@@ -591,20 +592,20 @@ function render_modern_btop_wall(array $frame, int $cols, int $rows, bool $color
             'MEMORY' => static fn(array $f, array $p): array => modern_memory_rows($f, $p),
             default => static fn(array $f, array $p): array => modern_ups_rows($f, $p),
         });
-        $x += $cardWidths[$idx] - 1;
+        $x += $cardWidths[$idx] + $cardGap;
     }
 
     $panels = [
-        panel_obj(0, 0, $cols, $layout['header_h'], 'SOCX MODERN WALL', static fn(array $f, array $p): array => modern_header_rows($f, $p)),
+        panel_obj(0, 0, $cols, $layout['header_h'], '', static fn(array $f, array $p): array => modern_header_rows($f, $p)),
         ...$cards,
         panel_obj(0, $layout['middle_y'], $layout['left_w'], $layout['middle_h'], 'PROCESS TREE / FILTER', static fn(array $f, array $p): array => modern_process_rows($f, $p)),
         panel_obj($layout['right_x'], $layout['middle_y'], $layout['right_w'], $layout['middle_h'], 'NETWORK FLOWS / IFTOPX', static fn(array $f, array $p): array => modern_flow_rows($f, $p)),
         panel_obj(0, $layout['packets_y'], $cols, $layout['packets_h'], 'LIVE PACKETS', static fn(array $f, array $p): array => modern_packet_rows($f, $p)),
-        panel_obj(0, $layout['ticker_y'], $cols, $layout['ticker_h'], 'EVENT TICKER', static fn(array $f, array $p): array => ticker_rows($f, $p)),
+        panel_obj(0, $layout['ticker_y'], $cols, $layout['ticker_h'], ticker_title(), static fn(array $f, array $p): array => ticker_rows($f, $p)),
     ];
 
     foreach ($panels as $panel) {
-        draw_panel($canvas, $panel, $frame);
+        draw_modern_panel($canvas, $panel, $frame);
     }
 
     $lines = [];
@@ -637,6 +638,9 @@ function modern_btop_layout(int $cols, int $rows): array
     $packetsY = max($middleY + 5, $rows - $tickerH - $packetsH);
     $middleH = max(5, $packetsY - $middleY);
     $mid = intdiv($cols, 2);
+    $middleGap = $cols >= 74 ? 1 : 0;
+    $leftW = $mid;
+    $rightX = $mid + $middleGap;
 
     return [
         'header_h' => $headerH,
@@ -648,9 +652,9 @@ function modern_btop_layout(int $cols, int $rows): array
         'packets_h' => $packetsH,
         'ticker_y' => $rows - $tickerH,
         'ticker_h' => $tickerH,
-        'left_w' => $mid + 1,
-        'right_x' => $mid,
-        'right_w' => $cols - $mid,
+        'left_w' => $leftW,
+        'right_x' => $rightX,
+        'right_w' => $cols - $rightX,
     ];
 }
 
@@ -767,6 +771,25 @@ function render_box(array &$canvas, int $x, int $y, int $width, int $height, str
     safe_write($canvas, $x + 2, $y, ' ' . $title . ' ', max(0, $width - 4));
 }
 
+function render_modern_box(array &$canvas, int $x, int $y, int $width, int $height, string $title): void
+{
+    if ($width < 4 || $height < 3) {
+        return;
+    }
+    safe_write($canvas, $x, $y, '+', 1);
+    safe_write($canvas, $x + $width - 1, $y, '+', 1);
+    safe_write($canvas, $x, $y + $height - 1, '+', 1);
+    safe_write($canvas, $x + $width - 1, $y + $height - 1, '+', 1);
+    safe_write($canvas, $x + 1, $y, str_repeat('-', max(0, $width - 2)), $width - 2);
+    safe_write($canvas, $x + 1, $y + $height - 1, str_repeat('-', max(0, $width - 2)), $width - 2);
+    draw_vline($canvas, $x, $y + 1, $height - 2);
+    draw_vline($canvas, $x + $width - 1, $y + 1, $height - 2);
+    if ($title !== '') {
+        $label = str_contains($title, '[') ? $title : '[' . $title . ']';
+        safe_write($canvas, $x + 1, $y, $label, min(strlen($label), max(0, $width - 2)));
+    }
+}
+
 function panel_obj(int $x, int $y, int $width, int $height, string $title, callable $render): array
 {
     return ['x' => $x, 'y' => $y, 'width' => $width, 'height' => $height, 'title' => $title, 'border' => 'cyan', 'render' => $render, 'clip' => true];
@@ -789,6 +812,21 @@ function draw_panel(array &$canvas, array $panel, array $frame): void
     }
 }
 
+function draw_modern_panel(array &$canvas, array $panel, array $frame): void
+{
+    render_modern_box($canvas, $panel['x'], $panel['y'], $panel['width'], $panel['height'], $panel['title']);
+    $rows = ($panel['render'])($frame, $panel);
+    foreach ($rows as $idx => $line) {
+        render_row($canvas, $panel, $idx, (string)$line);
+    }
+}
+
+function ticker_title(): string
+{
+    $speed = strtoupper((string)(getenv('SOCX_TICKER_SPEED') ?: 'FAST'));
+    return 'EVENT FEED [' . truncate_text($speed, 6) . ']';
+}
+
 function modern_header_rows(array $f, array $p): array
 {
     $badges = implode(' | ', $f['badges']);
@@ -802,16 +840,16 @@ function modern_network_rows(array $f, array $p): array
     $w = $p['width'] - 2;
     if ($w < 22) {
         return [
-            sprintf('WAN d %s', compact_rate($f['wan']['down'])),
-            sprintf('WAN u %s', compact_rate($f['wan']['up'])),
-            sprintf('LAN d %s', compact_rate($f['lan']['down'])),
-            sprintf('LAN u %s', compact_rate($f['lan']['up'])),
+            sprintf('WAN dn %s', compact_rate($f['wan']['down'])),
+            sprintf('WAN up %s', compact_rate($f['wan']['up'])),
+            sprintf('LAN dn %s', compact_rate($f['lan']['down'])),
+            sprintf('LAN up %s', compact_rate($f['lan']['up'])),
             sparkline($f['wan_history'] ?? [], max(6, $w - 2)),
         ];
     }
     return [
-        sprintf('WAN %-9s v  %-9s ^', $f['wan']['down'], $f['wan']['up']),
-        sprintf('LAN %-9s v  %-9s ^', $f['lan']['down'], $f['lan']['up']),
+        sprintf('WAN dn %-8s up %-8s', $f['wan']['down'], $f['wan']['up']),
+        sprintf('LAN dn %-8s up %-8s', $f['lan']['down'], $f['lan']['up']),
         'WAN ' . sparkline($f['wan_history'] ?? [], max(8, $w - 6)),
         'LAN ' . sparkline($f['lan_history'] ?? [], max(8, $w - 6)),
         truncate_text(($f['wan']['link'] ?? '') . '  ' . ($f['wan']['rtt'] ?? ''), $w),
@@ -896,7 +934,7 @@ function modern_ups_rows(array $f, array $p): array
     }
     if ($w < 22) {
         return [
-            sprintf('%s W', $ups['watts']),
+            sprintf('POWER %s W', $ups['watts']),
             sprintf('load %s%%', $ups['load']),
             sprintf('batt %s%%', $ups['battery']),
             sprintf('run %s', $ups['runtime']),
@@ -904,7 +942,7 @@ function modern_ups_rows(array $f, array $p): array
         ];
     }
     return [
-        sprintf('%s W', $ups['watts']),
+        sprintf('POWER %s W', $ups['watts']),
         sprintf('load %s%%  batt %s%%', $ups['load'], $ups['battery']),
         sprintf('run %s  line %sV', $ups['runtime'], $ups['linev']),
         sprintf('peak60 %sW  avg60 %sW', $ups['peak60'], $ups['avg60']),
@@ -918,12 +956,13 @@ function modern_process_rows(array $f, array $p): array
     $cmdW = max(10, $w - 35);
     $rows = [sprintf('%-6s %-8s %-7s %5s %s', 'PID', 'USER', 'MEM', 'CPU%', 'COMMAND')];
     foreach (array_slice($f['procs'], 0, max(1, $p['height'] - 3)) as $proc) {
+        $cmd = $cmdW < 18 ? (string)$proc['name'] : (string)$proc['cmd'];
         $rows[] = sprintf('%-6s %-8s %-7s %5.1f %s',
             truncate_text((string)$proc['pid'], 6),
             truncate_text((string)$proc['user'], 8),
             bytes_text((int)$proc['rss']),
             (float)$proc['cpu'],
-            truncate_text((string)$proc['cmd'], $cmdW));
+            truncate_text($cmd, $cmdW));
     }
     return $rows;
 }
@@ -932,12 +971,24 @@ function modern_flow_rows(array $f, array $p): array
 {
     $w = $p['width'] - 2;
     if ($w < 66) {
-        $rows = ['# flow                                      up/down'];
-        $max = max(1, intdiv($p['height'] - 3, 2));
+        $rows = ['# FLOW             RATE    CLS BAR'];
+        $max = max(1, $p['height'] - 3);
+        $rateW = 7;
+        $classW = 3;
+        $graphW = 5;
+        $flowW = max(8, $w - 24);
         foreach (array_slice($f['flows'], 0, $max) as $idx => $flow) {
-            $flowText = truncate_text($flow['src'] . ' -> ' . $flow['dst'], max(12, $w - 4));
-            $rows[] = sprintf('%02d %s', $idx + 1, $flowText);
-            $rows[] = sprintf('   %-7s %-7s %-8s %s', truncate_text($flow['up'], 7), truncate_text($flow['down'], 7), truncate_text($flow['class'], 8), truncate_text($flow['graph'], 10));
+            $flowText = truncate_text($flow['src'] . '>' . $flow['dst'], $flowW);
+            $rate = compact_rate_pair($flow['up'], $flow['down'], $rateW);
+            $rows[] = sprintf('%02d %-*s %-*s %-*s %s',
+                $idx + 1,
+                $flowW,
+                $flowText,
+                $rateW,
+                $rate,
+                $classW,
+                flow_class_short($flow['class']),
+                compact_flow_bar($flow['class'], $graphW));
         }
         return $rows;
     }
@@ -1850,12 +1901,44 @@ function compact_rate(string $rate): string
     return truncate_text($rate, 8);
 }
 
+function compact_rate_pair(string $up, string $down, int $width): string
+{
+    $text = strip_decimal_unit($up) . '/' . strip_decimal_unit($down);
+    return truncate_text($text, $width);
+}
+
+function strip_decimal_unit(string $value): string
+{
+    $value = str_replace(['B', '/s'], '', $value);
+    if (preg_match('/^([0-9]+)\.([0-9])[0-9]*([KMGTP]?)$/', $value, $m)) {
+        return $m[1] . $m[3];
+    }
+    return $value;
+}
+
+function flow_class_short(string $class): string
+{
+    return match ($class) {
+        'dnsbl' => 'dns',
+        'blocked' => 'blk',
+        'firewall' => 'fw',
+        'internet' => 'net',
+        default => truncate_text($class, 3),
+    };
+}
+
+function compact_flow_bar(string $class, int $width): string
+{
+    $inner = max(1, $width - 2);
+    $char = ($class === 'dnsbl' || $class === 'blocked') ? '!' : '#';
+    return '[' . str_repeat($char, $inner) . ']';
+}
+
 function split_widths(int $total, int $parts): array
 {
     $parts = max(1, $parts);
-    $target = $total + ($parts - 1);
-    $base = intdiv($target, $parts);
-    $remainder = $target % $parts;
+    $base = intdiv($total, $parts);
+    $remainder = $total % $parts;
     $widths = [];
     for ($i = 0; $i < $parts; $i++) {
         $widths[] = $base + ($i < $remainder ? 1 : 0);
@@ -1881,13 +1964,18 @@ function sparkline(array $values, int $width): string
     $min = min($values);
     $max = max($values);
     $range = max(1.0, (float)$max - (float)$min);
-    $chars = ' .:-=+*#%@';
+    $chars = sparkline_chars();
     $out = '';
     foreach ($values as $value) {
         $idx = (int)round((((float)$value - (float)$min) / $range) * (strlen($chars) - 1));
         $out .= $chars[max(0, min(strlen($chars) - 1, $idx))];
     }
     return '[' . str_pad($out, $width, '.', STR_PAD_LEFT) . ']';
+}
+
+function sparkline_chars(): string
+{
+    return getenv('SOCX_UNICODE') === 'true' ? '.:-=+*#%@' : '.:-=+*#%@';
 }
 
 function push_history(array &$history, float $now, float $value, float $seconds): void
@@ -1998,12 +2086,13 @@ function colorize_line(string $line, bool $color): string
         'white' => "\033[38;5;255;1m",
         'crit' => "\033[5;7;38;5;196;1m",
     ];
+    $line = preg_replace('/(-{2,})/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = preg_replace('/([+=|])/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = preg_replace('/\b(WAN UP|VPN UP|DNS OK|UPS ONLINE|PASS|ONLINE|UP)\b/', $c['green'] . '$1' . $c['reset'], $line);
-    $line = preg_replace('/\b(BLOCK|blocked|DNSBL|HIGH|\[HIGH\]|\[MED\]|\[DNSBL\])\b/', $c['red'] . '$1' . $c['reset'], $line);
-    $line = preg_replace('/\b(WARN|warning|MED|LOW|\[LOW\]|\[FW\]|\[IDS\])\b/', $c['yellow'] . '$1' . $c['reset'], $line);
+    $line = preg_replace('/\b(BLOCK|blocked|HIGH|\[HIGH\])\b/', $c['red'] . '$1' . $c['reset'], $line);
+    $line = preg_replace('/\b(DNSBL|WARN|warning|MED|LOW|\[LOW\]|\[FW\]|\[IDS\]|\[MED\]|\[DNSBL\])\b/', $c['yellow'] . '$1' . $c['reset'], $line);
     $line = preg_replace('/(\[CRIT\])/', $c['crit'] . '$1' . $c['reset'], $line);
-    $line = preg_replace('/\b(CPU|RAM|ARC|PF|LAN|WAN|UPS|TOTAL|IFTOPX|TCPDUMPX|SOCX WALL)\b/', $c['cyan'] . '$1' . $c['reset'], $line);
+    $line = preg_replace('/\b(CPU|RAM|ARC|PF|LAN|WAN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES)\b/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = preg_replace('/(\[[#!.]+\])/', $c['green'] . '$1' . $c['reset'], $line);
     $line = str_replace('◆', $c['cyan'] . '◆' . $c['reset'], $line);
     $line = str_replace($separatorMarker, $c['cyan'] . '◆' . $c['reset'], $line);
