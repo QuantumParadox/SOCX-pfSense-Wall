@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.39
+
+- Tightened the modern-btop wall layout to reclaim rows from the top metric cards and inner padding.
+- Reweighted top cards so UPS no longer steals excessive width from PF/CPU.
+- Shortened Process, Flow, and Packet table headers to show more useful rows and cleaner clipped columns.
+- Added a slim two-line Event Feed strip on short tmux panes so the current 80x24 wall can show 7 Process/Flow rows.
+- Changed DNSBL wording from misleading `blocked` language to `DNSBL hit` / `SINKHOLE` semantics.
+- Changed actual pf block display wording to `DROP`, keeping firewall drops visually distinct from DNSBL query hits.
+
 ## v0.1.38
 
 - Changed the modern-btop Event Feed default from horizontal scrolling to rotating whole-event display.

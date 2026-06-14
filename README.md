@@ -30,6 +30,7 @@ Suggested topics:
 - Keeps IFTopX/TCPDumpX visible in the bottom of the primary `NETX` wall.
 - Adds a SOC ticker for firewall blocks, DNS blocks, IDS-style alerts, and other useful events.
 - Shows a bottom rail with only firewall/security ticker text for maximum readable space.
+- Labels DNSBL query hits as `DNSBL hit`/`SINKHOLE` and reserves `DROP`/`REJECT` wording for actual firewall block events.
 - Leaves the original `htop`, `tcpdump`, and `iftop` tools untouched.
 - Includes a pfSense boot script so SOCX can start automatically after reboot.
 
@@ -150,6 +151,8 @@ SOCX_EVENT_CRIT_SECONDS=8
 ```
 
 Set `SOCX_EVENT_FEED_MODE=scroll` to use the older horizontal ticker, or `SOCX_EVENT_FEED_MODE=stack` to show a small vertical group when the panel has room.
+
+DNSBL Event Feed entries describe DNS query-level hits. A line such as `DNSBL hit: discord.com` means the hostname matched DNSBL/sinkhole logic; it does not claim the entire app or service is unreachable. Actual pf firewall blocks are shown separately as `DROP`/`REJECT` style events.
 
 UPS cache settings:
 

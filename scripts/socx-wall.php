@@ -681,25 +681,39 @@ function demo_frame(array $hosts, array $state = []): array
             ['pid' => '8809', 'name' => 'ntopng', 'user' => 'ntopng', 'rss' => parse_size('540M'), 'cpu' => 2.9, 'cmd' => 'ntopng flow telemetry'],
             ['pid' => '63842', 'name' => 'perl', 'user' => 'root', 'rss' => parse_size('7.4M'), 'cpu' => 1.8, 'cmd' => 'socx alert ticker'],
             ['pid' => '2', 'name' => 'clock', 'user' => 'root', 'rss' => 65536, 'cpu' => 0.4, 'cmd' => '[clock]'],
+            ['pid' => '5311', 'name' => 'unbound', 'user' => 'unbound', 'rss' => parse_size('146M'), 'cpu' => 0.3, 'cmd' => 'unbound resolver'],
+            ['pid' => '4120', 'name' => 'php-fpm', 'user' => 'root', 'rss' => parse_size('58M'), 'cpu' => 0.2, 'cmd' => 'php-fpm pfSense webConfigurator'],
+            ['pid' => '2188', 'name' => 'dpinger', 'user' => 'root', 'rss' => parse_size('9M'), 'cpu' => 0.2, 'cmd' => 'dpinger WAN_DHCP'],
+            ['pid' => '1833', 'name' => 'syslogd', 'user' => 'root', 'rss' => parse_size('3M'), 'cpu' => 0.1, 'cmd' => 'syslogd -s'],
+            ['pid' => '1221', 'name' => 'filterlog', 'user' => 'root', 'rss' => parse_size('5M'), 'cpu' => 0.1, 'cmd' => 'filterlog -i pflog0'],
         ],
         'flows' => [
-            ['src' => host_label('192.168.1.161', $hosts), 'dst' => 'LAN.180', 'up' => '9.38K', 'down' => '5.31K', 'class' => 'firewall', 'graph' => '[#######.]'],
-            ['src' => host_label('192.168.1.102', $hosts), 'dst' => 'EXT.61.55', 'up' => '1.20K', 'down' => '1.06K', 'class' => 'internet', 'graph' => '[##......]'],
-            ['src' => host_label('192.168.1.127', $hosts), 'dst' => 'EXT.199.64', 'up' => '37.2K', 'down' => '36.2K', 'class' => 'internet', 'graph' => '[######..]'],
-            ['src' => host_label('192.168.1.121', $hosts), 'dst' => 'EXT.104.10', 'up' => '25.1K', 'down' => '1.53K', 'class' => 'internet', 'graph' => '[####....]'],
-            ['src' => host_label('192.168.1.161', $hosts), 'dst' => 'beacons.gvt2.com.long.domain.example', 'up' => '120B', 'down' => '98B', 'class' => 'dnsbl', 'graph' => '[!.......]'],
+            ['src' => host_label('192.168.1.161', $hosts), 'dst' => 'LAN.180', 'up' => '9.38K', 'down' => '5.31K', 'service' => 'https', 'class' => 'firewall', 'graph' => '[#######.]'],
+            ['src' => host_label('192.168.1.102', $hosts), 'dst' => 'EXT.61.55', 'up' => '1.20K', 'down' => '1.06K', 'service' => 'https', 'class' => 'internet', 'graph' => '[##......]'],
+            ['src' => host_label('192.168.1.127', $hosts), 'dst' => 'EXT.199.64', 'up' => '37.2K', 'down' => '36.2K', 'service' => 'https', 'class' => 'internet', 'graph' => '[######..]'],
+            ['src' => host_label('192.168.1.121', $hosts), 'dst' => 'EXT.104.10', 'up' => '25.1K', 'down' => '1.53K', 'service' => 'https', 'class' => 'internet', 'graph' => '[####....]'],
+            ['src' => host_label('192.168.1.161', $hosts), 'dst' => 'beacons.gvt2.com', 'up' => '120B', 'down' => '98B', 'service' => 'dnsbl', 'class' => 'dnsbl', 'graph' => '[!.......]'],
+            ['src' => host_label('192.168.1.161', $hosts), 'dst' => 'discord.com', 'up' => '80B', 'down' => '0B', 'service' => 'dnsbl', 'class' => 'dnsbl', 'graph' => '[!.......]'],
+            ['src' => host_label('192.168.1.127', $hosts), 'dst' => 'EXT.147.70:137', 'up' => '0B', 'down' => '0B', 'service' => 'smb', 'class' => 'blocked', 'graph' => '[!.......]'],
+            ['src' => host_label('192.168.1.180', $hosts), 'dst' => 'api.anthropic.com', 'up' => '3.2K', 'down' => '9.1K', 'service' => 'https', 'class' => 'internet', 'graph' => '[####....]'],
+            ['src' => 'EXT.45.33', 'dst' => 'WAN:443', 'up' => '0B', 'down' => '0B', 'service' => 'https', 'class' => 'blocked', 'graph' => '[!.......]'],
         ],
         'packets' => [
             ['time' => '16:42:16', 'proto' => 'TCP', 'dir' => 'OUT', 'src' => host_label('192.168.1.102', $hosts), 'dst' => 'EXT.104.10', 'service' => 'https', 'size' => '39B', 'verdict' => 'PASS'],
             ['time' => '16:42:16', 'proto' => 'TCP', 'dir' => 'IN', 'src' => 'EXT.72.14', 'dst' => 'WAN', 'service' => 'https', 'size' => 'ctrl', 'verdict' => 'PASS'],
             ['time' => '16:42:17', 'proto' => 'UDP', 'dir' => 'OUT', 'src' => 'WAN', 'dst' => 'EXT.133.233', 'service' => 'vpn', 'size' => '1B', 'verdict' => 'PASS'],
-            ['time' => '16:42:18', 'proto' => 'TCP', 'dir' => 'OUT', 'src' => host_label('192.168.1.161', $hosts), 'dst' => 'beacons.gvt2.com.long.domain.example', 'service' => 'http', 'size' => '0B', 'verdict' => 'BLOCK'],
-            ['time' => '16:42:18', 'proto' => 'UDP', 'dir' => 'OUT', 'src' => 'WAN', 'dst' => '147.185.133.70:137', 'service' => 'unknown', 'size' => '0B', 'verdict' => 'BLOCK'],
+            ['time' => '16:42:18', 'proto' => 'DNS', 'dir' => 'OUT', 'src' => host_label('192.168.1.161', $hosts), 'dst' => 'beacons.gvt2.com', 'service' => 'dnsbl', 'size' => '0B', 'verdict' => 'DNSBL HIT'],
+            ['time' => '16:42:18', 'proto' => 'UDP', 'dir' => 'OUT', 'src' => 'LAN.127', 'dst' => '147.185.133.70:137', 'service' => 'smb', 'size' => '0B', 'verdict' => 'DROP'],
+            ['time' => '16:42:19', 'proto' => 'DNS', 'dir' => 'OUT', 'src' => host_label('192.168.1.161', $hosts), 'dst' => 'discord.com', 'service' => 'dnsbl', 'size' => '0B', 'verdict' => 'DNSBL HIT'],
+            ['time' => '16:42:20', 'proto' => 'TCP', 'dir' => 'OUT', 'src' => 'LAN.180', 'dst' => 'api.anthropic.com', 'service' => 'https', 'size' => '812B', 'verdict' => 'PASS'],
+            ['time' => '16:42:21', 'proto' => 'TCP', 'dir' => 'IN', 'src' => 'EXT.45.33', 'dst' => 'WAN:443', 'service' => 'https', 'size' => '0B', 'verdict' => 'DROP'],
+            ['time' => '16:42:22', 'proto' => 'DNS', 'dir' => 'OUT', 'src' => 'LAN.106', 'dst' => 'grammarly.io', 'service' => 'dnsbl', 'size' => '0B', 'verdict' => 'SINKHOLE'],
         ],
         'events' => [
-            '[DNSBL][LOW]  ' . host_label('192.168.1.161', $hosts) . ' -> beacons.gvt2.com blocked',
-            '[FW][MED]    ' . host_label('192.168.1.161', $hosts) . ' -> 147.185.133.70:137 blocked',
-            '[IDS][HIGH]  ' . host_label('192.168.1.102', $hosts) . ' -> suspicious outbound beacon',
+            '[DNSBL][LOW] ' . host_label('192.168.1.161', $hosts) . ' DNSBL hit: beacons.gvt2.com',
+            '[DNSBL][LOW] ' . host_label('192.168.1.161', $hosts) . ' DNSBL hit: discord.com',
+            '[FW][MED] ' . host_label('192.168.1.127', $hosts) . ' -> 147.185.133.70:137 drop',
+            '[IDS][HIGH] ' . host_label('192.168.1.102', $hosts) . ' exploit attempt blocked',
         ],
     ];
 }
@@ -757,7 +771,7 @@ function render_modern_btop_wall(array $frame, int $cols, int $rows, bool $color
     $layout = modern_btop_layout($cols, $rows);
 
     $cardGap = $cols >= 110 ? 2 : ($cols >= 74 ? 1 : 0);
-    $cardWidths = weighted_widths($cols - ($cardGap * 4), [17, 13, 18, 15, 22]);
+    $cardWidths = weighted_widths($cols - ($cardGap * 4), [18, 16, 22, 18, 18]);
     $x = 0;
     $cards = [];
     foreach (['NETWORK', 'PF STATES', 'CPU', 'MEMORY', 'UPS'] as $idx => $title) {
@@ -821,11 +835,11 @@ function render_ticker_update(array $frame, int $cols, int $rows, bool $color, s
 
 function modern_btop_layout(int $cols, int $rows): array
 {
-    $headerH = 3;
-    $cardsH = $rows >= 38 ? 9 : 8;
-    $tickerH = 3;
+    $headerH = 2;
+    $cardsH = $rows <= 26 ? 5 : 6;
+    $tickerH = $rows <= 26 ? 2 : 3;
     $contentH = max(10, $rows - $headerH - $cardsH - $tickerH);
-    $packetsH = min(12, max(5, intdiv($contentH, 2)));
+    $packetsH = min(10, max(5, intdiv($contentH, 3)));
     $middleH = max(5, $contentH - $packetsH);
     $middleY = $headerH + $cardsH;
     $packetsY = $middleY + $middleH;
@@ -1182,6 +1196,23 @@ function render_modern_header_frame(array &$canvas, int $x, int $y, int $width, 
     safe_write($canvas, $x, $y + $height - 1, str_repeat($h, $width), $width);
 }
 
+function render_modern_ticker_frame(array &$canvas, int $x, int $y, int $width, string $title): void
+{
+    if ($width < 4) {
+        return;
+    }
+    $b = unicode_border_chars();
+    safe_write($canvas, $x, $y, $b['tl'], 1);
+    safe_write($canvas, $x + $width - 1, $y, $b['tr'], 1);
+    safe_write($canvas, $x + 1, $y, str_repeat($b['h'], max(0, $width - 2)), $width - 2);
+    if ($title !== '') {
+        $label = ' ' . strtoupper($title) . ' ';
+        safe_write($canvas, $x + 1, $y, $label, min(cell_len($label), max(0, $width - 2)));
+    }
+    safe_write($canvas, $x, $y + 1, $b['v'], 1);
+    safe_write($canvas, $x + $width - 1, $y + 1, $b['v'], 1);
+}
+
 function panel_obj(int $x, int $y, int $width, int $height, string $title, callable $render, string $style = 'box'): array
 {
     return ['x' => $x, 'y' => $y, 'width' => $width, 'height' => $height, 'title' => $title, 'border' => 'cyan', 'render' => $render, 'clip' => true, 'style' => $style];
@@ -1211,6 +1242,8 @@ function draw_modern_panel(array &$canvas, array $panel, array $frame): void
         render_modern_card_frame($canvas, $panel['x'], $panel['y'], $panel['width'], $panel['height'], $panel['title']);
     } elseif ($style === 'header') {
         render_modern_header_frame($canvas, $panel['x'], $panel['y'], $panel['width'], $panel['height']);
+    } elseif ($style === 'ticker' && (int)$panel['height'] === 2 && modern_border_style() === 'unicode') {
+        render_modern_ticker_frame($canvas, $panel['x'], $panel['y'], $panel['width'], $panel['title']);
     } elseif (modern_border_style() === 'unicode') {
         render_box_unicode($canvas, $panel['x'], $panel['y'], $panel['width'], $panel['height'], $panel['title']);
     } else {
@@ -1241,7 +1274,10 @@ function modern_content_bounds(array $panel): array
     if ($style === 'header') {
         return [$x, $y, $width, max(0, $height - 1)];
     }
-    $pad = modern_border_style() === 'unicode' && $width >= 10 ? 2 : 1;
+    if ($style === 'ticker' && $height === 2) {
+        return [$x + 1, $y + 1, max(0, $width - 2), 1];
+    }
+    $pad = 1;
     if ($style === 'card') {
         if (modern_border_style() === 'unicode') {
             return [$x + $pad, $y + 1, max(0, $width - ($pad * 2)), max(0, $height - 2)];
@@ -1316,19 +1352,16 @@ function modern_network_rows(array $f, array $p): array
     $w = modern_content_width($p);
     if ($w < 22) {
         return [
-            sprintf('WAN %s %s', down_marker(), compact_rate($f['wan']['down'])),
-            sprintf('WAN %s %s', up_marker(), compact_rate($f['wan']['up'])),
-            sprintf('LAN %s %s', down_marker(), compact_rate($f['lan']['down'])),
-            sprintf('LAN %s %s', up_marker(), compact_rate($f['lan']['up'])),
+            sprintf('WAN %s/%s', compact_rate($f['wan']['down']), compact_rate($f['wan']['up'])),
+            sprintf('LAN %s/%s', compact_rate($f['lan']['down']), compact_rate($f['lan']['up'])),
             fit_sparkline($f['wan_history'] ?? [], $w),
         ];
     }
     return [
-        sprintf('WAN  %s %-8s %s %-8s', down_marker(), $f['wan']['down'], up_marker(), $f['wan']['up']),
-        'WAN  ' . fit_sparkline($f['wan_history'] ?? [], $w - 5),
-        sprintf('LAN  %s %-8s %s %-8s', down_marker(), $f['lan']['down'], up_marker(), $f['lan']['up']),
-        'LAN  ' . fit_sparkline($f['lan_history'] ?? [], $w - 5),
-        truncate_text(($f['wan']['link'] ?? '') . '  ' . ($f['wan']['rtt'] ?? ''), $w),
+        sprintf('WAN %s %s  %s %s', down_marker(), compact_rate($f['wan']['down']), up_marker(), compact_rate($f['wan']['up'])),
+        sprintf('LAN %s %s  %s %s', down_marker(), compact_rate($f['lan']['down']), up_marker(), compact_rate($f['lan']['up'])),
+        fit_sparkline($f['wan_history'] ?? [], $w),
+        truncate_text(($f['wan']['link'] ?? '') . ' ' . ($f['wan']['rtt'] ?? ''), $w),
     ];
 }
 
@@ -1340,16 +1373,13 @@ function modern_pf_rows(array $f, array $p): array
         return [
             sprintf('st %s', $pf['states'] ?? '?'),
             sprintf('sr %s', compact_rate($pf['searches_rate'] ?? '?')),
-            sprintf('blk %s', compact_num((int)($pf['blocked'] ?? 0))),
-            sprintf('pass %s', compact_num((int)($pf['passed'] ?? 0))),
+            sprintf('drop %s pass %s', compact_num((int)($pf['blocked'] ?? 0)), compact_num((int)($pf['passed'] ?? 0))),
             fit_sparkline($f['pf_history'] ?? [], $w),
         ];
     }
     return [
-        sprintf('states  %s', $pf['states'] ?? '?'),
-        sprintf('search  %s', $pf['searches_rate'] ?? '?'),
-        sprintf('blocked %s', compact_num((int)($pf['blocked'] ?? 0))),
-        sprintf('passed  %s', compact_num((int)($pf['passed'] ?? 0))),
+        sprintf('st %s  sr %s', $pf['states'] ?? '?', $pf['searches_rate'] ?? '?'),
+        sprintf('drop %s  pass %s', compact_num((int)($pf['blocked'] ?? 0)), compact_num((int)($pf['passed'] ?? 0))),
         fit_sparkline($f['pf_history'] ?? [], $w),
     ];
 }
@@ -1359,9 +1389,10 @@ function modern_cpu_card_rows(array $f, array $p): array
     $cpu = $f['cpu'];
     $tick = (int)($f['tick'] ?? 0);
     $w = modern_content_width($p);
+    $cores = array_slice($cpu['cores'], 0, 4);
     if ($w < 22) {
         $rows = [sprintf('%d%% %s %s', $cpu['used'], str_replace('GHz', 'G', $cpu['freq']), modern_temp_text($cpu['temp']) )];
-        foreach (array_slice($cpu['cores'], 0, max(1, $p['height'] - 4)) as $core) {
+        foreach ($cores as $core) {
             $used = (int)round((float)$core['used']);
             $barW = max(2, min(6, $w - 9));
             $rows[] = sprintf('C%s %s %2d%%', $core['id'], animated_meter($used, $barW, $tick + (int)$core['id']), $used);
@@ -1369,13 +1400,17 @@ function modern_cpu_card_rows(array $f, array $p): array
         $rows[] = 'ld ' . implode(' ', array_slice($cpu['load'], 0, 2));
         return $rows;
     }
-    $barW = max(8, min(18, $w - 11));
+    $barW = max(4, min(8, intdiv($w - 16, 2)));
     $rows = [sprintf('%3d%%  %-7s  %s', $cpu['used'], $cpu['freq'], modern_temp_text($cpu['temp']))];
-    foreach (array_slice($cpu['cores'], 0, max(1, $p['height'] - 4)) as $core) {
-        $used = (int)round((float)$core['used']);
-        $rows[] = sprintf('C%-2s %s %3d%%', $core['id'], animated_meter($used, $barW, $tick + (int)$core['id']), $used);
+    foreach (array_chunk($cores, 2) as $pair) {
+        $parts = [];
+        foreach ($pair as $core) {
+            $used = (int)round((float)$core['used']);
+            $parts[] = sprintf('C%s %s %2d%%', $core['id'], animated_meter($used, $barW, $tick + (int)$core['id']), $used);
+        }
+        $rows[] = truncate_text(implode('  ', $parts), $w);
     }
-    $rows[] = 'load ' . implode(' ', $cpu['load']);
+    $rows[] = 'ld ' . implode(' ', $cpu['load']);
     return $rows;
 }
 
@@ -1386,20 +1421,16 @@ function modern_memory_rows(array $f, array $p): array
     $arcPct = percent((int)$mem['arc_total'], max(1, (int)$mem['total']));
     if ($w < 22) {
         return [
-            sprintf('RAM %d%%', (int)$mem['used_pct']),
-            fit_bar((int)$mem['used_pct'], $w),
-            sprintf('%s/%s', bytes_text((int)$mem['used']), bytes_text((int)$mem['total'])),
-            sprintf('ARC %d%%', $arcPct),
-            fit_bar($arcPct, $w),
-            'free ' . bytes_text((int)$mem['free']),
+            sprintf('RAM %s/%s', bytes_text((int)$mem['used']), bytes_text((int)$mem['total'])),
+            sprintf('%2d%% %s', (int)$mem['used_pct'], fit_bar((int)$mem['used_pct'], max(1, $w - 4))),
+            sprintf('ARC %s free %s', bytes_text((int)$mem['arc_total']), bytes_text((int)$mem['free'])),
         ];
     }
     return [
-        sprintf('RAM %s / %s', bytes_text((int)$mem['used']), bytes_text((int)$mem['total'])),
-        sprintf('%3d%% %s', (int)$mem['used_pct'], fit_bar((int)$mem['used_pct'], $w - 5)),
-        sprintf('ARC %s / %s', bytes_text((int)$mem['arc_total']), bytes_text((int)$mem['total'])),
-        sprintf('%3d%% %s', $arcPct, fit_bar($arcPct, $w - 5)),
-        'free ' . bytes_text((int)$mem['free']),
+        sprintf('RAM %s/%s', bytes_text((int)$mem['used']), bytes_text((int)$mem['total'])),
+        sprintf('%2d%% %s', (int)$mem['used_pct'], fit_bar((int)$mem['used_pct'], max(1, $w - 4))),
+        sprintf('ARC %s  free %s', bytes_text((int)$mem['arc_total']), bytes_text((int)$mem['free'])),
+        sprintf('%2d%% %s', $arcPct, fit_bar($arcPct, max(1, $w - 4))),
     ];
 }
 
@@ -1408,7 +1439,7 @@ function modern_ups_rows(array $f, array $p): array
     $ups = normalize_ups($f['ups'] ?? []);
     $w = modern_content_width($p);
     if (!$ups['online']) {
-        return ['UPS unavailable', 'collector waiting', '', sparkline([], max(8, $w))];
+        return ['UPS unavailable', 'collector waiting', sparkline([], max(8, $w))];
     }
     $watts = center_text(sprintf('%s W', $ups['watts']), $w);
     if ($w < 22) {
@@ -1416,15 +1447,13 @@ function modern_ups_rows(array $f, array $p): array
             $watts,
             sprintf('load %s%% batt %s%%', $ups['load'], $ups['battery']),
             sprintf('run %s', $ups['runtime']),
-            sprintf('pk %s av %s', $ups['peak60'], $ups['avg60']),
             fit_sparkline($ups['history'], $w),
         ];
     }
     return [
         $watts,
-        sprintf('load %s%%  batt %s%%', $ups['load'], $ups['battery']),
-        sprintf('run %s', $ups['runtime']),
-        sprintf('pk %s  avg %s', $ups['peak60'], $ups['avg60']),
+        sprintf('load %s%% batt %s%% run %s', $ups['load'], $ups['battery'], $ups['runtime']),
+        sprintf('pk %s avg %s', $ups['peak60'], $ups['avg60']),
         fit_sparkline($ups['history'], $w),
     ];
 }
@@ -1432,13 +1461,13 @@ function modern_ups_rows(array $f, array $p): array
 function modern_process_rows(array $f, array $p): array
 {
     $w = modern_content_width($p);
-    $cmdW = max(8, $w - 27);
-    $rows = [sprintf('%-6s %-7s %-6s %5s %s', 'PID', 'USER', 'MEM', 'CPU%', 'COMMAND')];
+    $cmdW = max(8, $w - 24);
+    $rows = [sprintf('%-5s %-5s %-6s %4s %s', 'PID', 'USER', 'MEM', 'CPU', 'CMD')];
     foreach (array_slice($f['procs'], 0, max(1, $p['height'] - 3)) as $proc) {
         $cmd = $cmdW < 10 ? (string)$proc['name'] : (string)$proc['cmd'];
-        $rows[] = sprintf('%-6s %-7s %-6s %5.1f %s',
-            truncate_text((string)$proc['pid'], 6),
-            truncate_text((string)$proc['user'], 7),
+        $rows[] = sprintf('%-5s %-5s %-6s %4.1f %s',
+            truncate_text((string)$proc['pid'], 5),
+            truncate_text((string)$proc['user'], 5),
             truncate_text(bytes_text((int)$proc['rss']), 6),
             (float)$proc['cpu'],
             truncate_modern_text($cmd, $cmdW));
@@ -1449,41 +1478,24 @@ function modern_process_rows(array $f, array $p): array
 function modern_flow_rows(array $f, array $p): array
 {
     $w = modern_content_width($p);
-    if ($w < 66) {
-        $rows = ['# FLOW             RATE    CLS METER'];
-        $max = max(1, $p['height'] - 3);
-        $rateW = 7;
-        $classW = 3;
-        $graphW = max(4, min(8, $w - 29));
-        $flowW = max(8, $w - $rateW - $classW - $graphW - 8);
-        foreach (array_slice($f['flows'], 0, $max) as $idx => $flow) {
-            $flowText = truncate_modern_text($flow['src'] . ' -> ' . $flow['dst'], $flowW);
-            $rate = compact_rate_pair($flow['up'], $flow['down'], $rateW);
-            $rows[] = sprintf('%02d %-*s %-*s %-*s %-*s',
-                $idx + 1,
-                $flowW,
-                $flowText,
-                $rateW,
-                $rate,
-                $classW,
-                flow_class_short($flow['class']),
-                $graphW,
-                compact_flow_bar($flow['up'], $flow['down'], $flow['class'], $graphW));
-        }
-        return $rows;
-    }
-    $srcW = max(10, min(22, intdiv($w, 4)));
-    $meterW = 8;
-    $dstW = max(10, $w - $srcW - $meterW - 46);
-    $rows = [sprintf('%-2s %-*s -> %-*s %-7s %-7s %-8s %s', '#', $srcW, 'SOURCE', $dstW, 'DESTINATION', 'UP', 'DOWN', 'CLASS', 'METER')];
+    $rateW = $w >= 74 ? 9 : 7;
+    $svcW = $w >= 74 ? 8 : 5;
+    $tagW = $w >= 74 ? 8 : 5;
+    $meterW = max(3, min(6, $w - 34));
+    $flowW = max(10, $w - $rateW - $svcW - $tagW - $meterW - 8);
+    $rows = [sprintf('%-2s %-*s %-*s %-*s %-*s %s', '#', $flowW, 'FLOW', $rateW, 'RATE', $svcW, 'SVC', $tagW, 'TAG', 'MTR')];
     foreach (array_slice($f['flows'], 0, max(1, $p['height'] - 3)) as $idx => $flow) {
-        $rows[] = sprintf('%02d %-*s -> %-*s %-7s %-7s %-8s %s',
+        $flowText = truncate_modern_text($flow['src'] . ' -> ' . $flow['dst'], $flowW);
+        $rows[] = sprintf('%02d %-*s %-*s %-*s %-*s %s',
             $idx + 1,
-            $srcW, truncate_modern_text($flow['src'], $srcW),
-            $dstW, truncate_modern_text($flow['dst'], $dstW),
-            truncate_text($flow['up'], 7),
-            truncate_text($flow['down'], 7),
-            truncate_text($flow['class'], 8),
+            $flowW,
+            $flowText,
+            $rateW,
+            compact_rate_pair($flow['up'], $flow['down'], $rateW),
+            $svcW,
+            truncate_text((string)($flow['service'] ?? flow_class_short($flow['class'])), $svcW),
+            $tagW,
+            truncate_text(flow_class_short($flow['class']), $tagW),
             compact_flow_bar($flow['up'], $flow['down'], $flow['class'], $meterW));
     }
     return $rows;
@@ -1492,13 +1504,16 @@ function modern_flow_rows(array $f, array $p): array
 function modern_packet_rows(array $f, array $p): array
 {
     $w = modern_content_width($p);
-    $flowW = max(24, $w - 45);
-    $rows = [sprintf('%-8s %-5s %-4s %-*s %-7s %-5s %-7s', 'TIME', 'PROTO', 'DIR', $flowW, 'SOURCE -> DESTINATION', 'SVC', 'SIZE', 'VERDICT')];
+    $svcW = $w >= 110 ? 8 : 6;
+    $verdictW = 10;
+    $flowW = max(24, $w - $svcW - $verdictW - 44);
+    $rows = [sprintf('%-8s %-5s %-4s %-*s %-*s %-*s', 'TIME', 'PROTO', 'DIR', $flowW, 'SRC -> DST', $svcW, 'SVC', $verdictW, 'VERDICT')];
     foreach (array_slice($f['packets'], 0, max(1, $p['height'] - 3)) as $pkt) {
         $flow = $pkt['src'] . ' -> ' . $pkt['dst'];
-        $rows[] = sprintf('%-8s %-5s %-4s %-*s %-7s %-5s %-7s',
+        $rows[] = sprintf('%-8s %-5s %-4s %-*s %-*s %-*s',
             $pkt['time'], $pkt['proto'], $pkt['dir'], $flowW, truncate_text($flow, $flowW),
-            truncate_text($pkt['service'], 7), truncate_text($pkt['size'], 5), $pkt['verdict']);
+            $svcW, truncate_text($pkt['service'], $svcW),
+            $verdictW, truncate_text($pkt['verdict'], $verdictW));
     }
     return $rows;
 }
@@ -2263,10 +2278,10 @@ function parse_filter_event(string $line, array $hosts): ?array
     }
     $srcLabel = endpoint_label($src, $sport, $hosts);
     $dstLabel = endpoint_label($dst, $dport, $hosts);
-    $verdict = $action === 'block' ? 'BLOCK' : 'PASS';
+    $verdict = $action === 'block' ? 'DROP' : 'PASS';
     $svc = service_name($dport ?: $sport);
     $time = preg_match('/(\d{2}:\d{2}:\d{2})/', $line, $m) ? $m[1] : date('H:i:s');
-    $severity = $verdict === 'BLOCK' ? 'MED' : 'LOW';
+    $severity = $verdict === 'DROP' ? 'MED' : 'LOW';
     return [
         'time' => $time,
         'proto' => $proto,
@@ -2277,7 +2292,7 @@ function parse_filter_event(string $line, array $hosts): ?array
         'size' => $len === '0' ? 'ctrl' : $len . 'B',
         'bytes' => (int)$len,
         'verdict' => $verdict,
-        'class' => $verdict === 'BLOCK' ? 'blocked' : (($svc === 'dns' || $svc === 'https') ? 'internet' : 'firewall'),
+        'class' => $verdict === 'DROP' ? 'blocked' : (($svc === 'dns' || $svc === 'https') ? 'internet' : 'firewall'),
         'ticker' => sprintf('[FW][%s] %s -> %s %s', $severity, $srcLabel, $dstLabel, strtolower($verdict)),
     ];
 }
@@ -2291,6 +2306,7 @@ function parse_dnsbl_event(string $line, array $hosts): ?array
     if (preg_match('/([A-Za-z0-9.-]+\.[A-Za-z]{2,})/', $line, $dm)) {
         $domain = $dm[1];
     }
+    $verdict = stripos($line, 'sink') !== false ? 'SINKHOLE' : 'DNSBL HIT';
     $src = endpoint_label($ipm[1], '', $hosts);
     return [
         'time' => date('H:i:s'),
@@ -2301,9 +2317,9 @@ function parse_dnsbl_event(string $line, array $hosts): ?array
         'service' => 'dnsbl',
         'size' => '0B',
         'bytes' => 0,
-        'verdict' => 'DNSBL',
+        'verdict' => $verdict,
         'class' => 'dnsbl',
-        'ticker' => sprintf('[DNSBL][LOW] %s -> %s blocked', $src, $domain),
+        'ticker' => sprintf('[DNSBL][LOW] %s DNSBL hit: %s', $src, $domain),
     ];
 }
 
@@ -2311,9 +2327,9 @@ function flows_from_events(array $events): array
 {
     $agg = [];
     foreach ($events as $e) {
-        $key = $e['src'] . '|' . $e['dst'] . '|' . $e['class'];
+        $key = $e['src'] . '|' . $e['dst'] . '|' . $e['class'] . '|' . ($e['service'] ?? '');
         if (!isset($agg[$key])) {
-            $agg[$key] = ['src' => $e['src'], 'dst' => $e['dst'], 'up_bytes' => 0, 'down_bytes' => 0, 'class' => $e['class'], 'total' => 0];
+            $agg[$key] = ['src' => $e['src'], 'dst' => $e['dst'], 'up_bytes' => 0, 'down_bytes' => 0, 'class' => $e['class'], 'service' => $e['service'] ?? '', 'total' => 0];
         }
         $bytes = max(1, (int)$e['bytes']);
         if ($e['dir'] === 'IN') {
@@ -2333,6 +2349,7 @@ function flows_from_events(array $events): array
             'up' => short_bytes($row['up_bytes']),
             'down' => short_bytes($row['down_bytes']),
             'class' => $row['class'],
+            'service' => $row['service'],
             'graph' => graph_bar((int)$row['total'], $max, $row['class'] === 'dnsbl' || $row['class'] === 'blocked'),
         ];
     }
@@ -2527,8 +2544,8 @@ function strip_decimal_unit(string $value): string
 function flow_class_short(string $class): string
 {
     return match ($class) {
-        'dnsbl' => 'dns',
-        'blocked' => 'blk',
+        'dnsbl' => 'dns-hit',
+        'blocked' => 'drop',
         'firewall' => 'fw',
         'internet' => 'net',
         default => truncate_text($class, 3),
@@ -2880,8 +2897,8 @@ function colorize_line(string $line, bool $color): string
     $line = color_replace('/([+=|])/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/([┌┐└┘─│├┤┬┴┼])/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/\b(WAN UP|VPN UP|DNS OK|UPS ONLINE|PASS|ONLINE|UP)\b/', $c['green'] . '$1' . $c['reset'], $line);
-    $line = color_replace('/\b(BLOCK|blocked|HIGH|\[HIGH\])\b/', $c['red'] . '$1' . $c['reset'], $line);
-    $line = color_replace('/\b(DNSBL|WARN|warning|MED|LOW|\[LOW\]|\[FW\]|\[IDS\]|\[MED\]|\[DNSBL\])\b/', $c['yellow'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/\b(FW BLOCK|DROP|REJECT|BLOCK|blocked|HIGH|\[HIGH\])\b/', $c['red'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/\b(DNSBL HIT|SINKHOLE|DNS DENY|DNSBL|WARN|warning|MED|LOW|\[LOW\]|\[FW\]|\[IDS\]|\[MED\]|\[DNSBL\])\b/', $c['yellow'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[CRIT\])/', $c['crit'] . '$1' . $c['reset'], $line);
     $line = color_replace('/\b(CPU|RAM|ARC|PF|LAN|WAN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES)\b/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[[#!.]+\])/', $c['green'] . '$1' . $c['reset'], $line);
