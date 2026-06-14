@@ -26,17 +26,28 @@ if ($mode !== 'wall') {
 
 $color = !$opts['no_color'] && (getenv('NO_COLOR') === false || getenv('NO_COLOR') === '');
 $interval = max(0.5, (float)$opts['interval']);
+$tickerConfig = ticker_config($opts);
+$renderInterval = min($interval, $tickerConfig['interval_ms'] / 1000);
+$renderInterval = max(0.05, $renderInterval);
 $once = (bool)$opts['once'];
 $state = [
     'net' => [],
     'time' => microtime(true),
     'tick' => 0,
     'ticker' => 0,
+    'ticker_offset' => 0,
+    'ticker_hold_until' => 0.0,
+    'ticker_hold_text' => '',
+    'ticker_config' => $tickerConfig,
+    'ticker_queue' => [],
+    'ticker_seen' => [],
     'static' => static_info(),
     'core_history' => [],
     'last_events' => [],
     'last_events_at' => 0.0,
+    'events_fresh' => false,
     'last_frame' => null,
+    'next_frame_at' => 0.0,
 ];
 
 if (!$once) {
@@ -47,17 +58,31 @@ if (!$once) {
 }
 
 do {
+    $now = microtime(true);
     try {
-        $state['tick']++;
         [$cols, $rows] = term_size($opts);
-        $hosts = load_host_map((string)$opts['hosts']);
-        $frame = $opts['demo'] ? demo_frame($hosts, $state) : collect_live_frame($state, $hosts);
-        $state['last_frame'] = $frame;
+        if ($state['last_frame'] === null || $once || $now >= (float)$state['next_frame_at']) {
+            $state['tick']++;
+            $hosts = load_host_map((string)$opts['hosts']);
+            $frame = $opts['demo'] ? demo_frame($hosts, $state) : collect_live_frame($state, $hosts);
+            if (!$state['ticker_queue'] || (!$opts['demo'] && ($state['events_fresh'] ?? false))) {
+                update_ticker_queue($state, $frame['events'], $now);
+            }
+            $state['last_frame'] = $frame;
+            $state['next_frame_at'] = $now + $interval;
+        } else {
+            $frame = $state['last_frame'];
+        }
     } catch (Throwable $e) {
         log_wall_error($e);
         [$cols, $rows] = term_size($opts);
         $frame = $state['last_frame'] ?: error_frame($e);
     }
+    $frame['ticker_events'] = ticker_event_texts($state);
+    $frame['ticker_offset'] = (int)$state['ticker_offset'];
+    $frame['ticker_hold_until'] = (float)$state['ticker_hold_until'];
+    $frame['ticker_hold_text'] = (string)$state['ticker_hold_text'];
+    $frame['ticker_now'] = $now;
     $screen = render_wall($frame, $cols, $rows, $color, $state);
     if ($once) {
         echo $screen;
@@ -68,7 +93,7 @@ do {
     }
     echo "\033[H\033[2J" . $screen;
     flush();
-    usleep((int)($interval * 1000000));
+    usleep((int)($renderInterval * 1000000));
 } while (true);
 
 function log_wall_error(Throwable $e): void
@@ -89,6 +114,11 @@ function parse_args(array $argv): array
         'hosts' => '',
         'width' => 0,
         'height' => 0,
+        'ticker_speed' => '',
+        'ticker_step' => 0,
+        'ticker_interval_ms' => 0,
+        'ticker_max_events' => 0,
+        'ticker_dedupe_seconds' => 0,
     ];
 
     for ($i = 1; $i < count($argv); $i++) {
@@ -121,6 +151,26 @@ function parse_args(array $argv): array
             $opts['height'] = (int)$argv[++$i];
         } elseif (str_starts_with($arg, '--height=')) {
             $opts['height'] = (int)substr($arg, 9);
+        } elseif ($arg === '--ticker-speed' && isset($argv[$i + 1])) {
+            $opts['ticker_speed'] = (string)$argv[++$i];
+        } elseif (str_starts_with($arg, '--ticker-speed=')) {
+            $opts['ticker_speed'] = (string)substr($arg, 15);
+        } elseif ($arg === '--ticker-step' && isset($argv[$i + 1])) {
+            $opts['ticker_step'] = (int)$argv[++$i];
+        } elseif (str_starts_with($arg, '--ticker-step=')) {
+            $opts['ticker_step'] = (int)substr($arg, 14);
+        } elseif ($arg === '--ticker-interval-ms' && isset($argv[$i + 1])) {
+            $opts['ticker_interval_ms'] = (int)$argv[++$i];
+        } elseif (str_starts_with($arg, '--ticker-interval-ms=')) {
+            $opts['ticker_interval_ms'] = (int)substr($arg, 21);
+        } elseif ($arg === '--ticker-max-events' && isset($argv[$i + 1])) {
+            $opts['ticker_max_events'] = (int)$argv[++$i];
+        } elseif (str_starts_with($arg, '--ticker-max-events=')) {
+            $opts['ticker_max_events'] = (int)substr($arg, 20);
+        } elseif ($arg === '--ticker-dedupe-seconds' && isset($argv[$i + 1])) {
+            $opts['ticker_dedupe_seconds'] = (int)$argv[++$i];
+        } elseif (str_starts_with($arg, '--ticker-dedupe-seconds=')) {
+            $opts['ticker_dedupe_seconds'] = (int)substr($arg, 24);
         }
     }
 
@@ -131,7 +181,44 @@ function print_help(): void
 {
     echo APP_NAME . ' ' . APP_VERSION . "\n";
     echo "Usage: socx-wall.php [--mode wall] [--demo] [--once] [--interval SEC] [--hosts FILE]\n";
-    echo "Demo preview: socx-wall.php --demo --mode wall --once --width 140 --height 36\n";
+    echo "       [--ticker-speed slow|normal|fast|turbo] [--ticker-step N] [--ticker-interval-ms N]\n";
+    echo "Demo preview: socx-wall.php --demo --mode wall --ticker-speed fast --width 140 --height 36\n";
+}
+
+function ticker_config(array $opts): array
+{
+    $speed = strtolower((string)($opts['ticker_speed'] ?: getenv('SOCX_TICKER_SPEED') ?: 'fast'));
+    $speedSteps = ['slow' => 1, 'normal' => 2, 'fast' => 4, 'turbo' => 6];
+    $step = $speedSteps[$speed] ?? $speedSteps['fast'];
+
+    $envStep = getenv('SOCX_TICKER_STEP');
+    if ((int)$opts['ticker_step'] > 0) {
+        $step = (int)$opts['ticker_step'];
+    } elseif ($envStep !== false && is_numeric($envStep) && (int)$envStep > 0) {
+        $step = (int)$envStep;
+    }
+    $step = max(1, min(12, $step));
+
+    $envInterval = getenv('SOCX_TICKER_INTERVAL_MS');
+    $intervalMs = (int)$opts['ticker_interval_ms'] > 0 ? (int)$opts['ticker_interval_ms'] : (is_numeric($envInterval) ? (int)$envInterval : 100);
+    $intervalMs = max(50, min(500, $intervalMs));
+
+    $envMax = getenv('SOCX_TICKER_MAX_EVENTS');
+    $maxEvents = (int)$opts['ticker_max_events'] > 0 ? (int)$opts['ticker_max_events'] : (is_numeric($envMax) ? (int)$envMax : 25);
+    $maxEvents = max(5, min(100, $maxEvents));
+
+    $envDedupe = getenv('SOCX_TICKER_DEDUPE_SECONDS');
+    $dedupe = (int)$opts['ticker_dedupe_seconds'] > 0 ? (int)$opts['ticker_dedupe_seconds'] : (is_numeric($envDedupe) ? (int)$envDedupe : 10);
+    $dedupe = max(1, min(120, $dedupe));
+
+    return [
+        'speed' => $speed,
+        'step' => $step,
+        'interval_ms' => $intervalMs,
+        'max_events' => $maxEvents,
+        'dedupe_seconds' => $dedupe,
+        'separator' => '   ◆   ',
+    ];
 }
 
 function run_cmd(string $cmd): string
@@ -356,7 +443,7 @@ function render_wall(array $frame, int $cols, int $rows, bool $color, array &$st
     foreach ($canvas as $line) {
         $lines[] = colorize_line($line, $color);
     }
-    $state['ticker'] = (($state['ticker'] ?? 0) + 1) % 9999;
+    advance_ticker($state, (float)($frame['ticker_now'] ?? microtime(true)));
     return implode("\n", $lines);
 }
 
@@ -646,12 +733,39 @@ function tcpdump_rows(array $f, array $p): array
 
 function ticker_rows(array $f, array $p): array
 {
-    $events = $f['events'];
+    $events = $f['ticker_events'] ?? $f['events'];
     if (!$events) {
         $events = ['[LOW] SOCX wall mode live - waiting for firewall events'];
     }
-    $line = implode('   |   ', array_slice($events, 0, 4));
-    return [$line];
+    $width = max(1, $p['width'] - 2);
+    $now = (float)($f['ticker_now'] ?? microtime(true));
+    $holdUntil = (float)($f['ticker_hold_until'] ?? 0.0);
+    $holdText = (string)($f['ticker_hold_text'] ?? '');
+    if ($holdText !== '' && $now < $holdUntil) {
+        return [ticker_view('!!! ' . $holdText, 0, $width)];
+    }
+
+    $separator = '   ◆   ';
+    $line = implode($separator, $events);
+    $pad = str_repeat(' ', max(8, min(28, intdiv($width, 3))));
+    $cycle = $line . $separator . $pad;
+    $offset = (int)($f['ticker_offset'] ?? 0);
+    return [ticker_view($cycle, $offset, $width)];
+}
+
+function ticker_view(string $text, int $offset, int $width): string
+{
+    $text = trim($text);
+    if ($text === '') {
+        $text = '[LOW] SOCX wall mode live';
+    }
+    $cycleLen = max(1, strlen($text));
+    $offset %= $cycleLen;
+    $scroll = substr($text, $offset) . '   ◆   ' . $text;
+    while (strlen($scroll) < $width) {
+        $scroll .= '   ◆   ' . $text;
+    }
+    return substr($scroll, 0, $width);
 }
 
 function parse_load(string $top): array
@@ -881,12 +995,106 @@ function collect_events(array $hosts): array
 function collect_events_cached(array &$state, array $hosts, float $now): array
 {
     if (($now - (float)($state['last_events_at'] ?? 0.0)) < 1.5 && isset($state['last_events'])) {
+        $state['events_fresh'] = false;
         return $state['last_events'];
     }
     $events = collect_events($hosts);
     $state['last_events'] = $events;
     $state['last_events_at'] = $now;
+    $state['events_fresh'] = true;
     return $events;
+}
+
+function update_ticker_queue(array &$state, array $events, float $now): void
+{
+    $cfg = $state['ticker_config'] ?? ticker_config([]);
+    $maxEvents = (int)$cfg['max_events'];
+    $dedupeSeconds = (int)$cfg['dedupe_seconds'];
+
+    foreach ($events as $event) {
+        $text = clean_ticker_event((string)$event);
+        if ($text === '') {
+            continue;
+        }
+        $key = ticker_key($text);
+        $isRepeat = isset($state['ticker_seen'][$key]) && ($now - (float)$state['ticker_seen'][$key]['last']) <= $dedupeSeconds;
+        if ($isRepeat) {
+            $state['ticker_seen'][$key]['last'] = $now;
+            $state['ticker_seen'][$key]['count'] = (int)$state['ticker_seen'][$key]['count'] + 1;
+            foreach ($state['ticker_queue'] as &$item) {
+                if ($item['key'] === $key) {
+                    $item['last'] = $now;
+                    $item['count'] = (int)$state['ticker_seen'][$key]['count'];
+                    $item['text'] = $text;
+                    break;
+                }
+            }
+            unset($item);
+            continue;
+        }
+
+        $state['ticker_seen'][$key] = ['last' => $now, 'count' => 1];
+        array_unshift($state['ticker_queue'], ['key' => $key, 'text' => $text, 'count' => 1, 'last' => $now]);
+
+        if (is_high_or_crit($text)) {
+            $state['ticker_hold_text'] = $text;
+            $state['ticker_hold_until'] = $now + (str_contains($text, '[CRIT]') ? 2.0 : 1.25);
+            $state['ticker_offset'] = 0;
+        }
+    }
+
+    $state['ticker_queue'] = array_slice($state['ticker_queue'], 0, $maxEvents);
+    foreach (array_keys($state['ticker_seen']) as $key) {
+        if (($now - (float)$state['ticker_seen'][$key]['last']) > max($dedupeSeconds * 3, 30)) {
+            unset($state['ticker_seen'][$key]);
+        }
+    }
+}
+
+function clean_ticker_event(string $event): string
+{
+    $event = preg_replace('/[\x00-\x1F\x7F]+/', ' ', $event) ?? '';
+    $event = preg_replace('/\s+/', ' ', $event) ?? '';
+    return trim($event);
+}
+
+function ticker_key(string $event): string
+{
+    $event = preg_replace('/\s+x\d+$/', '', $event) ?? $event;
+    return strtolower(trim($event));
+}
+
+function is_high_or_crit(string $event): bool
+{
+    return str_contains($event, '[HIGH]') || str_contains($event, '[CRIT]');
+}
+
+function ticker_event_texts(array $state): array
+{
+    $rows = [];
+    foreach ($state['ticker_queue'] ?? [] as $item) {
+        $text = (string)$item['text'];
+        $count = (int)($item['count'] ?? 1);
+        if ($count > 1) {
+            $text .= ' x' . $count;
+        }
+        $rows[] = $text;
+    }
+    if (!$rows && isset($state['last_frame']['events'])) {
+        foreach ($state['last_frame']['events'] as $event) {
+            $rows[] = clean_ticker_event((string)$event);
+        }
+    }
+    return $rows;
+}
+
+function advance_ticker(array &$state, float $now): void
+{
+    if ($now < (float)($state['ticker_hold_until'] ?? 0.0)) {
+        return;
+    }
+    $cfg = $state['ticker_config'] ?? ticker_config([]);
+    $state['ticker_offset'] = ((int)($state['ticker_offset'] ?? 0) + (int)$cfg['step']) % 1000000;
 }
 
 function tail_lines(string $file, int $count): array
@@ -1195,5 +1403,7 @@ function colorize_line(string $line, bool $color): string
     $line = preg_replace('/(\[CRIT\])/', $c['crit'] . '$1' . $c['reset'], $line);
     $line = preg_replace('/\b(CPU|RAM|ARC|PF|LAN|WAN|UPS|TOTAL|IFTOPX|TCPDUMPX|SOCX WALL)\b/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = preg_replace('/(\[[#!.]+\])/', $c['green'] . '$1' . $c['reset'], $line);
+    $line = str_replace('◆', $c['cyan'] . '◆' . $c['reset'], $line);
+    $line = preg_replace('/\bx(\d+)\b/', $c['yellow'] . 'x$1' . $c['reset'], $line);
     return $line . $c['reset'];
 }

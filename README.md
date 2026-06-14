@@ -78,6 +78,23 @@ Friendly hostnames are read from:
 /usr/local/etc/socx_hosts.conf
 ```
 
+Wall ticker speed can be tuned with:
+
+```sh
+SOCX_TICKER_SPEED=fast
+SOCX_TICKER_STEP=4
+SOCX_TICKER_INTERVAL_MS=100
+SOCX_TICKER_MAX_EVENTS=25
+SOCX_TICKER_DEDUPE_SECONDS=10
+```
+
+Preview speeds in demo mode:
+
+```sh
+socx-wall --demo --mode wall --ticker-speed fast
+socx-wall --demo --mode wall --ticker-speed turbo
+```
+
 ## Autoboot
 
 The included boot script installs to:

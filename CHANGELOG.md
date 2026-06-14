@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.26
+
+- Added wall-mode ticker speed controls: `SOCX_TICKER_SPEED`, `SOCX_TICKER_STEP`, `SOCX_TICKER_INTERVAL_MS`, `SOCX_TICKER_MAX_EVENTS`, and `SOCX_TICKER_DEDUPE_SECONDS`.
+- Made wall-mode ticker movement independent from the 500ms metrics refresh; default wall ticker repaints at 100ms with fast step 4.
+- Added rolling ticker queue behavior with diamond separators, 25-event default history, 10-second dedupe, and repeat counts like `x7`.
+- Added brief HIGH/CRIT pin behavior so important alerts hold before scrolling away.
+
 ## v0.1.25
 
 - Wrapped wall mode in a tmux restart loop so a renderer exit no longer drops the console back to a shell prompt.

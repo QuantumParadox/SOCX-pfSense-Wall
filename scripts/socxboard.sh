@@ -13,7 +13,18 @@ DNSBL=/var/log/pfblockerng/dnsbl.log
 [ -f "$DNSBL" ] || DNSBL=/var/log/pfblockerng/dns_reply.log
 
 export TMUX_TMPDIR=/tmp
-export SOCX_TICKER_STEP=18
+
+# WALL MODE ticker controls:
+#   SOCX_TICKER_SPEED=slow|normal|fast|turbo
+#   SOCX_TICKER_STEP=1|2|3|4|6
+#   SOCX_TICKER_INTERVAL_MS=100
+#   SOCX_TICKER_MAX_EVENTS=25
+#   SOCX_TICKER_DEDUPE_SECONDS=10
+export SOCX_TICKER_SPEED="${SOCX_TICKER_SPEED:-fast}"
+export SOCX_TICKER_STEP="${SOCX_TICKER_STEP:-4}"
+export SOCX_TICKER_INTERVAL_MS="${SOCX_TICKER_INTERVAL_MS:-100}"
+export SOCX_TICKER_MAX_EVENTS="${SOCX_TICKER_MAX_EVENTS:-25}"
+export SOCX_TICKER_DEDUPE_SECONDS="${SOCX_TICKER_DEDUPE_SECONDS:-10}"
 /sbin/conscontrol mute on 2>/dev/null
 mesg n 2>/dev/null || true
 chmod go-w /dev/ttyv0 /dev/pts/* 2>/dev/null || true
