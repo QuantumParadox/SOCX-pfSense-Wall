@@ -22,12 +22,19 @@ export SOCX_TMUX_MODE="${SOCX_TMUX_MODE:-auto}"
 export SOCX_FORCE_256COLOR="${SOCX_FORCE_256COLOR:-true}"
 export SOCX_UPS_ENABLED="${SOCX_UPS_ENABLED:-true}"
 export SOCX_UPS_SOURCE="${SOCX_UPS_SOURCE:-auto}"
-export SOCX_UPS_REFRESH_MS="${SOCX_UPS_REFRESH_MS:-250}"
+export SOCX_UPS_REFRESH_MS="${SOCX_UPS_REFRESH_MS:-1000}"
 export SOCX_UPS_HISTORY_SECONDS="${SOCX_UPS_HISTORY_SECONDS:-60}"
 export SOCX_UPS_SHOW_SPARKLINE="${SOCX_UPS_SHOW_SPARKLINE:-true}"
+export SOCX_UPS_NOMINAL_WATTS="${SOCX_UPS_NOMINAL_WATTS:-1950}"
 export SOCX_UPS_SNMP_HOST="${SOCX_UPS_SNMP_HOST:-192.168.1.114}"
 export SOCX_UPS_SNMP_COMMUNITY="${SOCX_UPS_SNMP_COMMUNITY:-public}"
 export SOCX_UPS_SNMP_VERSION="${SOCX_UPS_SNMP_VERSION:-v2c}"
+export SOCX_SPEEDTEST_ENABLED="${SOCX_SPEEDTEST_ENABLED:-true}"
+export SOCX_SPEEDTEST_INTERVAL="${SOCX_SPEEDTEST_INTERVAL:-6h}"
+export SOCX_SPEEDTEST_FRONTIER_SERVER_ID="${SOCX_SPEEDTEST_FRONTIER_SERVER_ID:-56485}"
+export SOCX_SPEEDTEST_FRONTIER_SERVER_NAME="${SOCX_SPEEDTEST_FRONTIER_SERVER_NAME:-Frontier}"
+export SOCX_SPEEDTEST_FRONTIER_SERVER_LOCATION="${SOCX_SPEEDTEST_FRONTIER_SERVER_LOCATION:-Secaucus, NJ}"
+export SOCX_SPEEDTEST_SERVER_MODE="${SOCX_SPEEDTEST_SERVER_MODE:-auto}"
 
 # WALL MODE ticker controls:
 #   SOCX_TICKER_SPEED=slow|normal|fast|turbo
@@ -47,13 +54,32 @@ if [ "$SOCX_FORCE_256COLOR" = "true" ] && command -v tput >/dev/null 2>&1; then
     export TERM="${TERM:-tmux-256color}"
 fi
 
+stop_socx_helper() {
+    pattern=$1
+    pkill -f "$pattern" 2>/dev/null || true
+    ps ax -o pid= -o command= 2>/dev/null | awk -v pattern="$pattern" '
+        index($0, pattern) { print $1 }
+    ' | while IFS= read -r pid; do
+        [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+    done
+}
+
 tmux kill-session -t socx 2>/dev/null
 if [ "$MODE" = "wall" ] && [ "$SOCX_UPS_ENABLED" = "true" ] && command -v /usr/local/sbin/socx-ups-cache >/dev/null 2>&1; then
     if [ -f /tmp/socx-ups-cache.pid ]; then
         kill "$(cat /tmp/socx-ups-cache.pid)" 2>/dev/null || true
     fi
+    stop_socx_helper 'socx-ups-cache'
     /usr/local/sbin/socx-ups-cache loop >/tmp/socx-ups-cache.log 2>&1 &
     echo $! >/tmp/socx-ups-cache.pid
+fi
+if [ "$MODE" = "wall" ] && [ "$SOCX_SPEEDTEST_ENABLED" = "true" ] && command -v /usr/local/sbin/socx-speedtest-cache >/dev/null 2>&1; then
+    if [ -f /tmp/socx-speedtest-cache.pid ]; then
+        kill "$(cat /tmp/socx-speedtest-cache.pid)" 2>/dev/null || true
+    fi
+    stop_socx_helper 'socx-speedtest-cache'
+    /usr/local/sbin/socx-speedtest-cache loop >/tmp/socx-speedtest-cache.log 2>&1 &
+    echo $! >/tmp/socx-speedtest-cache.pid
 fi
 
 # W1 NETX: pfSense cockpit top, color iftop/tcpdump clones underneath.

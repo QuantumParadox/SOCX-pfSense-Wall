@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.1.46
+
+- Polished the Modern Wall without changing the successful btop-style layout.
+- Set scheduled Speedtest runs to a six-hour default cadence.
+- Changed the Speedtest card to show a countdown to the next scheduled test instead of elapsed cache age.
+- Filled the spare Memory card row with live SWAP usage so memory pressure is visible at a glance.
+- Moved the top-strip `LIVE`/`STALE` indicator beside the clock so it no longer hangs off the far-right edge.
+- Added UPS load headroom display using the APC Smart-UPS 2200 1950W rating and set NUT/APC polling to a one-second default.
+- Added APC environmental probe caching and rotated the UPS card footer through PSU temperature, humidity, and load/headroom.
+- Added severity-aware SOC coloring for healthy, neutral, warning, drop/critical, and threat-intel contexts.
+- Expanded the top status strip with compact WAN/VPN/DNS/UPS metrics when available.
+- Replaced compact PF abbreviations with readable `STATES`, `SEARCH`, and `TRAFFIC` labels.
+- Added trend arrows for CPU, memory, packet drops, PF states/search, DNSBL hits, and WAN traffic.
+- Enriched Live Packets with DNSBL/known-bad, Suricata/threat-intel, scanner, abuse, and optional country context.
+- Collapsed repeated WAN scan bursts into `[FW][DROP]` summaries with top ports.
+- Tightened Network Flows service labels and added `--density compact|normal|large`.
+- Rotates Threat Pulse and appliance identity through the Event Feed, with an optional wide-screen Threat Pulse card.
+- Hardened Modern Wall color rendering so a null row or metric cannot crash the PHP colorizer.
+- Added rotating AI-SOC enrichment for CVE/CPE/CWE/CAPEC/CVSS/EPSS/KEV, ATT&CK, D3FEND, Sigma, YARA, Suricata, host artifacts, cloud logs, containment, evidence preservation, confidence, and source references.
+- Replaced the Modern Wall Process Tree slot with `PFTOP LIVE STATES`, a color-coded, human-readable PF state view with direction, protocol, service, state, live rate, age/expiry, and compact LAN/EXT flow labels.
+- Fixed the top status strip so VPN health is computed from live pfSense gateway/interface/WireGuard signals instead of assuming `VPN UP`; it now shows counts, `DATA LIVE`/`DATA STALE`, VPN feed details, and debug status logs.
+- Added scheduled Speedtest caching with Frontier Secaucus server defaults, VPN-aware auto-server mode, Network card display, and Event Feed status without blocking wall refreshes; SOCX now prefers the official Ookla native CLI with `speedtest-go` and Python fallbacks.
+
 ## v0.1.45
 
 - Made the Modern Wall Live Packets panel use raw packet-like firewall/DNSBL/IDS events instead of the balanced command-feed queue.

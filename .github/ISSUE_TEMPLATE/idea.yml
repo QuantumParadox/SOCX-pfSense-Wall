@@ -1,0 +1,41 @@
+name: SOCX idea
+description: Suggest a panel, sensor, data source, readability tweak, or wall-display improvement.
+title: "[Idea] "
+labels:
+  - idea
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping make SOCX better. Ideas from real pfSense walls are especially useful.
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like SOCX to add or improve?
+      description: Describe the feature, panel, sensor, display behavior, or signal you want.
+      placeholder: Example: Rotate WAN packet loss and ISP outage status through the top strip.
+    validations:
+      required: true
+  - type: textarea
+    id: setup
+    attributes:
+      label: What does your setup look like?
+      description: Include pfSense version, packages, UPS/sensors, VPN type, screen size, or terminal size if relevant.
+      placeholder: pfSense version, Suricata/pfBlockerNG/NUT/Speedtest, monitor resolution, tmux width/height...
+    validations:
+      required: false
+  - type: textarea
+    id: why
+    attributes:
+      label: Why would this help on a wall display?
+      description: Tell us what you want to notice faster or understand from across the room.
+    validations:
+      required: false
+  - type: textarea
+    id: mockup
+    attributes:
+      label: Optional mockup or example text
+      description: Paste a compact display example, screenshot, or rough layout idea.
+      placeholder: "UPS: T 77F/25C | RH 40% | L 617/1950W"
+    validations:
+      required: false

@@ -2,6 +2,8 @@
 
 SOCX pfSense Wall is a pfSense security operations display for a large always-on monitor. It includes the original terminal/tmux wall plus a browser-based `socweb` dashboard for the polished Option C look: dark btop-inspired cards, WebSocket updates, smooth ticker animation, real sparklines, live UPS wattage, firewall events, flows, packet story rows, and pfSense collectors.
 
+It is built for the kind of wall monitor you glance at from across the room: WAN/VPN/DNS/UPS truth at the top, live pf state and flow context in the middle, packet stories and rotating SOC events at the bottom, and enough color logic to make trouble stand out without turning the screen into noise.
+
 Suggested GitHub repo name: `SOCX-pfSense-Wall`
 
 Suggested GitHub description:
@@ -12,6 +14,39 @@ Suggested topics:
 
 `pfsense`, `freebsd`, `tmux`, `websocket`, `soc`, `network-monitoring`, `terminal-dashboard`, `cybersecurity`, `tcpdump`, `iftop`
 
+## Why This Exists
+
+Most pfSense dashboards are either excellent admin pages or raw terminal tools. SOCX sits between those worlds: a read-only command wall for home labs, small offices, and network/security nerds who want live context on a dedicated display.
+
+SOCX is not meant to replace pfSense, ntopng, Suricata, pfBlockerNG, NUT, or Speedtest. It pulls useful signals from those tools and presents them as a single high-contrast operations wall.
+
+## Quick Start
+
+```sh
+git clone <your-fork-or-repo-url> SOCX-pfSense-Wall
+cd SOCX-pfSense-Wall
+sh install-pfsense.sh
+soc
+```
+
+For a safe preview with fake data:
+
+```sh
+socx-wall --demo --once --mode wall --theme modern-btop --width 160 --height 42
+```
+
+## Ideas Wanted
+
+This is a living wall-display project, and good ideas tend to come from real screens in real rooms. If you try SOCX, please open an issue with:
+
+- a photo or description of your wall display size
+- what pfSense packages you run
+- what felt useful at a glance
+- what was cramped, noisy, or missing
+- sensors, services, or security signals you would like SOCX to support next
+
+Useful idea areas include new UPS/environment sensors, better VPN provider detection, Suricata/pfBlockerNG summaries, WireGuard/OpenVPN details, ISP outage indicators, and better large-room readability presets.
+
 ## What It Does
 
 - Starts a full-screen tmux dashboard called `socx`.
@@ -20,8 +55,10 @@ Suggested topics:
 - Shows dark modern cards, real canvas sparklines, clipped tables, and a smooth CSS event ticker.
 - Defaults to `SOCX_MODE=wall` and `SOCX_THEME=modern-btop`, a single-pane high-contrast wall display with internal panels and clipping.
 - Shows a classic split-wall `NETX` layout: btop-style pfSense cockpit on top, IFTopX bottom-left, TCPDumpX bottom-right.
-- Adds `socx-wall`, a modern btop-inspired wall renderer with metric cards, process table, flow table, live packet table, UPS sparkline, and smooth event ticker.
+- Adds `socx-wall`, a modern btop-inspired wall renderer with metric cards, pftop-style live PF states, flow table, live packet table, UPS sparkline, and smooth event ticker.
 - Runs wall mode inside a restart loop and logs renderer errors to `/tmp/socx-wall.err`.
+- Shows truthful VPN gateway/interface health in the top status strip, including `VPN UP 3/3`, `VPN PARTIAL 1/3`, `VPN DOWN 0/3`, `VPN N/A`, or `VPN UNKNOWN` plus `DATA LIVE`/`DATA STALE`.
+- Adds a background Speedtest cache for scheduled Frontier/VPN path checks without blocking the 500 ms wall renderer.
 - Shows CPU graph, CPU cores, RAM/ARC, pf state/search counters, live interface rates, and top processes in the top cockpit.
 - Shows prominent NUT/APC UPS watts/load/battery/runtime plus 60-second peak, average, and sparkline.
 - Adds `iftopx`, a readable color flow radar for live LAN/WAN traffic.
@@ -43,6 +80,7 @@ Suggested topics:
 - `scripts/socx-alert-ticker` - bottom status ticker for readable firewall/security events.
 - `scripts/socx-ups-status` - compact NUT/APC UPS status widget for the tmux status bar.
 - `scripts/socx-ups-cache` - background UPS collector that keeps `/tmp/socx-ups-cache.env` fresh without blocking wall rendering.
+- `scripts/socx-speedtest-cache` - scheduled Speedtest collector that writes `/tmp/socx-speedtest-cache.env`.
 - `scripts/socx-iftop-color` and `scripts/socx_iftop_color.pl` - color flow radar wrapper and renderer.
 - `scripts/socx-tcpdump-color` and `scripts/socx_tcpdump_color.pl` - color packet story wrapper and renderer.
 - `scripts/iftopx`, `scripts/tcpdumpx`, `scripts/socx` - convenience launchers.
@@ -111,6 +149,14 @@ Preview the wall renderer safely with fake data:
 socx-wall --demo --mode wall --theme modern-btop --ticker-smooth --once --width 160 --height 42
 ```
 
+Modern Wall density presets:
+
+```sh
+socx-wall --density compact
+socx-wall --density normal
+socx-wall --density large
+```
+
 Force and test Unicode rendering:
 
 ```sh
@@ -156,20 +202,65 @@ DNSBL Event Feed entries describe DNS query-level hits. A line such as `DNSBL hi
 
 The Modern Wall Event Feed acts as a SOC command ticker. It rotates and prioritizes events such as `[IDS][HIGH]`, `[WAN][WARN]`, `[VPN][INFO]`, `[UPS][INFO]`, `[DHCP][WARN]`, `[ARP][MED]`, `[FLOW][WARN]`, `[DNS][HIGH]`, `[FW][MED]`, and `[DNSBL][LOW]`. Repeated events are deduplicated with `xN`, and routine low-severity DNSBL hits are capped/summarized so outage and security alerts stay visible.
 
+AI-SOC enrichment rotates through the same Event Feed without adding permanent columns or making the wall cramped. It adds compact context for CVE, CPE, CWE, CAPEC, CVSS, EPSS, KEV, ATT&CK, D3FEND, Sigma, YARA, Suricata, Windows Event IDs, Linux/macOS artifacts, memory artifacts, cloud logs, containment steps, evidence preservation steps, confidence score, and source references. SOCX leaves CVE/CVSS/EPSS/KEV as `n/a` unless a CVE is visible in the event text or you provide explicit values, so routine firewall scans are not assigned fake vulnerabilities.
+
+AI-SOC enrichment settings:
+
+```sh
+SOCX_AI_SOC_ENRICHMENT=true
+SOCX_AI_SOC_CVE=CVE-YYYY-NNNN
+SOCX_AI_SOC_CPE='cpe:2.3:a:netgate:pfsense:*'
+SOCX_AI_SOC_CWE=CWE-000
+SOCX_AI_SOC_CAPEC='CAPEC-300 port scan'
+SOCX_AI_SOC_CVSS='9.8'
+SOCX_AI_SOC_EPSS='0.92'
+SOCX_AI_SOC_KEV=yes
+SOCX_AI_SOC_ATTACK='T1046 service discovery'
+SOCX_AI_SOC_D3FEND='D3-NTA/D3-NTF'
+SOCX_AI_SOC_SIGMA=socx_pfsense_scan_burst
+SOCX_AI_SOC_YARA=socx_log_ioc_context
+SOCX_AI_SOC_SURICATA='sid:9001046 scan-burst'
+SOCX_AI_SOC_WINDOWS_EIDS='5152/5157/4688'
+SOCX_AI_SOC_POSIX_ARTIFACTS='filter.log,dnsbl.log,suricata/*,auth.log'
+SOCX_AI_SOC_MEMORY_ARTIFACTS='pf states,sockets,proc map'
+SOCX_AI_SOC_CLOUD_LOGS='VPC Flow,WAF,DNS,CloudTrail/AzureActivity'
+SOCX_AI_SOC_CONTAINMENT='block src,quarantine host,tighten rule'
+SOCX_AI_SOC_EVIDENCE='logs,pcap,pfctl -ss,config.xml'
+SOCX_AI_SOC_CONFIDENCE='88%'
+SOCX_AI_SOC_SOURCES='NVD/CPE/CVSS, CISA KEV, FIRST EPSS, MITRE ATT&CK/CAPEC/D3FEND, SigmaHQ, YARA, Suricata'
+```
+
+Reference sources used by the enrichment labels: [NVD CPE](https://nvd.nist.gov/products/cpe), [NVD CVSS](https://nvd.nist.gov/vuln-metrics/cvss), [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog), [FIRST EPSS](https://www.first.org/epss/), [MITRE ATT&CK T1046](https://attack.mitre.org/techniques/T1046/), [MITRE CAPEC-300](https://capec.mitre.org/data/definitions/300.html), [MITRE D3FEND D3-NTA](https://d3fend.mitre.org/technique/d3f:NetworkTrafficAnalysis/), [SigmaHQ](https://sigmahq.io/), [YARA](https://virustotal.github.io/yara/), and [Suricata rules](https://docs.suricata.io/en/latest/rules/intro.html).
+
 UPS cache settings:
 
 ```sh
 SOCX_UPS_ENABLED=true
 SOCX_UPS_SOURCE=auto
-SOCX_UPS_REFRESH_MS=250
+SOCX_UPS_REFRESH_MS=1000
 SOCX_UPS_HISTORY_SECONDS=60
 SOCX_UPS_SHOW_SPARKLINE=true
+SOCX_UPS_NOMINAL_WATTS=1950
 SOCX_UPS_SNMP_HOST=192.168.1.114
 SOCX_UPS_SNMP_COMMUNITY=public
 SOCX_UPS_SNMP_VERSION=v2c
 ```
 
-`SOCX_UPS_SOURCE=auto` tries NUT/`upsc` first and falls back to direct Schneider/APC UPS-MIB SNMP polling, which keeps wattage, load, battery, runtime, voltage, amps, battery voltage, and battery temperature fresh even if `upsd` is not listening.
+`SOCX_UPS_SOURCE=auto` tries NUT/`upsc` first and falls back to direct Schneider/APC UPS-MIB SNMP polling, which keeps wattage, load, battery, runtime, voltage, amps, battery voltage, and battery temperature fresh even if `upsd` is not listening. When APC environmental probes are present, SOCX also caches two probe temperatures and humidity, then rotates the UPS card footer through temperature, humidity, and load/headroom.
+
+Speedtest cache settings:
+
+```sh
+SOCX_SPEEDTEST_ENABLED=true
+SOCX_SPEEDTEST_INTERVAL=6h      # 30m, 1h, 6h, or seconds
+SOCX_SPEEDTEST_SERVER_MODE=auto # frontier for fixed server, auto for nearest
+SOCX_SPEEDTEST_FRONTIER_SERVER_ID=56485
+SOCX_SPEEDTEST_FRONTIER_SERVER_NAME=Frontier
+SOCX_SPEEDTEST_FRONTIER_SERVER_LOCATION='Secaucus, NJ'
+SOCX_OOKLA_SPEEDTEST=/usr/local/sbin/ookla-speedtest
+```
+
+`SOCX_SPEEDTEST_SERVER_MODE=auto` uses the Frontier Secaucus server while VPN status is down/direct, and lets Speedtest auto-select when a VPN path appears active. The wall reads the cache only; scheduled bandwidth tests run in `socx-speedtest-cache`. SOCX prefers the official Ookla native CLI at `SOCX_OOKLA_SPEEDTEST`, then falls back to `speedtest-go`, then Python `speedtest-cli`.
 
 Modern btop rendering defaults to Unicode/ANSI cards, block meters, and sparklines inside pfSense/tmux:
 

@@ -1,0 +1,274 @@
+#!/bin/sh
+# Background Speedtest cache collector for SOCX wall mode.
+#
+# Runs expensive bandwidth tests on a schedule and writes a tiny env cache
+# that socx-wall can read without blocking the 500 ms display loop.
+
+CACHE=${SOCX_SPEEDTEST_CACHE_FILE:-/tmp/socx-speedtest-cache.env}
+LOCK=${SOCX_SPEEDTEST_LOCK_FILE:-/tmp/socx-speedtest-cache.lock}
+LOG=${SOCX_SPEEDTEST_LOG:-/tmp/socx-speedtest-cache.log}
+SERVER_ID=${SOCX_SPEEDTEST_FRONTIER_SERVER_ID:-56485}
+SERVER_NAME=${SOCX_SPEEDTEST_FRONTIER_SERVER_NAME:-Frontier}
+SERVER_LOCATION=${SOCX_SPEEDTEST_FRONTIER_SERVER_LOCATION:-Secaucus, NJ}
+MODE=${SOCX_SPEEDTEST_SERVER_MODE:-auto}
+VPN_LOG=${SOCX_VPN_DEBUG_LOG:-/tmp/socx-wall-vpn.log}
+OOKLA_SPEEDTEST=${SOCX_OOKLA_SPEEDTEST:-/usr/local/sbin/ookla-speedtest}
+
+now_epoch() {
+    /usr/local/bin/perl -MTime::HiRes=time -e 'printf "%.3f\n", time' 2>/dev/null || date +%s
+}
+
+clean_value() {
+    printf '%s' "$1" | tr -d '\r' | sed 's/^"//; s/"$//; s/[[:cntrl:]]//g; s/[;&|`$<>]//g'
+}
+
+interval_seconds() {
+    value=${SOCX_SPEEDTEST_INTERVAL:-${SOCX_SPEEDTEST_INTERVAL_SECONDS:-6h}}
+    case "$value" in
+    30m|30min|30mins) echo 1800 ;;
+    1h|1hr|hour) echo 3600 ;;
+    6h|6hr|6hrs) echo 21600 ;;
+    *m) echo "$value" | awk '{ sub(/m$/, ""); printf "%d\n", ($1 + 0) * 60 }' ;;
+    *h) echo "$value" | awk '{ sub(/h$/, ""); printf "%d\n", ($1 + 0) * 3600 }' ;;
+    *) echo "$value" | awk '{ n=$1 + 0; if (n < 1800) n=1800; printf "%d\n", n }' ;;
+    esac
+}
+
+write_cache() {
+    tmp="${CACHE}.$$"
+    {
+        printf 'updated=%s\n' "$(now_epoch)"
+        printf 'status=%s\n' "$(clean_value "$1")"
+        printf 'message=%s\n' "$(clean_value "$2")"
+        printf 'mode=%s\n' "$(clean_value "$3")"
+        printf 'tool=%s\n' "$(clean_value "$4")"
+        printf 'download_mbps=%s\n' "$(clean_value "$5")"
+        printf 'upload_mbps=%s\n' "$(clean_value "$6")"
+        printf 'ping_ms=%s\n' "$(clean_value "$7")"
+        printf 'jitter_ms=%s\n' "$(clean_value "$8")"
+        printf 'server_id=%s\n' "$(clean_value "$9")"
+        printf 'server_name=%s\n' "$(clean_value "${10}")"
+        printf 'server_location=%s\n' "$(clean_value "${11}")"
+        printf 'isp=%s\n' "$(clean_value "${12}")"
+        printf 'external_ip=%s\n' "$(clean_value "${13}")"
+        printf 'result_url=%s\n' "$(clean_value "${14}")"
+        printf 'interval_seconds=%s\n' "$(interval_seconds)"
+    } > "$tmp"
+    mv "$tmp" "$CACHE"
+}
+
+speedtest_tool() {
+    if [ -x "$OOKLA_SPEEDTEST" ]; then
+        echo ookla:"$OOKLA_SPEEDTEST"
+    elif command -v speedtest >/dev/null 2>&1 && speedtest --help 2>&1 | grep -q -- '--format'; then
+        echo ookla:speedtest
+    elif command -v speedtest-go >/dev/null 2>&1; then
+        echo speedtest-go
+    elif command -v speedtest-cli >/dev/null 2>&1; then
+        echo speedtest-cli
+    elif command -v speedtest >/dev/null 2>&1; then
+        echo speedtest-python
+    else
+        echo ''
+    fi
+}
+
+vpn_status_hint() {
+    if [ -r "$VPN_LOG" ]; then
+        line=$(tail -1 "$VPN_LOG" 2>/dev/null || true)
+        case "$line" in
+        *"status=UP"*|*"status=PARTIAL"*) echo vpn; return ;;
+        *"status=DOWN"*|*"status=N/A"*) echo direct; return ;;
+        esac
+    fi
+    if /sbin/ifconfig -l 2>/dev/null | grep -Eiq '(^| )(tun_wg|wg|ovpn|tun)[0-9A-Za-z_.-]*($| )'; then
+        echo vpn
+    else
+        echo direct
+    fi
+}
+
+selected_mode() {
+    case "$MODE" in
+    frontier|frontier-direct|direct) echo frontier ;;
+    nearest|ookla-auto|location|vpn) echo auto ;;
+    *)
+        if [ "$(vpn_status_hint)" = "vpn" ]; then
+            echo auto
+        else
+            echo frontier
+        fi
+        ;;
+    esac
+}
+
+run_ookla_speedtest() {
+    mode=$1
+    bin=${2:-speedtest}
+    if [ "$mode" = "frontier" ]; then
+        raw=$("$bin" --accept-license --accept-gdpr --progress=no --format=json --server-id "$SERVER_ID" 2>&1) || return 1
+    else
+        raw=$("$bin" --accept-license --accept-gdpr --progress=no --format=json 2>&1) || return 1
+    fi
+    printf '%s\n' "$raw" | awk '/^\{/{print}' | tail -1 | jq -r --arg mode "$mode" '
+        [
+          "ok",
+          "ookla",
+          ((.download.bandwidth // 0) * 8 / 1000000),
+          ((.upload.bandwidth // 0) * 8 / 1000000),
+          (.ping.latency // ""),
+          (.ping.jitter // ""),
+          (.server.id // ""),
+          (.server.name // ""),
+          (.server.location // ""),
+          (.isp // ""),
+          (.interface.externalIp // ""),
+          (.result.url // "")
+        ] | map(tostring) | join("|")'
+}
+
+run_speedtest_go() {
+    mode=$1
+    if [ "$mode" = "frontier" ]; then
+        raw=$(speedtest-go --json --server "$SERVER_ID" --thread "${SOCX_SPEEDTEST_GO_THREADS:-8}" 2>&1) || return 1
+    else
+        raw=$(speedtest-go --json --thread "${SOCX_SPEEDTEST_GO_THREADS:-8}" 2>&1) || return 1
+    fi
+    printf '%s\n' "$raw" | awk '/^\{/{print}' | tail -1 | jq -r '
+        .servers[0] as $s |
+        [
+          "ok",
+          "speedtest-go",
+          (($s.dl_speed // 0) * 8 / 1000000),
+          (($s.ul_speed // 0) * 8 / 1000000),
+          (($s.latency // 0) / 1000000),
+          (($s.jitter // 0) / 1000000),
+          ($s.id // ""),
+          ($s.sponsor // ""),
+          (($s.name // "") + (if ($s.country // "") != "" then ", " + $s.country else "" end)),
+          (.user_info.Isp // ""),
+          (.user_info.IP // ""),
+          ""
+        ] | map(tostring) | join("|")'
+}
+
+run_python_speedtest() {
+    mode=$1
+    bin=${2:-speedtest-cli}
+    if [ "$mode" = "frontier" ]; then
+        raw=$("$bin" --secure --json --server "$SERVER_ID" 2>&1) || return 1
+    else
+        raw=$("$bin" --secure --json 2>&1) || return 1
+    fi
+    printf '%s\n' "$raw" | jq -r --arg mode "$mode" '
+        [
+          "ok",
+          "speedtest-cli",
+          ((.download // 0) / 1000000),
+          ((.upload // 0) / 1000000),
+          (.ping // ""),
+          "",
+          (.server.id // ""),
+          (.server.sponsor // ""),
+          ((.server.name // "") + (if (.server.country // "") != "" then ", " + .server.country else "" end)),
+          (.client.isp // ""),
+          (.client.ip // ""),
+          (.share // "")
+        ] | map(tostring) | join("|")'
+}
+
+run_once() {
+    tool=$(speedtest_tool)
+    mode=$(selected_mode)
+    if [ -z "$tool" ]; then
+        write_cache missing "install speedtest or py311-speedtest-cli" "$mode" none "" "" "" "" "" "" "" "" "" ""
+        return 1
+    fi
+    if ! command -v jq >/dev/null 2>&1; then
+        write_cache missing "jq is required to parse speedtest JSON" "$mode" "$tool" "" "" "" "" "" "" "" "" "" ""
+        return 1
+    fi
+
+    started=$(now_epoch)
+    write_cache running "speedtest running" "$mode" "$tool" "" "" "" "" "$([ "$mode" = frontier ] && printf '%s' "$SERVER_ID")" "$([ "$mode" = frontier ] && printf '%s' "$SERVER_NAME")" "$([ "$mode" = frontier ] && printf '%s' "$SERVER_LOCATION")" "" "" ""
+    case "$tool" in
+    ookla:*)
+        ookla_bin=${tool#ookla:}
+        parsed=$(run_ookla_speedtest "$mode" "$ookla_bin") || {
+            write_cache error "speedtest failed" "$mode" "$tool" "" "" "" "" "" "" "" "" "" ""
+            return 1
+        }
+        ;;
+    speedtest-go)
+        parsed=$(run_speedtest_go "$mode") || {
+            write_cache error "speedtest-go failed" "$mode" "$tool" "" "" "" "" "" "" "" "" "" ""
+            return 1
+        }
+        ;;
+    *)
+        pybin=speedtest-cli
+        [ "$tool" = speedtest-python ] && pybin=speedtest
+        parsed=$(run_python_speedtest "$mode" "$pybin") || {
+            write_cache error "speedtest-cli failed" "$mode" "$tool" "" "" "" "" "" "" "" "" "" ""
+            return 1
+        }
+        ;;
+    esac
+
+    IFS='|' read -r status tool_name down up ping jitter sid sname sloc isp ip url <<EOF
+$parsed
+EOF
+    [ -n "$sname" ] || sname=$SERVER_NAME
+    [ -n "$sloc" ] || sloc=$SERVER_LOCATION
+    if [ "$mode" = frontier ]; then
+        [ -n "$sid" ] || sid=$SERVER_ID
+        [ -n "$sname" ] || sname=$SERVER_NAME
+        [ -n "$sloc" ] || sloc=$SERVER_LOCATION
+    fi
+    message=$(awk -v s="$started" -v e="$(now_epoch)" 'BEGIN { printf "complete in %.0fs", e - s }')
+    down=$(printf '%s' "$down" | awk '{ printf "%.0f", $1 + 0 }')
+    up=$(printf '%s' "$up" | awk '{ printf "%.0f", $1 + 0 }')
+    ping=$(printf '%s' "$ping" | awk '{ if ($1 == "") print ""; else printf "%.0f", $1 + 0 }')
+    jitter=$(printf '%s' "$jitter" | awk '{ if ($1 == "") print ""; else printf "%.0f", $1 + 0 }')
+    write_cache ok "$message" "$mode" "$tool_name" "$down" "$up" "$ping" "$jitter" "$sid" "$sname" "$sloc" "$isp" "$ip" "$url"
+}
+
+cache_age() {
+    [ -r "$CACHE" ] || { echo 999999999; return; }
+    updated=$(awk -F= '$1=="updated"{print $2; exit}' "$CACHE" 2>/dev/null)
+    awk -v now="$(now_epoch)" -v updated="$updated" 'BEGIN { if (updated == "") print 999999999; else printf "%.0f\n", now - updated }'
+}
+
+with_lock() {
+    if mkdir "$LOCK" 2>/dev/null; then
+        trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT INT TERM
+        run_once
+    else
+        return 0
+    fi
+}
+
+case "${1:-loop}" in
+once)
+    with_lock
+    ;;
+loop)
+    while :; do
+        interval=$(interval_seconds)
+        age=$(cache_age)
+        if [ "$age" -ge "$interval" ]; then
+            with_lock >>"$LOG" 2>&1 || true
+            sleep 5
+        else
+            sleep_for=$((interval - age))
+            [ "$sleep_for" -lt 10 ] && sleep_for=10
+            [ "$sleep_for" -gt 300 ] && sleep_for=300
+            sleep "$sleep_for"
+        fi
+    done
+    ;;
+*)
+    echo "Usage: socx-speedtest-cache [once|loop]" >&2
+    exit 2
+    ;;
+esac
