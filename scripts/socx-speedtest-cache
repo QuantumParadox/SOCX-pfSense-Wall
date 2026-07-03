@@ -241,9 +241,28 @@ cache_age() {
 
 with_lock() {
     if mkdir "$LOCK" 2>/dev/null; then
-        trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT INT TERM
+        printf '%s\n' "$$" > "$LOCK/pid"
+        trap 'rm -f "$LOCK/pid" 2>/dev/null || true; rmdir "$LOCK" 2>/dev/null || true' EXIT INT TERM
         run_once
+        rc=$?
+        rm -f "$LOCK/pid" 2>/dev/null || true
+        rmdir "$LOCK" 2>/dev/null || true
+        trap - EXIT INT TERM
+        return "$rc"
     else
+        lock_pid=$(cat "$LOCK/pid" 2>/dev/null || true)
+        if [ -n "$lock_pid" ] && ! kill -0 "$lock_pid" 2>/dev/null; then
+            rm -f "$LOCK/pid" 2>/dev/null || true
+            rmdir "$LOCK" 2>/dev/null || true
+            with_lock
+            return
+        fi
+        if [ -z "$lock_pid" ] && [ "$(cache_age)" -ge "$(( $(interval_seconds) + 300 ))" ]; then
+            rm -f "$LOCK/pid" 2>/dev/null || true
+            rmdir "$LOCK" 2>/dev/null || true
+            with_lock
+            return
+        fi
         return 0
     fi
 }

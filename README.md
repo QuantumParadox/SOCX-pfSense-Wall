@@ -59,6 +59,10 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Runs wall mode inside a restart loop and logs renderer errors to `/tmp/socx-wall.err`.
 - Shows truthful VPN gateway/interface health in the top status strip, including `VPN UP 3/3`, `VPN PARTIAL 1/3`, `VPN DOWN 0/3`, `VPN N/A`, or `VPN UNKNOWN` plus `DATA LIVE`/`DATA STALE`.
 - Adds a background Speedtest cache for scheduled Frontier/VPN path checks without blocking the 500 ms wall renderer.
+- Shows scheduled Speedtest results with latency, stable/stale state, and countdown to the next test.
+- Adds live WAN/LAN download/upload bars and a top-talker line in the NETWORK card.
+- Learns friendly host names from `/usr/local/etc/socx_hosts.conf` and cached DHCP leases when available.
+- Adds WAN health and Speedtest 24-hour average/trend events to the rotating feed.
 - Shows CPU graph, CPU cores, RAM/ARC, pf state/search counters, live interface rates, and top processes in the top cockpit.
 - Shows prominent NUT/APC UPS watts/load/battery/runtime plus 60-second peak, average, and sparkline.
 - Adds `iftopx`, a readable color flow radar for live LAN/WAN traffic.
