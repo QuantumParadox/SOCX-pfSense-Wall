@@ -106,7 +106,8 @@ run_ookla_speedtest() {
     mode=$1
     bin=${2:-speedtest}
     if [ "$mode" = "frontier" ]; then
-        raw=$("$bin" --accept-license --accept-gdpr --progress=no --format=json --server-id "$SERVER_ID" 2>&1) || return 1
+        raw=$("$bin" --accept-license --accept-gdpr --progress=no --format=json --server-id "$SERVER_ID" 2>&1) || \
+            raw=$("$bin" --accept-license --accept-gdpr --progress=no --format=json 2>&1) || return 1
     else
         raw=$("$bin" --accept-license --accept-gdpr --progress=no --format=json 2>&1) || return 1
     fi
