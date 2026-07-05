@@ -227,9 +227,9 @@ Modern-btop defaults to a non-scrolling rotating Event Feed so tmux does not con
 
 ```sh
 SOCX_EVENT_FEED_MODE=rotate
-SOCX_EVENT_ROTATE_SECONDS=3
-SOCX_EVENT_HIGH_SECONDS=6
-SOCX_EVENT_CRIT_SECONDS=8
+SOCX_EVENT_ROTATE_SECONDS=1
+SOCX_EVENT_HIGH_SECONDS=2
+SOCX_EVENT_CRIT_SECONDS=3
 ```
 
 Set `SOCX_EVENT_FEED_MODE=scroll` to use the older horizontal ticker, or `SOCX_EVENT_FEED_MODE=stack` to show a small vertical group when the panel has room.

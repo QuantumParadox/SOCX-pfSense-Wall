@@ -199,13 +199,13 @@ function apply_startup_unicode_defaults(array $opts): void
         putenv('SOCX_EVENT_FEED_MODE=rotate');
     }
     if (getenv('SOCX_EVENT_ROTATE_SECONDS') === false) {
-        putenv('SOCX_EVENT_ROTATE_SECONDS=3');
+        putenv('SOCX_EVENT_ROTATE_SECONDS=1');
     }
     if (getenv('SOCX_EVENT_HIGH_SECONDS') === false) {
-        putenv('SOCX_EVENT_HIGH_SECONDS=6');
+        putenv('SOCX_EVENT_HIGH_SECONDS=2');
     }
     if (getenv('SOCX_EVENT_CRIT_SECONDS') === false) {
-        putenv('SOCX_EVENT_CRIT_SECONDS=8');
+        putenv('SOCX_EVENT_CRIT_SECONDS=3');
     }
     if (!empty($opts['force_unicode'])) {
         putenv('SOCX_FORCE_UNICODE=true');
