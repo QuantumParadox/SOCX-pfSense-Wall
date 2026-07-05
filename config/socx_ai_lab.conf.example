@@ -1,0 +1,27 @@
+# SOCX AI/MIRANDA lab endpoint checks.
+#
+# Copy to:
+#   /usr/local/etc/socx_ai_lab.conf
+#
+# Format:
+#   Label=host:port
+#   Label=http://host:port/path
+#   Label=https://host:port/path
+#
+# SOCX only does a lightweight TCP connect check. It does not send API keys
+# and does not call model endpoints.
+
+# Uncomment and adjust these for your local lab machines:
+# MIRANDA=192.168.1.50:8090
+# Ollama=192.168.1.50:11434
+# vLLM=192.168.1.51:8000
+# OpenWebUI=192.168.1.52:3000
+# Jupyter=192.168.1.53:8888
+# Ray=192.168.1.54:8265
+
+NVIDIA-Build=build.nvidia.com:443
+xAI-Grok=api.x.ai:443
+OpenAI=api.openai.com:443
+Anthropic=api.anthropic.com:443
+Gemini=generativelanguage.googleapis.com:443
+HuggingFace=huggingface.co:443

@@ -4850,6 +4850,9 @@ function collect_soc_command_events(array &$state, array $hosts, float $now, arr
     if ($routineDue && $ntopngRunning) {
         $events[] = soc_event('FLOW', 'INFO', 'ntopng flow intelligence online | watch top talkers');
     }
+    foreach (collect_ai_lab_events($state, $metrics, $routineDue) as $event) {
+        $events[] = $event;
+    }
 
     if ($routineDue) {
         $events = array_merge($events, disk_status_events());
@@ -4932,6 +4935,196 @@ function collect_activity_summary_events(array &$state, array $events, array $fl
     }
 
     return $summary;
+}
+
+function collect_ai_lab_events(array &$state, array $metrics, bool $routineDue): array
+{
+    if (!env_bool('SOCX_AI_LAB_ENABLED', true)) {
+        return [];
+    }
+    $events = [];
+    $flows = is_array($metrics['flows'] ?? null) ? $metrics['flows'] : [];
+    $aiFlows = ai_provider_flows($flows);
+    if ($aiFlows) {
+        $top = $aiFlows[0];
+        $events[] = soc_event('AI', 'INFO', sprintf('%s traffic %s %s | %s',
+            ai_provider_label((string)($top['provider'] ?? 'AI')),
+            flow_path_text($top, 26),
+            compact_rate_pair((string)($top['up'] ?? '0B'), (string)($top['down'] ?? '0B'), 9),
+            service_human_label((string)($top['service'] ?? 'ai'))));
+    }
+
+    if (!$routineDue && (($state['last_ai_lab_event_at'] ?? 0.0) > 0)) {
+        return $events;
+    }
+    $state['last_ai_lab_event_at'] = microtime(true);
+
+    $procs = strtolower(implode(' ', array_map(static fn(array $p): string => (string)($p['name'] ?? '') . ' ' . (string)($p['cmd'] ?? ''), $metrics['procs'] ?? [])));
+    $signals = [];
+    foreach ([
+        'ollama' => 'Ollama',
+        'vllm' => 'vLLM',
+        'text-generation' => 'TGI',
+        'llama' => 'llama.cpp',
+        'miranda' => 'MIRANDA',
+        'nvidia' => 'NVIDIA',
+    ] as $needle => $label) {
+        if (str_contains($procs, $needle) || process_running($needle)) {
+            $signals[] = $label;
+        }
+    }
+    if ($signals) {
+        $events[] = soc_event('AI', 'INFO', 'Local AI signals online: ' . implode(', ', array_slice(array_unique($signals), 0, 5)));
+    }
+
+    $checks = ai_lab_endpoint_checks();
+    if ($checks) {
+        $online = [];
+        $offline = [];
+        foreach ($checks as $check) {
+            if (ai_lab_endpoint_online($check)) {
+                $online[] = $check['label'];
+            } else {
+                $offline[] = $check['label'];
+            }
+        }
+        $total = count($checks);
+        $severity = $offline ? ($online ? 'LOW' : 'WARN') : 'INFO';
+        $events[] = soc_event('AI', $severity, sprintf('AI lab endpoints %d/%d online%s',
+            count($online),
+            $total,
+            $offline ? ' | offline ' . implode(', ', array_slice($offline, 0, 3)) : ''));
+    } else {
+        $events[] = soc_event('AI', 'LOW', 'AI lab ready | configure /usr/local/etc/socx_ai_lab.conf for MIRANDA, Ollama, vLLM, xAI, NVIDIA Build');
+    }
+    return $events;
+}
+
+function ai_lab_endpoint_checks(): array
+{
+    $checks = [];
+    $env = getenv('SOCX_AI_LAB_ENDPOINTS');
+    if ($env !== false && trim($env) !== '') {
+        foreach (preg_split('/\s*,\s*/', trim($env)) ?: [] as $entry) {
+            $check = parse_ai_lab_endpoint($entry);
+            if ($check !== null) {
+                $checks[] = $check;
+            }
+        }
+    }
+    foreach (['/usr/local/etc/socx_ai_lab.conf', '/root/socx_ai_lab.conf'] as $file) {
+        if (!is_readable($file)) {
+            continue;
+        }
+        foreach (file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+            $line = trim($line);
+            if ($line === '' || str_starts_with($line, '#')) {
+                continue;
+            }
+            $check = parse_ai_lab_endpoint($line);
+            if ($check !== null) {
+                $checks[] = $check;
+            }
+        }
+    }
+    return array_slice($checks, 0, 12);
+}
+
+function parse_ai_lab_endpoint(string $entry): ?array
+{
+    $entry = trim($entry);
+    if ($entry === '') {
+        return null;
+    }
+    $label = '';
+    $target = $entry;
+    if (str_contains($entry, '=')) {
+        [$label, $target] = array_map('trim', explode('=', $entry, 2));
+    }
+    $target = trim($target);
+    if ($target === '') {
+        return null;
+    }
+    $host = '';
+    $port = 0;
+    if (preg_match('/^https?:\/\/([^\/:]+)(?::(\d+))?/i', $target, $m)) {
+        $host = $m[1];
+        $port = isset($m[2]) && $m[2] !== '' ? (int)$m[2] : (str_starts_with(strtolower($target), 'https://') ? 443 : 80);
+    } elseif (preg_match('/^([^:]+):(\d+)$/', $target, $m)) {
+        $host = $m[1];
+        $port = (int)$m[2];
+    }
+    if ($host === '' || $port <= 0) {
+        return null;
+    }
+    if ($label === '') {
+        $label = ai_provider_label($host);
+    }
+    $label = truncate_text(preg_replace('/[^\w.\- ]/', '', $label) ?: $host, 18);
+    return ['label' => $label, 'host' => $host, 'port' => $port, 'target' => $target];
+}
+
+function ai_lab_endpoint_online(array $check): bool
+{
+    $errno = 0;
+    $errstr = '';
+    $timeout = max(0.2, min(2.0, (float)(getenv('SOCX_AI_LAB_TIMEOUT') ?: 0.6)));
+    $fp = @stream_socket_client('tcp://' . $check['host'] . ':' . (int)$check['port'], $errno, $errstr, $timeout);
+    if (is_resource($fp)) {
+        fclose($fp);
+        return true;
+    }
+    return false;
+}
+
+function ai_provider_flows(array $flows): array
+{
+    $rows = [];
+    foreach ($flows as $flow) {
+        $service = strtolower((string)($flow['service'] ?? ''));
+        $path = strtolower((string)($flow['src'] ?? '') . ' ' . (string)($flow['dst'] ?? ''));
+        $provider = ai_provider_from_text($service . ' ' . $path);
+        if ($provider === '') {
+            continue;
+        }
+        $flow['provider'] = $provider;
+        $rows[] = $flow;
+    }
+    usort($rows, static fn(array $a, array $b): int => ((int)($b['score'] ?? 0)) <=> ((int)($a['score'] ?? 0)));
+    return array_slice($rows, 0, 5);
+}
+
+function ai_provider_from_text(string $text): string
+{
+    $text = strtolower($text);
+    return match (true) {
+        str_contains($text, 'xai') || str_contains($text, 'grok') => 'xai',
+        str_contains($text, 'nvidia') || str_contains($text, 'ngc') || str_contains($text, 'build.nvidia') => 'nvidia',
+        str_contains($text, 'openai') => 'openai',
+        str_contains($text, 'anthropic') || str_contains($text, 'claude') => 'anthropic',
+        str_contains($text, 'gemini') || str_contains($text, 'googleai') => 'gemini',
+        str_contains($text, 'huggingface') || str_contains($text, 'hf') => 'huggingface',
+        str_contains($text, 'ollama') || str_contains($text, 'vllm') || str_contains($text, 'llm') || str_contains($text, 'tgi') => 'local-llm',
+        default => '',
+    };
+}
+
+function ai_provider_label(string $provider): string
+{
+    $provider = strtolower($provider);
+    return match (true) {
+        str_contains($provider, 'xai'), str_contains($provider, 'grok') => 'xAI/Grok',
+        str_contains($provider, 'nvidia'), str_contains($provider, 'ngc') => 'NVIDIA Build',
+        str_contains($provider, 'openai') => 'OpenAI',
+        str_contains($provider, 'anthropic'), str_contains($provider, 'claude') => 'Anthropic',
+        str_contains($provider, 'gemini'), str_contains($provider, 'google') => 'Gemini',
+        str_contains($provider, 'hugging'), $provider === 'hf' => 'Hugging Face',
+        str_contains($provider, 'ollama') => 'Ollama',
+        str_contains($provider, 'vllm') => 'vLLM',
+        str_contains($provider, 'miranda') => 'MIRANDA',
+        str_contains($provider, 'llm') => 'Local LLM',
+        default => $provider !== '' ? strtoupper($provider) : 'AI Lab',
+    };
 }
 
 function first_useful_flow(array $flows): ?array
@@ -5209,7 +5402,7 @@ function category_weight(string $category, string $severity): int
         'WAN', 'VPN', 'UPS', 'DNS' => 40,
         'FW' => 30,
         'PULSE' => 25,
-        'INTEL', 'TTP', 'DETECT', 'EVID', 'CLOUD', 'SRC' => 22,
+        'AI', 'LAB', 'INTEL', 'TTP', 'DETECT', 'EVID', 'CLOUD', 'SRC' => 22,
         'ARP', 'DHCP', 'DEVICE', 'IFACE' => 20,
         'SOCX' => 18,
         'SYS' => 15,
@@ -5239,6 +5432,8 @@ function balance_events_for_feed(array $events, int $limit): array
         'FLOW' => 5,
         'PF' => 5,
         'PULSE' => 4,
+        'AI' => 5,
+        'LAB' => 4,
         'INTEL' => 3,
         'TTP' => 3,
         'DETECT' => 3,
@@ -5864,7 +6059,11 @@ function parse_pf_state_header(string $line, array $hosts): ?array
         return null;
     }
     $service = service_name_for_ports($dst['port'], $src['port'], $proto);
-    $class = str_starts_with($iface, 'tun') || str_starts_with($iface, 'wg') ? 'vpn' : (($service === 'dns' || $service === 'https') ? 'internet' : 'state');
+    $class = str_starts_with($iface, 'tun') || str_starts_with($iface, 'wg')
+        ? 'vpn'
+        : (in_array($service, ['ollama', 'vllm', 'llm', 'tgi', 'xai', 'nvidia-ai', 'openai', 'anthropic', 'gemini', 'huggingface'], true)
+            ? 'ai'
+            : (($service === 'dns' || $service === 'https') ? 'internet' : 'state'));
     return [
         'iface' => $iface,
         'proto' => $proto,
@@ -6114,8 +6313,18 @@ function service_name_for_port(string $port, string $proto = ''): string
         '32400', '32412', '32414' => 'plex',
         '3493' => 'nut',
         '5353' => 'mdns',
+        '7860' => 'gradio',
         '6379' => 'redis',
+        '8265', '10001' => 'ray',
+        '8889' => 'jupyter',
+        '9090', '9100' => 'metrics',
+        '3000' => 'grafana',
+        '5000', '5001' => 'mlflow',
+        '8002', '8003', '8004', '8088', '8899' => 'vllm',
         '8086' => 'metrics',
+        '11434' => 'ollama',
+        '11435' => 'llm',
+        '19090' => 'triton',
         '3389' => 'rdp',
         '5900' => 'vnc',
         '6667' => 'irc',
@@ -6417,6 +6626,22 @@ function service_short(string $service): string
         $service === 'snmp' => 'snmp',
         $service === 'ssdp' => 'ssdp',
         $service === 'nut' => 'nut',
+        $service === 'ollama' => 'olma',
+        $service === 'vllm' => 'vllm',
+        $service === 'llm' => 'llm',
+        $service === 'tgi' => 'tgi',
+        $service === 'gradio' => 'grad',
+        $service === 'jupyter' => 'jupy',
+        $service === 'ray' => 'ray',
+        $service === 'mlflow' => 'mlfl',
+        $service === 'triton' => 'trtn',
+        $service === 'grafana' => 'graf',
+        $service === 'openai' => 'oai',
+        $service === 'xai' => 'xai',
+        $service === 'nvidia-ai' => 'ngc',
+        $service === 'anthropic' => 'anth',
+        $service === 'gemini' => 'gemi',
+        $service === 'huggingface' => 'hf',
         $service === 'redis' => 'rdis',
         $service === 'metrics' => 'metr',
         $service === 'ping' => 'ping',
@@ -6455,6 +6680,22 @@ function service_human_label(string $service): string
         'snmp' => 'SNMP',
         'ssdp' => 'SSDP',
         'nut' => 'NUT/UPS',
+        'olma' => 'Ollama',
+        'vllm' => 'vLLM',
+        'llm' => 'Local LLM',
+        'tgi' => 'Text Gen',
+        'grad' => 'Gradio',
+        'jupy' => 'Jupyter',
+        'ray' => 'Ray',
+        'mlfl' => 'MLflow',
+        'trtn' => 'Triton',
+        'graf' => 'Grafana',
+        'oai' => 'OpenAI',
+        'xai' => 'xAI/Grok',
+        'ngc' => 'NVIDIA Build',
+        'anth' => 'Anthropic',
+        'gemi' => 'Gemini',
+        'hf' => 'Hugging Face',
         'rdis' => 'Redis',
         'metr' => 'metrics',
         'ping' => 'ping',
@@ -7153,11 +7394,11 @@ function colorize_line($line, bool $color): string
     $line = color_replace('/(\[DROP\]|\[HIGH\])|\b(FW BLOCK|FIREWALL BLOCK|IPS BLOCK|DROP|REJECT|BLOCK|blocked|failed|failure|critical|CRIT|HIGH|DOWN)\b/i', $c['red'] . '$0' . $c['reset'], $line);
     $line = color_replace('/(\[WARN\]|\[MED\])|\b(DNS DENY|WARN|warning|MED|PARTIAL|UNKNOWN|WATCH|stale|rising|falling|latency|loss|scanner|suspicious|burst|high-rate|high usage|SYN|FIN|SING|MULT)\b/i', $c['yellow'] . '$0' . $c['reset'], $line);
     $line = color_replace('/(\[INFO\]|\[LOW\])/', $c['green'] . '$1' . $c['reset'], $line);
-    $line = color_replace('/(\[FW\]|\[VPN\]|\[WAN\]|\[DHCP\]|\[ARP\]|\[FLOW\]|\[PF\]|\[UPS\]|\[SYS\]|\[DNS\]|\[IFACE\]|\[DEVICE\]|\[PULSE\]|\[SOCX\]|\[INTEL\]|\[TTP\]|\[DETECT\]|\[EVID\]|\[CLOUD\]|\[SRC\])/', $c['cyan'] . '$1' . $c['reset'], $line);
-    $line = color_replace('/(\[DNSBL\]|\[IDS\]|\[IPS\])|\b(DNS BLOCK|DNS SINK|DNSBL HIT|SINKHOLE|DNSBL|Suricata|suricata|Sigma|YARA|CVE|CPE|CWE|CAPEC|CVSS|EPSS|KEV|ATT&CK|D3FEND|reputation|threat-intel|known-bad|known bad|malware|botnet|C2|abuse:high|abuse high|tor\?)\b/i', $c['purple'] . '$0' . $c['reset'], $line);
+    $line = color_replace('/(\[FW\]|\[VPN\]|\[WAN\]|\[DHCP\]|\[ARP\]|\[FLOW\]|\[PF\]|\[UPS\]|\[SYS\]|\[DNS\]|\[IFACE\]|\[DEVICE\]|\[PULSE\]|\[SOCX\]|\[AI\]|\[LAB\]|\[INTEL\]|\[TTP\]|\[DETECT\]|\[EVID\]|\[CLOUD\]|\[SRC\])/', $c['cyan'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/(\[DNSBL\]|\[IDS\]|\[IPS\])|\b(DNS BLOCK|DNS SINK|DNSBL HIT|SINKHOLE|DNSBL|Suricata|suricata|Sigma|YARA|CVE|CPE|CWE|CAPEC|CVSS|EPSS|KEV|ATT&CK|D3FEND|OpenAI|Anthropic|Gemini|xAI|Grok|NVIDIA Build|Hugging Face|Ollama|vLLM|MIRANDA|Local LLM|reputation|threat-intel|known-bad|known bad|malware|botnet|C2|abuse:high|abuse high|tor\?)\b/i', $c['purple'] . '$0' . $c['reset'], $line);
     $line = color_replace('/\b(contain|quarantine|preserve|evidence|pcap|pfctl|config\.xml|CloudTrail|AzureActivity|VPC Flow|Windows|Linux|macOS|memory)\b/i', $c['yellow'] . '$0' . $c['reset'], $line);
     $line = color_replace('/\b(CPU|RAM|ARC|SWAP|PF|LAN|WAN|IN|OUT|VPN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|PFTOP|LIVE STATES|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES|THREAT PULSE|SPEEDTEST|SPD|Mbps|STATES|SEARCH|TRAFFIC|TCP|UDP|ICMP|DIR|APP|PATH|TYPE|STAT|STATE|LEFT|PRO|SVC|RATE|FLOW|AGE|EXP|PROTO|TEMP|HUMID|LOAD)\b/i', $c['cyan'] . '$1' . $c['reset'], $line);
-    $line = color_replace('/\b(tls|web|dns|dnsblk|ssh|vpn|ntp|smb|sysl|rip|snmp|ssdp|nut|rdis|metr|ping|plex|dhcp|mdns|mail|apns|gcm|team|rdp|vnc|irc|ftp|dot|mux|oth|block|p\d{1,5})\b/i', $c['blue'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/\b(tls|web|dns|dnsblk|ssh|vpn|ntp|smb|sysl|rip|snmp|ssdp|nut|olma|vllm|llm|tgi|grad|jupy|ray|mlfl|trtn|graf|oai|xai|ngc|anth|gemi|hf|rdis|metr|ping|plex|dhcp|mdns|mail|apns|gcm|team|rdp|vnc|irc|ftp|dot|mux|oth|block|p\d{1,5})\b/i', $c['blue'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[[#!.]+\])/', $c['green'] . '$1' . $c['reset'], $line);
     $line = color_replace('/([█▇▆▅▄▃▂▁▓]+)/u', $c['green'] . '$1' . $c['reset'], $line);
     $line = color_replace('/([↓↑])/u', $c['yellow'] . '$1' . $c['reset'], $line);

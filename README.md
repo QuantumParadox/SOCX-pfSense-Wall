@@ -63,6 +63,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds live WAN/LAN download/upload bars and a top-talker line in the NETWORK card.
 - Learns friendly host names from `/usr/local/etc/socx_hosts.conf` and cached DHCP leases when available.
 - Adds WAN health and Speedtest 24-hour average/trend events to the rotating feed.
+- Adds AI/MIRANDA lab awareness for Ollama, vLLM, xAI/Grok, NVIDIA Build, OpenAI, Anthropic, Gemini, Hugging Face, Jupyter, Ray, MLflow, and related local lab services.
 - Shows CPU graph, CPU cores, RAM/ARC, pf state/search counters, live interface rates, and top processes in the top cockpit.
 - Shows prominent NUT/APC UPS watts/load/battery/runtime plus 60-second peak, average, and sparkline.
 - Adds `iftopx`, a readable color flow radar for live LAN/WAN traffic.
@@ -92,6 +93,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `web/socx-web.py` - lightweight Python WebSocket/HTTP backend for the browser wall.
 - `web/static/` - HTML, CSS, and JavaScript frontend for the modern card dashboard.
 - `config/socx_hosts.conf.example` - optional friendly-name map for local LAN hosts.
+- `config/socx_ai_lab.conf.example` - optional AI/MIRANDA endpoint map for local LLMs and external model APIs.
 - `rc.d/socx` - pfSense/FreeBSD boot script for automatic detached startup.
 - `rc.d/socxweb` - optional pfSense/FreeBSD boot script for the browser dashboard service.
 
@@ -180,6 +182,36 @@ Friendly hostnames are read from:
 ```sh
 /usr/local/etc/socx_hosts.conf
 ```
+
+AI/MIRANDA lab endpoints are read from:
+
+```sh
+/usr/local/etc/socx_ai_lab.conf
+```
+
+The format is one lightweight TCP check per line. SOCX does not send API keys or call model APIs:
+
+```text
+MIRANDA=192.168.1.50:8090
+Ollama=192.168.1.50:11434
+vLLM=192.168.1.51:8000
+NVIDIA-Build=build.nvidia.com:443
+xAI-Grok=api.x.ai:443
+OpenAI=api.openai.com:443
+Anthropic=api.anthropic.com:443
+Gemini=generativelanguage.googleapis.com:443
+HuggingFace=huggingface.co:443
+```
+
+When enabled, SOCX rotates Event Feed messages such as:
+
+```text
+[AI][INFO] AI lab endpoints 8/10 online | offline vLLM
+[AI][INFO] NVIDIA Build traffic LAN.148 -> EXT.72.38 4M/120K | HTTPS/TLS
+[AI][INFO] Local AI signals online: Ollama, vLLM, MIRANDA
+```
+
+AI/lab service labels are also shortened in PFTOP/IFTOPX where possible: `olma`, `vllm`, `llm`, `jupy`, `ray`, `mlfl`, `trtn`, `oai`, `xai`, `ngc`, `anth`, `gemi`, and `hf`.
 
 Wall ticker speed can be tuned with:
 

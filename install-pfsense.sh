@@ -32,6 +32,9 @@ install -m 0755 "$ROOT/rc.d/socxweb" /usr/local/etc/rc.d/socxweb
 if [ ! -f /usr/local/etc/socx_hosts.conf ]; then
     install -m 0644 "$ROOT/config/socx_hosts.conf.example" /usr/local/etc/socx_hosts.conf
 fi
+if [ ! -f /usr/local/etc/socx_ai_lab.conf ]; then
+    install -m 0644 "$ROOT/config/socx_ai_lab.conf.example" /usr/local/etc/socx_ai_lab.conf
+fi
 
 echo "SOCX pfSense Wall installed."
 echo "Run: soc"
