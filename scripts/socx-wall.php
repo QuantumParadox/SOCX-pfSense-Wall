@@ -3879,8 +3879,10 @@ function collect_gateway_status_rows(): array
         $configctl = vpn_command('configctl interface gatewaystatus', 1);
     }
     $raw[] = vpn_command_debug('configctl', $configctl);
-    foreach (parse_gateway_status_output($configctl['output']) as $name => $row) {
-        $rows[$name] = $row;
+    if ($configctl['ok']) {
+        foreach (parse_gateway_status_output($configctl['output']) as $name => $row) {
+            $rows[$name] = $row;
+        }
     }
 
     foreach (glob('/var/run/dpinger*.status') ?: [] as $file) {
@@ -3894,7 +3896,7 @@ function collect_gateway_status_rows(): array
         }
     }
 
-    if (env_bool('SOCX_VPN_USE_PFSSH', false)) {
+    if (!$rows || env_bool('SOCX_VPN_USE_PFSSH', false)) {
         $pfssh = vpn_command('/usr/local/sbin/pfSsh.php playback gatewaystatus', 2);
         $raw[] = vpn_command_debug('pfSsh gatewaystatus', $pfssh);
         foreach (parse_gateway_status_output($pfssh['output']) as $name => $row) {
@@ -3929,6 +3931,9 @@ function parse_gateway_status_output(string $raw): array
                 $status = (string)($parts[$idx + 1] ?? '');
                 break;
             }
+        }
+        if ($loss === '') {
+            continue;
         }
         if ($status === '') {
             $status = (string)end($parts);
@@ -4068,10 +4073,17 @@ function evaluate_vpn_target(array $target, array $gatewayRows, array $ifStates,
     if (vpn_wireguard_target($target)) {
         $wg = $ifname !== '' ? ($wgStates[$ifname] ?? null) : null;
         if ($wg === null) {
+            if ($gatewayRow !== null && gateway_row_is_online($gatewayRow)) {
+                return vpn_detail($target, 'UP', implode(', ', array_merge($reasons, ['handshake not reported'])));
+            }
             return vpn_detail($target, 'DOWN', 'no WireGuard handshake');
         }
         $age = $wg['age'];
         if ($age === null || (float)$age > vpn_wireguard_handshake_max_age()) {
+            if ($gatewayRow !== null && gateway_row_is_online($gatewayRow)) {
+                $reasons[] = $age === null ? 'handshake not reported' : 'handshake stale ' . format_age_seconds((float)$age);
+                return vpn_detail($target, 'UP', implode(', ', $reasons));
+            }
             return vpn_detail($target, 'DOWN', $age === null ? 'no WireGuard handshake' : 'handshake stale ' . format_age_seconds((float)$age));
         }
         $reasons[] = 'handshake ' . format_age_seconds((float)$age);
