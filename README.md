@@ -211,6 +211,8 @@ When enabled, SOCX rotates Event Feed messages such as:
 [AI][INFO] Local AI signals online: Ollama, vLLM, MIRANDA
 ```
 
+The NETWORK card also rotates its bottom line between the current top flow and a compact AI LAB summary, for example `AI LAB 7/8 down MIRANDA`, so lab health is visible even when the Event Feed is busy.
+
 AI/lab service labels are also shortened in PFTOP/IFTOPX where possible: `olma`, `vllm`, `llm`, `jupy`, `ray`, `mlfl`, `trtn`, `oai`, `xai`, `ngc`, `anth`, `gemi`, and `hf`.
 
 Wall ticker speed can be tuned with:

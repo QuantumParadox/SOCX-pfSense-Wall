@@ -784,6 +784,7 @@ function collect_live_frame(array &$state, array $hosts): array
         'procs' => $procs,
         'flows' => $flows,
         'top_flow' => $topFlow,
+        'ai_lab' => is_array($state['ai_lab_status'] ?? null) ? $state['ai_lab_status'] : [],
         'wan_health' => $wanHealth,
         'speedtest_history' => speedtest_history_summary($state['speedtest_history'] ?? [], $now),
         'packets' => $packets,
@@ -1896,6 +1897,7 @@ function modern_network_rows(array $f, array $p): array
     [, , , $contentH] = modern_content_bounds($p);
     $trend = trend_arrow($f, 'wan_traffic');
     $topFlow = is_array($f['top_flow'] ?? null) ? $f['top_flow'] : first_useful_flow($f['flows'] ?? []);
+    $showAi = !empty($f['ai_lab']) && (((int)($f['tick'] ?? 0) % 16) >= 8);
     if ($w < 22) {
         $rows = [
             network_rate_line('WAN', (string)$f['wan']['down'], (string)$f['wan']['up'], $w),
@@ -1903,7 +1905,7 @@ function modern_network_rows(array $f, array $p): array
             network_dual_bar((int)($f['wan']['rx_bps'] ?? 0), (int)($f['wan']['tx_bps'] ?? 0), $w),
         ];
         if ($contentH >= 4) {
-            $rows[] = top_flow_mini_line($topFlow, $w);
+            $rows[] = $showAi ? ai_lab_mini_line((array)$f['ai_lab'], $w) : top_flow_mini_line($topFlow, $w);
         }
         return $rows;
     }
@@ -1913,9 +1915,43 @@ function modern_network_rows(array $f, array $p): array
         network_bar_line('WAN', (int)($f['wan']['rx_bps'] ?? 0), (int)($f['wan']['tx_bps'] ?? 0), $w),
     ];
     if ($contentH >= 4) {
-        $rows[] = top_flow_line($topFlow, $w);
+        $rows[] = $showAi ? ai_lab_line((array)$f['ai_lab'], $w) : top_flow_line($topFlow, $w);
     }
     return $rows;
+}
+
+function ai_lab_mini_line(array $status, int $width): string
+{
+    $online = (int)($status['online'] ?? 0);
+    $total = (int)($status['total'] ?? 0);
+    $offline = is_array($status['offline'] ?? null) ? $status['offline'] : [];
+    $label = $offline ? ai_lab_short_name((string)$offline[0]) . '?' : 'OK';
+    if ($total <= 0) {
+        return truncate_text('AI ready', $width);
+    }
+    return truncate_text(sprintf('AI %d/%d %s', $online, $total, $label), $width);
+}
+
+function ai_lab_line(array $status, int $width): string
+{
+    $online = (int)($status['online'] ?? 0);
+    $total = (int)($status['total'] ?? 0);
+    $onlineNames = is_array($status['online_names'] ?? null) ? $status['online_names'] : [];
+    $offline = is_array($status['offline'] ?? null) ? $status['offline'] : [];
+    if ($total <= 0) {
+        return truncate_text('AI LAB ready', $width);
+    }
+    $detail = $offline ? ('down ' . implode(',', array_slice($offline, 0, 2))) : implode(',', array_slice($onlineNames, 0, 2));
+    return truncate_text(sprintf('AI LAB %d/%d %s', $online, $total, $detail), $width);
+}
+
+function ai_lab_short_name(string $name): string
+{
+    $clean = strtoupper(preg_replace('/[^A-Z0-9]/i', '', $name) ?? '');
+    if ($clean === '') {
+        return 'AI';
+    }
+    return substr($clean, 0, 5);
 }
 
 function network_dual_bar(int $down, int $up, int $width): string
@@ -5001,12 +5037,26 @@ function collect_ai_lab_events(array &$state, array $metrics, bool $routineDue):
             }
         }
         $total = count($checks);
+        $state['ai_lab_status'] = [
+            'online' => count($online),
+            'total' => $total,
+            'online_names' => array_values($online),
+            'offline' => array_values($offline),
+            'checked_at' => microtime(true),
+        ];
         $severity = $offline ? ($online ? 'LOW' : 'WARN') : 'INFO';
         $events[] = soc_event('AI', $severity, sprintf('AI lab endpoints %d/%d online%s',
             count($online),
             $total,
             $offline ? ' | offline ' . implode(', ', array_slice($offline, 0, 3)) : ''));
     } else {
+        $state['ai_lab_status'] = [
+            'online' => 0,
+            'total' => 0,
+            'online_names' => [],
+            'offline' => [],
+            'checked_at' => microtime(true),
+        ];
         $events[] = soc_event('AI', 'LOW', 'AI lab ready | configure /usr/local/etc/socx_ai_lab.conf for MIRANDA, Ollama, vLLM, xAI, NVIDIA Build');
     }
     return $events;
@@ -5439,13 +5489,13 @@ function prioritize_events(array $events): array
 function balance_events_for_feed(array $events, int $limit): array
 {
     $caps = [
-        'FW' => 8,
-        'DNSBL' => 8,
+        'FW' => 4,
+        'DNSBL' => 4,
         'FLOW' => 5,
         'PF' => 5,
         'PULSE' => 4,
-        'AI' => 5,
-        'LAB' => 4,
+        'AI' => 8,
+        'LAB' => 6,
         'INTEL' => 3,
         'TTP' => 3,
         'DETECT' => 3,
