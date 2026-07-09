@@ -723,7 +723,7 @@ function collect_live_frame(array &$state, array $hosts): array
     if ($activityEvents) {
         $events = balance_events_for_feed(prioritize_events(array_merge($events, $activityEvents)), 80);
     }
-    $packets = packets_from_events($packetEvents ?: $events);
+    $packets = packet_radar_merge(packet_radar_from_cache(), packets_from_events($packetEvents ?: $events));
     $pulse = threat_pulse_from_events($events, $packets, $hosts, $state);
     $wanHealth = wan_health_score($wan, $vpnStatus, $speedtest, $pulse);
     $wanTraffic = (float)(($wan['rx'] ?? 0) + ($wan['tx'] ?? 0));
@@ -1042,7 +1042,7 @@ function render_modern_btop_wall(array $frame, int $cols, int $rows, bool $color
         ...$cards,
         panel_obj(0, $layout['middle_y'], $layout['left_w'], $layout['middle_h'], 'PFTOP LIVE STATES', static fn(array $f, array $p): array => modern_pftop_rows($f, $p), 'table'),
         panel_obj($layout['right_x'], $layout['middle_y'], $layout['right_w'], $layout['middle_h'], 'NETWORK FLOWS / IFTOPX', static fn(array $f, array $p): array => modern_flow_rows($f, $p), 'table'),
-        panel_obj(0, $layout['packets_y'], $cols, $layout['packets_h'], 'LIVE PACKETS', static fn(array $f, array $p): array => modern_packet_rows($f, $p), 'table'),
+        panel_obj(0, $layout['packets_y'], $cols, $layout['packets_h'], 'PACKET RADAR', static fn(array $f, array $p): array => modern_packet_rows($f, $p), 'table'),
         panel_obj(0, $layout['ticker_y'], $cols, $layout['ticker_h'], ticker_title(), static fn(array $f, array $p): array => ticker_rows($f, $p), 'ticker'),
     ];
 
@@ -6219,6 +6219,152 @@ function pf_time_short(string $time): string
     return $time;
 }
 
+function packet_radar_from_cache(): array
+{
+    if (!env_bool('SOCX_PACKET_RADAR_ENABLED', true)) {
+        return [];
+    }
+    $path = getenv('SOCX_PACKET_RADAR_CACHE') ?: '/tmp/socx-packet-radar.log';
+    if (!is_readable($path)) {
+        return [];
+    }
+    $raw = @file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    if (!is_array($raw) || !$raw) {
+        return [];
+    }
+    $rows = [];
+    foreach (array_reverse(array_slice($raw, -60)) as $line) {
+        $line = trim(strip_ansi((string)$line));
+        if ($line === '' || preg_match('/^(TCPDUMPX|time\s|[-─]|tcpdump:|listening on)/i', $line)) {
+            continue;
+        }
+        $packet = packet_radar_parse_line($line);
+        if ($packet !== null) {
+            $rows[] = $packet;
+        }
+        if (count($rows) >= 24) {
+            break;
+        }
+    }
+    return $rows;
+}
+
+function packet_radar_parse_line(string $line): ?array
+{
+    if (!preg_match('/^(\d{2}:\d{2}(?::\d{2})?)\s+(.+)$/', $line, $m)) {
+        return null;
+    }
+    $time = strlen($m[1]) === 5 ? date('H:') . substr($m[1], 0, 2) : $m[1];
+    $body = trim($m[2]);
+    $proto = 'IP';
+    $dir = 'FLOW';
+    $src = 'network';
+    $dst = 'internet';
+    $service = 'flow';
+    $size = 'live';
+
+    if (preg_match('/^(TCP|UDP|IP6?|ICMP6?|ARP)\s+(IN|OUT|LCL|FLOW|BCAST)\s+(.+?)\s{2,}(.+)$/', $body, $parts)) {
+        $proto = strtoupper($parts[1]);
+        $dir = strtoupper($parts[2]);
+        $flow = trim($parts[3]);
+        $detail = trim($parts[4]);
+        if (preg_match('/^(.+?)\s*->\s*(.+)$/', $flow, $fm)) {
+            $src = trim($fm[1]);
+            $dst = trim($fm[2]);
+        } else {
+            $src = $flow;
+            $dst = '';
+        }
+        $service = packet_radar_service_from_detail($detail);
+        if (preg_match('/\b(\d+B)\b/', $detail, $sm)) {
+            $size = $sm[1];
+        }
+        $story = packet_radar_story($dir, $proto, $src, $dst, $detail);
+    } else {
+        $detail = $body;
+        $story = $body;
+    }
+
+    return [
+        'time' => $time,
+        'proto' => $proto,
+        'dir' => $dir,
+        'src' => $src,
+        'dst' => $dst,
+        'service' => $service,
+        'size' => $size,
+        'bytes' => packet_size_bytes($size),
+        'verdict' => 'LIVE',
+        'category' => 'RADAR',
+        'severity' => 'INFO',
+        'context' => ['tcpdump'],
+        'story' => $story,
+    ];
+}
+
+function packet_radar_service_from_detail(string $detail): string
+{
+    $detail = strtolower($detail);
+    foreach (['dns', 'mdns', 'https', 'web', 'ssh', 'vpn', 'ntp', 'icmp', 'snmp', 'syslog'] as $svc) {
+        if (str_contains($detail, $svc)) {
+            return $svc === 'https' ? 'tls' : $svc;
+        }
+    }
+    if (preg_match('/\bport\s+(\d+)\b/', $detail, $m)) {
+        return service_name((string)$m[1]);
+    }
+    return 'flow';
+}
+
+function packet_radar_story(string $dir, string $proto, string $src, string $dst, string $detail): string
+{
+    $verb = match ($dir) {
+        'IN' => 'inbound',
+        'OUT' => 'outbound',
+        'LCL' => 'local',
+        'BCAST' => 'broadcast',
+        default => 'flow',
+    };
+    $detail = preg_replace('/\s*\[[#.]+\]\s*/', ' ', $detail) ?? $detail;
+    $detail = trim(preg_replace('/\s+/', ' ', $detail) ?? $detail);
+    return sprintf('%s %s %s -> %s %s', $verb, $proto, $src, $dst, $detail);
+}
+
+function packet_size_bytes(string $size): int
+{
+    if (preg_match('/^(\d+)B$/i', trim($size), $m)) {
+        return (int)$m[1];
+    }
+    return 0;
+}
+
+function packet_radar_merge(array $radar, array $events): array
+{
+    if (!$radar) {
+        return $events;
+    }
+    $merged = [];
+    $seen = [];
+    foreach (array_merge($radar, $events) as $row) {
+        $key = implode('|', [
+            (string)($row['time'] ?? ''),
+            (string)($row['src'] ?? ''),
+            (string)($row['dst'] ?? ''),
+            (string)($row['story'] ?? ''),
+            (string)($row['verdict'] ?? ''),
+        ]);
+        if (isset($seen[$key])) {
+            continue;
+        }
+        $seen[$key] = true;
+        $merged[] = $row;
+        if (count($merged) >= 48) {
+            break;
+        }
+    }
+    return $merged;
+}
+
 function packets_from_events(array $events): array
 {
     $rows = [];
@@ -7456,10 +7602,10 @@ function colorize_line($line, bool $color): string
     $line = color_replace('/(\[DROP\]|\[HIGH\])|\b(FW BLOCK|FIREWALL BLOCK|IPS BLOCK|DROP|REJECT|BLOCK|blocked|failed|failure|critical|CRIT|HIGH|DOWN)\b/i', $c['red'] . '$0' . $c['reset'], $line);
     $line = color_replace('/(\[WARN\]|\[MED\])|\b(DNS DENY|WARN|warning|MED|PARTIAL|UNKNOWN|WATCH|stale|rising|falling|latency|loss|scanner|suspicious|burst|high-rate|high usage|SYN|FIN|SING|MULT)\b/i', $c['yellow'] . '$0' . $c['reset'], $line);
     $line = color_replace('/(\[INFO\]|\[LOW\])/', $c['green'] . '$1' . $c['reset'], $line);
-    $line = color_replace('/(\[FW\]|\[VPN\]|\[WAN\]|\[DHCP\]|\[ARP\]|\[FLOW\]|\[PF\]|\[UPS\]|\[SYS\]|\[DNS\]|\[IFACE\]|\[DEVICE\]|\[PULSE\]|\[SOCX\]|\[AI\]|\[LAB\]|\[INTEL\]|\[TTP\]|\[DETECT\]|\[EVID\]|\[CLOUD\]|\[SRC\])/', $c['cyan'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/(\[FW\]|\[VPN\]|\[WAN\]|\[DHCP\]|\[ARP\]|\[FLOW\]|\[RADAR\]|\[PF\]|\[UPS\]|\[SYS\]|\[DNS\]|\[IFACE\]|\[DEVICE\]|\[PULSE\]|\[SOCX\]|\[AI\]|\[LAB\]|\[INTEL\]|\[TTP\]|\[DETECT\]|\[EVID\]|\[CLOUD\]|\[SRC\])/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[DNSBL\]|\[IDS\]|\[IPS\])|\b(DNS BLOCK|DNS SINK|DNSBL HIT|SINKHOLE|DNSBL|Suricata|suricata|Sigma|YARA|CVE|CPE|CWE|CAPEC|CVSS|EPSS|KEV|ATT&CK|D3FEND|OpenAI|Anthropic|Gemini|xAI|Grok|NVIDIA Build|Hugging Face|Ollama|vLLM|MIRANDA|Local LLM|reputation|threat-intel|known-bad|known bad|malware|botnet|C2|abuse:high|abuse high|tor\?)\b/i', $c['purple'] . '$0' . $c['reset'], $line);
     $line = color_replace('/\b(contain|quarantine|preserve|evidence|pcap|pfctl|config\.xml|CloudTrail|AzureActivity|VPC Flow|Windows|Linux|macOS|memory)\b/i', $c['yellow'] . '$0' . $c['reset'], $line);
-    $line = color_replace('/\b(CPU|RAM|ARC|SWAP|PF|LAN|WAN|IN|OUT|VPN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|PFTOP|LIVE STATES|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES|THREAT PULSE|SPEEDTEST|SPD|Mbps|STATES|SEARCH|TRAFFIC|TCP|UDP|ICMP|DIR|APP|PATH|TYPE|STAT|STATE|LEFT|PRO|SVC|RATE|FLOW|AGE|EXP|PROTO|TEMP|HUMID|LOAD)\b/i', $c['cyan'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/\b(CPU|RAM|ARC|SWAP|PF|LAN|WAN|IN|OUT|VPN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|PACKET RADAR|PFTOP|LIVE STATES|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES|THREAT PULSE|SPEEDTEST|SPD|Mbps|STATES|SEARCH|TRAFFIC|TCP|UDP|ICMP|DIR|APP|PATH|TYPE|STAT|STATE|LEFT|PRO|SVC|RATE|FLOW|RADAR|AGE|EXP|PROTO|TEMP|HUMID|LOAD)\b/i', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/\b(tls|web|dns|dnsblk|ssh|vpn|ntp|smb|sysl|rip|snmp|ssdp|nut|olma|vllm|llm|tgi|grad|jupy|ray|mlfl|trtn|graf|oai|xai|ngc|anth|gemi|hf|rdis|metr|ping|plex|dhcp|mdns|mail|apns|gcm|team|rdp|vnc|irc|ftp|dot|mux|oth|block|p\d{1,5})\b/i', $c['blue'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[[#!.]+\])/', $c['green'] . '$1' . $c['reset'], $line);
     $line = color_replace('/([█▇▆▅▄▃▂▁▓]+)/u', $c['green'] . '$1' . $c['reset'], $line);

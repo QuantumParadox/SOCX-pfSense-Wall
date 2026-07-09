@@ -1,0 +1,72 @@
+#!/bin/sh
+# SOCX Packet Radar cache.
+# Runs tcpdump through the existing human-readable formatter and keeps a small
+# rolling text cache so socx-wall can render live packet stories without blocking.
+
+set -eu
+
+IFACE="${SOCX_PACKET_RADAR_IFACE:-${1:-ix1}}"
+CACHE="${SOCX_PACKET_RADAR_CACHE:-/tmp/socx-packet-radar.log}"
+PIDFILE="${SOCX_PACKET_RADAR_PID:-/tmp/socx-packet-radar.pid}"
+LINES="${SOCX_PACKET_RADAR_LINES:-80}"
+FILTER="${SOCX_PACKET_RADAR_FILTER:-not arp and not port 22}"
+
+run_loop() {
+    tmp="${CACHE}.tmp"
+    : > "$CACHE"
+    export SOCX_TCPDUMP_IFACE="$IFACE"
+    export SOCX_WAN_ADDR="$(/sbin/ifconfig "$IFACE" 2>/dev/null | /usr/bin/awk '/inet / { print $2; exit }')"
+    export SOCX_WIDTH="${SOCX_PACKET_RADAR_WIDTH:-132}"
+    export SOCX_HEIGHT=0
+    export SOCX_COMPACT=1
+    export NO_COLOR=1
+    while :; do
+        /usr/sbin/tcpdump -l -i "$IFACE" -nn -q $FILTER 2>/tmp/socx-packet-radar.err |
+        /usr/local/sbin/socx_tcpdump_color.pl |
+        /usr/bin/awk -v cache="$CACHE" -v tmp="$tmp" -v lines="$LINES" '
+            /^TCPDUMPX / { next }
+            /^time[[:space:]]/ { next }
+            /^[-─]/ { next }
+            /^tcpdump:/ { next }
+            /^listening on / { next }
+            NF == 0 { next }
+            {
+                print $0 >> cache
+                close(cache)
+                cmd = "tail -n " lines " " cache " > " tmp " && mv " tmp " " cache
+                system(cmd)
+            }
+        '
+        sleep 2
+    done
+}
+
+case "${1:-loop}" in
+    loop)
+        echo $$ > "$PIDFILE"
+        run_loop
+        ;;
+    once)
+        timeout "${SOCX_PACKET_RADAR_ONCE_SECONDS:-8}" "$0" loop || true
+        ;;
+    stop)
+        if [ -f "$PIDFILE" ]; then
+            kill "$(cat "$PIDFILE")" 2>/dev/null || true
+            rm -f "$PIDFILE"
+        fi
+        pkill -f "tcpdump .* -i ${IFACE} .*${FILTER}" 2>/dev/null || true
+        pkill -f "socx_tcpdump_color.pl" 2>/dev/null || true
+        ;;
+    status)
+        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+            echo "packet-radar running pid $(cat "$PIDFILE")"
+        else
+            echo "packet-radar stopped"
+            exit 1
+        fi
+        ;;
+    *)
+        echo "Usage: socx-packet-radar-cache [loop|once|stop|status]" >&2
+        exit 64
+        ;;
+esac

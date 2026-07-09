@@ -35,6 +35,11 @@ export SOCX_SPEEDTEST_FRONTIER_SERVER_ID="${SOCX_SPEEDTEST_FRONTIER_SERVER_ID:-5
 export SOCX_SPEEDTEST_FRONTIER_SERVER_NAME="${SOCX_SPEEDTEST_FRONTIER_SERVER_NAME:-Frontier}"
 export SOCX_SPEEDTEST_FRONTIER_SERVER_LOCATION="${SOCX_SPEEDTEST_FRONTIER_SERVER_LOCATION:-Secaucus, NJ}"
 export SOCX_SPEEDTEST_SERVER_MODE="${SOCX_SPEEDTEST_SERVER_MODE:-auto}"
+export SOCX_PACKET_RADAR_ENABLED="${SOCX_PACKET_RADAR_ENABLED:-true}"
+export SOCX_PACKET_RADAR_IFACE="${SOCX_PACKET_RADAR_IFACE:-$IFWAN}"
+export SOCX_PACKET_RADAR_FILTER="${SOCX_PACKET_RADAR_FILTER:-not arp and not port 22}"
+export SOCX_TMUX_WIDTH="${SOCX_TMUX_WIDTH:-160}"
+export SOCX_TMUX_HEIGHT="${SOCX_TMUX_HEIGHT:-42}"
 
 # WALL MODE ticker controls:
 #   SOCX_TICKER_SPEED=slow|normal|fast|turbo
@@ -81,10 +86,21 @@ if [ "$MODE" = "wall" ] && [ "$SOCX_SPEEDTEST_ENABLED" = "true" ] && command -v 
     /usr/local/sbin/socx-speedtest-cache loop >/tmp/socx-speedtest-cache.log 2>&1 &
     echo $! >/tmp/socx-speedtest-cache.pid
 fi
+if [ "$MODE" = "wall" ] && [ "$SOCX_PACKET_RADAR_ENABLED" = "true" ] && command -v /usr/local/sbin/socx-packet-radar-cache >/dev/null 2>&1; then
+    /usr/local/sbin/socx-packet-radar-cache stop >/dev/null 2>&1 || true
+    stop_socx_helper 'socx-packet-radar-cache'
+    SOCX_PACKET_RADAR_IFACE="$SOCX_PACKET_RADAR_IFACE" SOCX_PACKET_RADAR_FILTER="$SOCX_PACKET_RADAR_FILTER" \
+        /usr/local/sbin/socx-packet-radar-cache loop >/tmp/socx-packet-radar-cache.log 2>&1 &
+    echo $! >/tmp/socx-packet-radar.pid
+fi
 
-# W1 NETX: pfSense cockpit top, color iftop/tcpdump clones underneath.
-tmux new-session -d -s socx -n NETX "$TOPR"
+# W1 NETX: full-screen SOCX wall. Command tools live in popups/COMMANDX so
+# the wall never loses height to a bottom split.
+tmux new-session -d -x "$SOCX_TMUX_WIDTH" -y "$SOCX_TMUX_HEIGHT" -s socx -n NETX "$TOPR"
 tmux set-option -t socx -g mouse off
+tmux set-option -t socx -g default-size "${SOCX_TMUX_WIDTH}x${SOCX_TMUX_HEIGHT}" 2>/dev/null || true
+tmux set-option -t socx -g window-size latest 2>/dev/null || true
+tmux set-window-option -t socx -g aggressive-resize on 2>/dev/null || true
 tmux set-option -t socx -g pane-border-lines double
 tmux set-option -t socx -g pane-border-style 'fg=colour51'
 tmux set-option -t socx -g pane-active-border-style 'fg=colour51,bold'
@@ -99,6 +115,11 @@ tmux set-window-option -t socx -g window-status-format '#[fg=colour245,bg=black]
 tmux set-window-option -t socx -g window-status-current-format '#[fg=colour16,bg=colour201,bold] #I:#W '
 tmux set-window-option -t socx -g window-active-style 'fg=colour255,bg=black'
 tmux set-window-option -t socx -g window-style 'fg=colour250,bg=black'
+tmux bind-key c display-popup -E -w 92% -h 76% -T 'SOCX COMMAND DECK' "sh -lc 'clear; echo \"SOCX COMMAND DECK\"; echo \"packet-radar | pftop | vnstat | vpn | logs | shell\"; echo; exec sh'"
+tmux bind-key r display-popup -E -w 96% -h 82% -T 'PACKET RADAR' "sh -lc 'SOCX_WIDTH=132 SOCX_COMPACT=1 tcpdumpx -i $SOCX_PACKET_RADAR_IFACE -nn -q $SOCX_PACKET_RADAR_FILTER'"
+tmux bind-key f display-popup -E -w 96% -h 82% -T 'PFTOP LIVE STATES' "pftop"
+tmux bind-key v display-popup -E -w 88% -h 74% -T 'VPN GATEWAY STATUS' "sh -lc '/usr/local/sbin/pfSsh.php playback gatewaystatus; echo; wg show 2>/dev/null; echo; read -r _'"
+tmux bind-key t display-popup -E -w 88% -h 74% -T 'TRAFFIC TOTALS' "sh -lc 'vnstat; echo; vnstat -i $IFWAN; echo; read -r _'"
 if [ "$MODE" = "wall" ]; then
     tmux set-option -t socx -g status off
     tmux set-window-option -t socx:NETX pane-border-status off
@@ -142,6 +163,26 @@ tmux split-window -v -t socx:LIVEX.1 "sh /root/eve_alerts.sh"
 tmux new-window -t socx -n SYSX "systat -vmstat 1"
 tmux split-window -h -t socx:SYSX "systat -iostat 1"
 tmux split-window -v -t socx:SYSX.0 "top -m io"
+
+# W6 COMMANDX: command deck lives in its own window so NETX never gets clipped.
+tmux new-window -t socx -n COMMANDX "sh -lc 'clear; cat <<EOF
+SOCX COMMANDX
+
+Prefix + c  popup shell
+Prefix + r  Packet Radar tcpdump view
+Prefix + f  pftop live states
+Prefix + v  VPN gateway and WireGuard detail
+Prefix + t  vnStat traffic totals
+
+Useful commands:
+  packet-radar
+  tcpdumpx -i $IFWAN -nn -q $SOCX_PACKET_RADAR_FILTER
+  pftop
+  vnstat -i $IFWAN
+  tail -f /var/log/filter.log
+
+EOF
+exec sh'"
 
 tmux select-window -t socx:NETX
 if [ -t 0 ]; then

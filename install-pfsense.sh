@@ -13,12 +13,14 @@ install -m 0755 "$ROOT/scripts/socx-alert-ticker" /usr/local/sbin/socx-alert-tic
 install -m 0755 "$ROOT/scripts/socx-ups-status" /usr/local/sbin/socx-ups-status
 install -m 0755 "$ROOT/scripts/socx-ups-cache" /usr/local/sbin/socx-ups-cache
 install -m 0755 "$ROOT/scripts/socx-speedtest-cache" /usr/local/sbin/socx-speedtest-cache
+install -m 0755 "$ROOT/scripts/socx-packet-radar-cache" /usr/local/sbin/socx-packet-radar-cache
 install -m 0755 "$ROOT/scripts/socx-iftop-color" /usr/local/sbin/socx-iftop-color
 install -m 0755 "$ROOT/scripts/socx-tcpdump-color" /usr/local/sbin/socx-tcpdump-color
 install -m 0755 "$ROOT/scripts/socx_iftop_color.pl" /usr/local/sbin/socx_iftop_color.pl
 install -m 0755 "$ROOT/scripts/socx_tcpdump_color.pl" /usr/local/sbin/socx_tcpdump_color.pl
 install -m 0755 "$ROOT/scripts/iftopx" /usr/local/bin/iftopx
 install -m 0755 "$ROOT/scripts/tcpdumpx" /usr/local/bin/tcpdumpx
+install -m 0755 "$ROOT/scripts/packet-radar" /usr/local/bin/packet-radar
 install -m 0755 "$ROOT/scripts/socx" /usr/local/bin/socx
 install -m 0755 "$ROOT/scripts/socweb" /usr/local/bin/socweb
 install -m 0755 "$ROOT/web/socx-web.py" /usr/local/share/socx-web/socx-web.py

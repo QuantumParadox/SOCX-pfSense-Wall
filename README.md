@@ -55,8 +55,9 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Shows dark modern cards, real canvas sparklines, clipped tables, and a smooth CSS event ticker.
 - Defaults to `SOCX_MODE=wall` and `SOCX_THEME=modern-btop`, a single-pane high-contrast wall display with internal panels and clipping.
 - Shows a classic split-wall `NETX` layout: btop-style pfSense cockpit on top, IFTopX bottom-left, TCPDumpX bottom-right.
-- Adds `socx-wall`, a modern btop-inspired wall renderer with metric cards, pftop-style live PF states, flow table, live packet table, UPS sparkline, and smooth event ticker.
+- Adds `socx-wall`, a modern btop-inspired wall renderer with metric cards, pftop-style live PF states, flow table, Packet Radar, UPS sparkline, and smooth event ticker.
 - Runs wall mode inside a restart loop and logs renderer errors to `/tmp/socx-wall.err`.
+- Keeps wall mode full-screen. Operator commands live in the `COMMANDX` tmux window or popup shortcuts, so adding command access does not cut off the SOCX wall.
 - Shows truthful VPN gateway/interface health in the top status strip, including `VPN UP 3/3`, `VPN PARTIAL 1/3`, `VPN DOWN 0/3`, `VPN N/A`, or `VPN UNKNOWN` plus `DATA LIVE`/`DATA STALE`.
 - Adds a background Speedtest cache for scheduled Frontier/VPN path checks without blocking the 500 ms wall renderer.
 - Shows scheduled Speedtest results with latency, stable/stale state, and countdown to the next test.
@@ -214,6 +215,17 @@ When enabled, SOCX rotates Event Feed messages such as:
 The NETWORK card also rotates its bottom line between the current top flow and a compact AI LAB summary, for example `AI LAB 7/8 down MIRANDA`, so lab health is visible even when the Event Feed is busy.
 
 AI/lab service labels are also shortened in PFTOP/IFTOPX where possible: `olma`, `vllm`, `llm`, `jupy`, `ray`, `mlfl`, `trtn`, `oai`, `xai`, `ngc`, `anth`, `gemi`, and `hf`.
+
+Packet Radar replaces the old raw packet story panel with a tcpdump-backed, human-readable rolling cache. It is enabled by default in wall mode:
+
+```sh
+SOCX_PACKET_RADAR_ENABLED=true
+SOCX_PACKET_RADAR_IFACE=ix1
+SOCX_PACKET_RADAR_FILTER='not arp and not port 22'
+packet-radar
+```
+
+Inside tmux, use `Prefix + c` for a command popup, `Prefix + r` for live Packet Radar, `Prefix + f` for `pftop`, `Prefix + v` for VPN details, or switch to the `COMMANDX` window for a full command deck.
 
 Wall ticker speed can be tuned with:
 

@@ -1,0 +1,14 @@
+#!/bin/sh
+# Friendly live tcpdump view for SOCX operators.
+
+IFACE="${SOCX_PACKET_RADAR_IFACE:-${1:-ix1}}"
+FILTER="${SOCX_PACKET_RADAR_FILTER:-not arp and not port 22}"
+
+echo "PACKET RADAR on $IFACE"
+echo "Filter: $FILTER"
+echo "Ctrl-C exits. Raw tcpdump is not modified."
+echo
+
+SOCX_WIDTH="${SOCX_WIDTH:-$(tput cols 2>/dev/null || echo 132)}" \
+SOCX_COMPACT="${SOCX_COMPACT:-1}" \
+exec tcpdumpx -i "$IFACE" -nn -q $FILTER
