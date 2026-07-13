@@ -7,6 +7,7 @@
 192.168.1.1=pfSense-JupiterLXI
 192.168.1.114=APC-SmartUPS
 192.168.1.116=MIRANDA-Workstation
+192.168.1.148=Lenovo-M910t
 192.168.1.170=Metrics-Grafana
 192.168.1.161=JupiterLXI
 192.168.1.102=Enceladus

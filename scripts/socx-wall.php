@@ -718,7 +718,6 @@ function collect_live_frame(array &$state, array $hosts): array
         $flows = flows_from_events($events);
     }
     $topFlow = top_network_flow($flows);
-    $wanHealth = wan_health_score($wan, $vpnStatus, $speedtest, $pulse ?? []);
     $activityEvents = collect_activity_summary_events($state, $events, $flows, $ups, $wan, $lan, $pf, $now);
     if ($activityEvents) {
         $events = balance_events_for_feed(prioritize_events(array_merge($events, $activityEvents)), 80);
@@ -746,6 +745,8 @@ function collect_live_frame(array &$state, array $hosts): array
         $events[] = $speedHistoryEvent;
     }
     $events[] = threat_pulse_event($pulse, $trends);
+    $socxHealth = socx_health_score($wanHealth, $vpnStatus, $ups, $mem, $cpu, $speedtest, $pulse);
+    $events[] = socx_health_score_event($socxHealth);
     foreach (ai_soc_enrichment_events($events, $packets, $pulse) as $event) {
         $events[] = $event;
     }
@@ -785,6 +786,7 @@ function collect_live_frame(array &$state, array $hosts): array
         'flows' => $flows,
         'top_flow' => $topFlow,
         'ai_lab' => is_array($state['ai_lab_status'] ?? null) ? $state['ai_lab_status'] : [],
+        'socx_health' => $socxHealth,
         'wan_health' => $wanHealth,
         'speedtest_history' => speedtest_history_summary($state['speedtest_history'] ?? [], $now),
         'packets' => $packets,
@@ -938,6 +940,7 @@ function demo_frame(array $hosts, array $state = []): array
             'interval_seconds' => 21600,
             'fresh' => true,
         ],
+        'socx_health' => ['score' => 93, 'severity' => 'INFO', 'reason' => 'demo signals nominal'],
         'events' => [
             '[FW][HIGH] 42 WAN scans stopped in 60s | ports: 23, 25, 8080',
             '[IDS][HIGH][92%] ' . host_label('192.168.1.102', $hosts) . ' -> internet possible C2 beacon | inspect host',
@@ -1897,7 +1900,9 @@ function modern_network_rows(array $f, array $p): array
     [, , , $contentH] = modern_content_bounds($p);
     $trend = trend_arrow($f, 'wan_traffic');
     $topFlow = is_array($f['top_flow'] ?? null) ? $f['top_flow'] : first_useful_flow($f['flows'] ?? []);
-    $showAi = !empty($f['ai_lab']) && (((int)($f['tick'] ?? 0) % 16) >= 8);
+    $rotate = ((int)($f['tick'] ?? 0) % 24);
+    $showHealth = !empty($f['socx_health']) && $rotate >= 8 && $rotate < 14;
+    $showAi = !empty($f['ai_lab']) && $rotate >= 14;
     if ($w < 22) {
         $rows = [
             network_rate_line('WAN', (string)$f['wan']['down'], (string)$f['wan']['up'], $w),
@@ -1905,7 +1910,7 @@ function modern_network_rows(array $f, array $p): array
             network_dual_bar((int)($f['wan']['rx_bps'] ?? 0), (int)($f['wan']['tx_bps'] ?? 0), $w),
         ];
         if ($contentH >= 4) {
-            $rows[] = $showAi ? ai_lab_mini_line((array)$f['ai_lab'], $w) : top_flow_mini_line($topFlow, $w);
+            $rows[] = $showHealth ? socx_health_mini_line((array)$f['socx_health'], $w) : ($showAi ? ai_lab_mini_line((array)$f['ai_lab'], $w) : top_flow_mini_line($topFlow, $w));
         }
         return $rows;
     }
@@ -1915,9 +1920,22 @@ function modern_network_rows(array $f, array $p): array
         network_bar_line('WAN', (int)($f['wan']['rx_bps'] ?? 0), (int)($f['wan']['tx_bps'] ?? 0), $w),
     ];
     if ($contentH >= 4) {
-        $rows[] = $showAi ? ai_lab_line((array)$f['ai_lab'], $w) : top_flow_line($topFlow, $w);
+        $rows[] = $showHealth ? socx_health_line((array)$f['socx_health'], $w) : ($showAi ? ai_lab_line((array)$f['ai_lab'], $w) : top_flow_line($topFlow, $w));
     }
     return $rows;
+}
+
+function socx_health_mini_line(array $health, int $width): string
+{
+    $score = isset($health['score']) && is_numeric($health['score']) ? (int)$health['score'] : 0;
+    return truncate_text(sprintf('HEALTH %d', $score), $width);
+}
+
+function socx_health_line(array $health, int $width): string
+{
+    $score = isset($health['score']) && is_numeric($health['score']) ? (int)$health['score'] : 0;
+    $reason = trim((string)($health['reason'] ?? ''));
+    return truncate_text(sprintf('HEALTH %d %s', $score, $reason !== '' ? $reason : 'nominal'), $width);
 }
 
 function ai_lab_mini_line(array $status, int $width): string
@@ -2000,8 +2018,11 @@ function top_flow_mini_line(?array $flow, int $width): string
     $svc = service_short((string)($flow['service'] ?? ''));
     $rate = short_bytes((int)($flow['score'] ?? 0)) . '/s';
     $shortSrc = preg_match('/^LAN\.(\d+)$/', $src, $m) ? 'L' . $m[1] : truncate_text($src, max(3, $width - cell_len('TOP  ' . $svc)));
+    $verb = top_flow_direction_word($flow);
     $candidates = [
+        sprintf('TOP %s %s %s', $src, $verb, $svc),
         sprintf('TOP %s %s', $src, $svc),
+        sprintf('TOP %s %s %s', $shortSrc, $verb, $svc),
         sprintf('TOP %s %s', $shortSrc, $svc),
         sprintf('%s %s %s', $src, $svc, $rate),
         sprintf('%s %s', $src, $svc),
@@ -2039,7 +2060,31 @@ function top_flow_line(?array $flow, int $width): string
     $path = flow_path_text($flow, max(8, $width - 12));
     $svc = service_short((string)($flow['service'] ?? ''));
     $rate = short_bytes((int)($flow['score'] ?? 0)) . '/s';
-    return truncate_text(sprintf('TOP %s %s %s', $path, $svc, $rate), $width);
+    $verb = top_flow_direction_word($flow);
+    $candidates = [
+        sprintf('TOP %s %s %s %s', $verb, $path, $svc, $rate),
+        sprintf('TOP %s %s %s', $path, $svc, $rate),
+        sprintf('TOP %s %s', $path, $svc),
+    ];
+    foreach ($candidates as $candidate) {
+        if (cell_len($candidate) <= $width) {
+            return $candidate;
+        }
+    }
+    return truncate_text(end($candidates), $width);
+}
+
+function top_flow_direction_word(array $flow): string
+{
+    $up = parse_short_bytes((string)($flow['up'] ?? '0B'));
+    $down = parse_short_bytes((string)($flow['down'] ?? '0B'));
+    if ($down > ($up * 1.25)) {
+        return 'downloading';
+    }
+    if ($up > ($down * 1.25)) {
+        return 'uploading';
+    }
+    return 'talking';
 }
 
 function network_rate_line(string $label, string $down, string $up, int $width, string $trend = ''): string
@@ -4962,7 +5007,32 @@ function service_watchdog_event(): ?array
     if (!$names) {
         return null;
     }
+    $down = service_watchdog_down_services($names);
+    if ($down) {
+        return soc_event('SYS', 'WARN', sprintf('Service Watchdog alert: %s not running',
+            implode(', ', array_slice($down, 0, 4))));
+    }
     return soc_event('SYS', 'INFO', sprintf('Service Watchdog supervising %d services: %s', count($names), implode(', ', array_slice($names, 0, 5))));
+}
+
+function service_watchdog_down_services(array $names): array
+{
+    $down = [];
+    foreach (array_slice($names, 0, 16) as $name) {
+        $name = preg_replace('/[^A-Za-z0-9_.-]/', '', (string)$name) ?? '';
+        if ($name === '') {
+            continue;
+        }
+        $status = trim(run_cmd('/usr/sbin/service ' . escapeshellarg($name) . ' status 2>&1'));
+        $low = strtolower($status);
+        if ($status === '') {
+            continue;
+        }
+        if (str_contains($low, 'not running') || str_contains($low, 'stopped') || str_contains($low, 'dead')) {
+            $down[] = $name;
+        }
+    }
+    return array_values(array_unique($down));
 }
 
 function collect_activity_summary_events(array &$state, array $events, array $flows, array $ups, array $wan, array $lan, array $pf, float $now): array
@@ -5012,6 +5082,9 @@ function collect_activity_summary_events(array &$state, array $events, array $fl
             compact_rate_pair((string)$topFlow['up'], (string)$topFlow['down'], 10),
             service_human_label((string)($topFlow['service'] ?? ''))));
     }
+    foreach (top_talker_direction_events($flows) as $event) {
+        $summary[] = $event;
+    }
     foreach (top_device_activity_events($flows) as $event) {
         $summary[] = $event;
     }
@@ -5041,6 +5114,44 @@ function collect_activity_summary_events(array &$state, array $events, array $fl
     }
 
     return $summary;
+}
+
+function top_talker_direction_events(array $flows): array
+{
+    $download = null;
+    $upload = null;
+    foreach ($flows as $flow) {
+        $src = (string)($flow['src'] ?? '');
+        $dst = (string)($flow['dst'] ?? '');
+        $lanSide = endpoint_is_lan($src) ? $src : (endpoint_is_lan($dst) ? $dst : '');
+        if ($lanSide === '') {
+            continue;
+        }
+        $down = parse_short_bytes((string)($flow['down'] ?? '0B'));
+        $up = parse_short_bytes((string)($flow['up'] ?? '0B'));
+        if ($download === null || $down > (int)$download['rate']) {
+            $download = ['flow' => $flow, 'rate' => $down, 'host' => $lanSide];
+        }
+        if ($upload === null || $up > (int)$upload['rate']) {
+            $upload = ['flow' => $flow, 'rate' => $up, 'host' => $lanSide];
+        }
+    }
+    $events = [];
+    if ($download !== null && (int)$download['rate'] > 0) {
+        $flow = (array)$download['flow'];
+        $events[] = soc_event('FLOW', 'INFO', sprintf('Top download %s %s/s via %s',
+            truncate_text((string)$download['host'], 24),
+            short_bytes((int)$download['rate']),
+            service_human_label((string)($flow['service'] ?? ''))));
+    }
+    if ($upload !== null && (int)$upload['rate'] > 0) {
+        $flow = (array)$upload['flow'];
+        $events[] = soc_event('FLOW', 'INFO', sprintf('Top upload %s %s/s via %s',
+            truncate_text((string)$upload['host'], 24),
+            short_bytes((int)$upload['rate']),
+            service_human_label((string)($flow['service'] ?? ''))));
+    }
+    return $events;
 }
 
 function top_device_activity_events(array $flows): array
@@ -5077,6 +5188,86 @@ function top_device_activity_events(array $flows): array
             $services ? implode('+', $services) : 'flow'));
     }
     return $events;
+}
+
+function socx_health_score(array $wanHealth, array $vpnStatus, array $ups, array $mem, array $cpu, array $speedtest, array $pulse): array
+{
+    $score = 100;
+    $reasons = [];
+
+    $wanScore = (int)($wanHealth['score'] ?? 100);
+    if ($wanScore < 90) {
+        $score -= min(25, max(0, 100 - $wanScore));
+        $reasons[] = 'WAN ' . (string)($wanHealth['label'] ?? 'watch');
+    }
+
+    $vpnState = strtoupper((string)($vpnStatus['status'] ?? 'UNKNOWN'));
+    if ($vpnState === 'DOWN') {
+        $score -= 25;
+        $reasons[] = 'VPN down';
+    } elseif ($vpnState === 'PARTIAL') {
+        $score -= 12;
+        $reasons[] = 'VPN partial';
+    } elseif ($vpnState === 'UNKNOWN') {
+        $score -= 10;
+        $reasons[] = 'VPN unknown';
+    }
+
+    if (empty($ups['online'])) {
+        $score -= 15;
+        $reasons[] = 'UPS unknown';
+    } elseif (is_numeric($ups['runtime_seconds'] ?? null) && (int)$ups['runtime_seconds'] < 1200) {
+        $score -= 8;
+        $reasons[] = 'UPS runtime';
+    }
+
+    $memPct = (int)($mem['used_pct'] ?? 0);
+    if ($memPct >= 92) {
+        $score -= 12;
+        $reasons[] = 'RAM high';
+    } elseif ($memPct >= 85) {
+        $score -= 6;
+        $reasons[] = 'RAM watch';
+    }
+    if ((float)($cpu['used'] ?? 0) >= 90.0) {
+        $score -= 8;
+        $reasons[] = 'CPU high';
+    }
+
+    $spdStatus = strtolower((string)($speedtest['status'] ?? 'waiting'));
+    if (!in_array($spdStatus, ['ok', 'disabled', 'off'], true)) {
+        $score -= 5;
+        $reasons[] = 'Speedtest ' . strtoupper($spdStatus ?: 'WAIT');
+    }
+
+    $drops = (int)($pulse['fw_drops_min'] ?? 0);
+    $dns = (int)($pulse['dnsbl_min'] ?? 0);
+    $ids = (int)($pulse['ids_alerts'] ?? 0);
+    if ($ids > 0) {
+        $score -= min(10, $ids * 3);
+        $reasons[] = 'IDS alert';
+    }
+    if ($drops > 60) {
+        $score -= 5;
+        $reasons[] = 'scan burst';
+    }
+    if ($dns > 30) {
+        $score -= 4;
+        $reasons[] = 'DNSBL burst';
+    }
+
+    $score = max(0, min(100, $score));
+    $severity = $score >= 90 ? 'INFO' : ($score >= 75 ? 'LOW' : ($score >= 55 ? 'WARN' : 'HIGH'));
+    $reason = $reasons ? implode(', ', array_slice($reasons, 0, 3)) : 'all primary signals nominal';
+    return ['score' => $score, 'severity' => $severity, 'reason' => $reason];
+}
+
+function socx_health_score_event(array $health): array
+{
+    $score = isset($health['score']) && is_numeric($health['score']) ? (int)$health['score'] : 0;
+    $severity = (string)($health['severity'] ?? 'INFO');
+    $reason = (string)($health['reason'] ?? 'all primary signals nominal');
+    return soc_event('HEALTH', $severity, sprintf('SOCX health %d/100 | %s', $score, $reason));
 }
 
 function socx_daily_digest_event(int $fwBlocked, int $dnsblHits, int $idsHits, int $wanRate, int $lanRate, array $ups): ?array

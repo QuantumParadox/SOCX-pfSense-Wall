@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+CAPTURE="${SOCX_INCIDENT_CAPTURE:-/usr/local/sbin/socx-incident-capture}"
+
+if [ ! -x "$CAPTURE" ]; then
+    echo "SOCX incident capture tool not found: $CAPTURE" >&2
+    exit 1
+fi
+
+echo "SOCX incident capture starting..."
+"$CAPTURE"
+
+latest="$(ls -1t /root/socx-incidents/incident-*.tgz 2>/dev/null | head -1 || true)"
+if [ -n "$latest" ]; then
+    echo
+    echo "Latest bundle: $latest"
+    tar -tzf "$latest" 2>/dev/null | sed -n '1,24p' || true
+fi

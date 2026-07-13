@@ -59,11 +59,14 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Runs wall mode inside a restart loop and logs renderer errors to `/tmp/socx-wall.err`.
 - Keeps wall mode full-screen. Operator commands live in the `COMMANDX` tmux window or popup shortcuts, so adding command access does not cut off the SOCX wall.
 - Adds an incident capture command that saves pf states, gateway/VPN state, recent logs, Packet Radar, checksums, and a short pcap into `/root/socx-incidents/`.
+- Adds `socx-incident`, a short operator command that runs the capture and prints the newest bundle path plus a quick manifest.
 - Can surface LLDP and Service Watchdog health in the rotating Event Feed when those pfSense packages are configured.
+- Adds a rotating SOCX health score based on WAN, VPN, UPS, RAM, CPU, Speedtest freshness, IDS, DNSBL, and firewall scan pressure.
 - Shows truthful VPN gateway/interface health in the top status strip, including `VPN UP 3/3`, `VPN PARTIAL 1/3`, `VPN DOWN 0/3`, `VPN N/A`, or `VPN UNKNOWN` plus `DATA LIVE`/`DATA STALE`.
 - Adds a background Speedtest cache for scheduled Frontier/VPN path checks without blocking the 500 ms wall renderer.
 - Shows scheduled Speedtest results with latency, stable/stale state, and countdown to the next test.
 - Adds live WAN/LAN download/upload bars and a top-talker line in the NETWORK card.
+- Rotates top upload/download and top-device summaries through the Event Feed so `LAN.148` style traffic becomes easier to understand.
 - Learns friendly host names from `/usr/local/etc/socx_hosts.conf` and cached DHCP leases when available.
 - Adds WAN health and Speedtest 24-hour average/trend events to the rotating feed.
 - Adds AI/MIRANDA lab awareness for Ollama, vLLM, xAI/Grok, NVIDIA Build, OpenAI, Anthropic, Gemini, Hugging Face, Jupyter, Ray, MLflow, and related local lab services.
@@ -91,6 +94,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-speedtest-cache` - scheduled Speedtest collector that writes `/tmp/socx-speedtest-cache.env`.
 - `scripts/socx-iftop-color` and `scripts/socx_iftop_color.pl` - color flow radar wrapper and renderer.
 - `scripts/socx-tcpdump-color` and `scripts/socx_tcpdump_color.pl` - color packet story wrapper and renderer.
+- `scripts/socx-incident` - short incident command that runs capture and prints the latest bundle manifest.
 - `scripts/iftopx`, `scripts/tcpdumpx`, `scripts/socx` - convenience launchers.
 - `scripts/socweb` - browser dashboard launcher.
 - `web/socx-web.py` - lightweight Python WebSocket/HTTP backend for the browser wall.
@@ -224,6 +228,8 @@ When enabled, SOCX rotates Event Feed messages such as:
 
 The NETWORK card also rotates its bottom line between the current top flow and a compact AI LAB summary, for example `AI LAB 7/8 down MIRANDA`, so lab health is visible even when the Event Feed is busy.
 
+It also rotates a compact `HEALTH 94 ...` line based on WAN/VPN/DNS/UPS, RAM/CPU pressure, Speedtest freshness, IDS alerts, DNSBL hits, and firewall scan bursts. This gives you one fast room-distance read before you inspect the detailed panels.
+
 AI/lab service labels are also shortened in PFTOP/IFTOPX where possible: `olma`, `vllm`, `llm`, `jupy`, `ray`, `mlfl`, `trtn`, `oai`, `xai`, `ngc`, `anth`, `gemi`, and `hf`.
 
 Packet Radar replaces the old raw packet story panel with a tcpdump-backed, human-readable rolling cache. It is enabled by default in wall mode:
@@ -240,10 +246,28 @@ Inside tmux, use `Prefix + c` for a command popup, `Prefix + r` for live Packet 
 Incident capture:
 
 ```sh
+socx-incident
 socx-incident-capture
 ```
 
-The tmux shortcut is `Prefix + i`.
+Use `socx-incident` during a suspicious event. It calls `socx-incident-capture`, then prints the newest `/root/socx-incidents/incident-*.tgz` bundle and a short list of included evidence. The tmux shortcut is `Prefix + i`.
+
+Friendly device names:
+
+```sh
+vi /usr/local/etc/socx_hosts.conf
+```
+
+Example:
+
+```text
+192.168.1.1=pfSense-JupiterLXI
+192.168.1.116=MIRANDA-Workstation
+192.168.1.148=Lenovo-M910t
+192.168.1.170=Metrics-Grafana
+```
+
+When a mapping exists, SOCX renders flows as names such as `MIRANDA-Workstation/LAN.116`; when there is no mapping, it falls back to DHCP lease hostnames and then compact `LAN.x` labels.
 
 Wall ticker speed can be tuned with:
 
