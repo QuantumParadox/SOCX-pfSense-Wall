@@ -5012,6 +5012,9 @@ function collect_activity_summary_events(array &$state, array $events, array $fl
             compact_rate_pair((string)$topFlow['up'], (string)$topFlow['down'], 10),
             service_human_label((string)($topFlow['service'] ?? ''))));
     }
+    foreach (top_device_activity_events($flows) as $event) {
+        $summary[] = $event;
+    }
 
     $wanRate = (int)($wan['rx'] ?? 0) + (int)($wan['tx'] ?? 0);
     $lanRate = (int)($lan['rx'] ?? 0) + (int)($lan['tx'] ?? 0);
@@ -5032,8 +5035,70 @@ function collect_activity_summary_events(array &$state, array $events, array $fl
             $pf['states'],
             compact_pf_rate((string)($pf['searches_rate'] ?? '?'))));
     }
+    $digest = socx_daily_digest_event($fwBlocked, $dnsblHits, $idsHits, $wanRate, $lanRate, $ups);
+    if ($digest !== null) {
+        $summary[] = $digest;
+    }
 
     return $summary;
+}
+
+function top_device_activity_events(array $flows): array
+{
+    $devices = [];
+    foreach ($flows as $flow) {
+        $src = (string)($flow['src'] ?? '');
+        $dst = (string)($flow['dst'] ?? '');
+        $device = endpoint_is_lan($src) ? $src : (endpoint_is_lan($dst) ? $dst : '');
+        if ($device === '') {
+            continue;
+        }
+        $key = preg_replace('/\/LAN\.(\d+)$/', '', $device) ?? $device;
+        $rate = parse_short_bytes((string)($flow['up'] ?? '0B')) + parse_short_bytes((string)($flow['down'] ?? '0B'));
+        $svc = service_short((string)($flow['service'] ?? ''));
+        if (!isset($devices[$key])) {
+            $devices[$key] = ['rate' => 0, 'services' => []];
+        }
+        $devices[$key]['rate'] += $rate;
+        if ($svc !== '' && $svc !== 'unk') {
+            $devices[$key]['services'][$svc] = true;
+        }
+    }
+    if (!$devices) {
+        return [];
+    }
+    uasort($devices, static fn(array $a, array $b): int => $b['rate'] <=> $a['rate']);
+    $events = [];
+    foreach (array_slice($devices, 0, 2, true) as $device => $info) {
+        $services = array_slice(array_keys($info['services']), 0, 4);
+        $events[] = soc_event('DEVICE', 'INFO', sprintf('Top device %s %s/s | apps %s',
+            truncate_text((string)$device, 22),
+            short_bytes((int)$info['rate']),
+            $services ? implode('+', $services) : 'flow'));
+    }
+    return $events;
+}
+
+function socx_daily_digest_event(int $fwBlocked, int $dnsblHits, int $idsHits, int $wanRate, int $lanRate, array $ups): ?array
+{
+    $vnstat = trim(run_cmd('vnstat --oneline 2>/dev/null | /usr/bin/head -1'));
+    $traffic = '';
+    if ($vnstat !== '') {
+        $parts = explode(';', $vnstat);
+        if (count($parts) >= 6) {
+            $traffic = sprintf('today %s total', trim((string)$parts[5]));
+        }
+    }
+    if ($traffic === '') {
+        $traffic = sprintf('now WAN %s/s LAN %s/s', short_bytes(max(0, $wanRate)), short_bytes(max(0, $lanRate)));
+    }
+    $upsText = !empty($ups['online']) ? sprintf('UPS %s%% %s', $ups['battery'], $ups['runtime']) : 'UPS watch';
+    return soc_event('SOCX', 'INFO', sprintf('Digest: FW %d recent | DNS %d | IDS %d | %s | %s',
+        $fwBlocked,
+        $dnsblHits,
+        $idsHits,
+        $traffic,
+        $upsText));
 }
 
 function collect_ai_lab_events(array &$state, array $metrics, bool $routineDue): array
@@ -6391,6 +6456,7 @@ function packet_size_bytes(string $size): int
 
 function packet_radar_merge(array $radar, array $events): array
 {
+    $radar = packet_radar_aggregate($radar);
     if (!$radar) {
         return $events;
     }
@@ -6414,6 +6480,51 @@ function packet_radar_merge(array $radar, array $events): array
         }
     }
     return $merged;
+}
+
+function packet_radar_aggregate(array $radar): array
+{
+    if (count($radar) < 5) {
+        return $radar;
+    }
+    $groups = [];
+    $other = [];
+    foreach ($radar as $row) {
+        $svc = strtolower((string)($row['service'] ?? ''));
+        $src = (string)($row['src'] ?? '');
+        $dst = (string)($row['dst'] ?? '');
+        $isTunnel = $svc === 'vpn'
+            || str_contains((string)($row['story'] ?? ''), 'port 1443')
+            || str_contains((string)($row['story'] ?? ''), 'port 51821');
+        if (!$isTunnel) {
+            $other[] = $row;
+            continue;
+        }
+        $key = $src . '|' . $dst . '|vpn';
+        if (!isset($groups[$key])) {
+            $groups[$key] = ['row' => $row, 'count' => 0, 'bytes' => 0];
+        }
+        $groups[$key]['count']++;
+        $groups[$key]['bytes'] += (int)($row['bytes'] ?? 0);
+    }
+    $agg = [];
+    foreach ($groups as $group) {
+        $row = $group['row'];
+        if ((int)$group['count'] < 4) {
+            $other[] = $row;
+            continue;
+        }
+        $row['service'] = 'vpn';
+        $row['size'] = short_bytes((int)$group['bytes']);
+        $row['bytes'] = (int)$group['bytes'];
+        $row['story'] = sprintf('VPN tunnel burst %s -> %s %d packets %s',
+            (string)($row['src'] ?? 'WAN'),
+            (string)($row['dst'] ?? 'remote'),
+            (int)$group['count'],
+            short_bytes((int)$group['bytes']));
+        $agg[] = $row;
+    }
+    return array_slice(array_merge($agg, $other), 0, 48);
 }
 
 function packets_from_events(array $events): array
@@ -6560,6 +6671,9 @@ function service_name_for_port(string $port, string $proto = ''): string
         '443', '8443', '9443' => 'https',
         '123' => 'ntp',
         '500', '1194', '1443', '4500', '51820', '51821' => 'vpn',
+        '27015', '27016', '27017', '27018', '27019', '27020', '27021', '27022', '27023', '27024', '27025', '27026', '27027', '27028', '27029', '27030', '27031', '27032', '27033', '27034', '27035', '27036', '27037', '27038', '27039', '27040', '27041', '27042', '27043', '27044', '27045', '27046', '27047', '27048', '27049', '27050' => 'steam',
+        '8883' => 'mqtts',
+        '8886' => 'app',
         '22' => 'ssh',
         '25', '465', '587' => 'smtp',
         '110', '143', '993', '995' => 'mail',
@@ -6608,8 +6722,15 @@ function service_name_for_ports(string $dstPort, string $srcPort, string $proto)
     if (in_array($proto, ['ESP', 'GRE', 'IPSEC'], true)) {
         return 'vpn';
     }
-    $port = $dstPort !== '' ? $dstPort : $srcPort;
-    return service_name_for_port($port, $proto);
+    $dstName = $dstPort !== '' ? service_name_for_port($dstPort, $proto) : '';
+    $srcName = $srcPort !== '' ? service_name_for_port($srcPort, $proto) : '';
+    if ($dstName !== '' && !str_starts_with($dstName, 'port')) {
+        return $dstName;
+    }
+    if ($srcName !== '' && !str_starts_with($srcName, 'port')) {
+        return $srcName;
+    }
+    return $dstName !== '' ? $dstName : ($srcName !== '' ? $srcName : 'unknown');
 }
 
 function service_override_name(string $port): string
@@ -6905,6 +7026,9 @@ function service_short(string $service): string
         $service === 'metrics' => 'metr',
         $service === 'ping' => 'ping',
         $service === 'plex' => 'plex',
+        $service === 'steam' => 'game',
+        $service === 'mqtts' => 'mqtt',
+        $service === 'app' => 'app',
         $service === 'dhcp' => 'dhcp',
         $service === 'mdns' => 'mdns',
         $service === 'smtp', $service === 'mail' => 'mail',
@@ -6959,6 +7083,9 @@ function service_human_label(string $service): string
         'metr' => 'metrics',
         'ping' => 'ping',
         'plex' => 'Plex',
+        'game' => 'game/Steam',
+        'mqtt' => 'MQTT/TLS',
+        'app' => 'app flow',
         'dhcp' => 'DHCP',
         'mdns' => 'mDNS',
         'mail' => 'mail',
