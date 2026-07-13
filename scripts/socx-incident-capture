@@ -1,0 +1,70 @@
+#!/bin/sh
+# Capture a compact, evidence-preserving SOCX incident bundle.
+
+set -u
+
+OUTDIR="${SOCX_INCIDENT_DIR:-/root/socx-incidents}"
+IFACE="${SOCX_INCIDENT_IFACE:-ix1}"
+SECONDS="${SOCX_INCIDENT_PCAP_SECONDS:-12}"
+STAMP="$(date +%Y%m%d-%H%M%S)"
+CASE="$OUTDIR/incident-$STAMP"
+
+mkdir -p "$CASE"
+
+run_capture() {
+    name="$1"
+    shift
+    {
+        echo "# $name"
+        echo "# captured $(date)"
+        echo
+        "$@" 2>&1
+    } > "$CASE/$name.txt"
+}
+
+copy_if_exists() {
+    src="$1"
+    dst="$2"
+    [ -e "$src" ] && cp "$src" "$CASE/$dst" 2>/dev/null || true
+}
+
+run_capture system uname -a
+run_capture uptime uptime
+run_capture gateways /usr/local/sbin/pfSsh.php playback gatewaystatus
+run_capture interfaces ifconfig
+run_capture pf_states pfctl -ss
+run_capture pf_info pfctl -si
+run_capture pf_rules pfctl -sr
+run_capture sockets sockstat -4 -6
+run_capture processes ps auxww
+run_capture vnstat vnstat
+run_capture lldp sh -c 'command -v lldpctl >/dev/null 2>&1 && lldpctl || true'
+run_capture wireguard sh -c 'wg show 2>/dev/null || true'
+run_capture service_watchdog sh -c 'php -r '\''require_once("config.inc"); print_r(config_get_path("installedpackages/servicewatchdog", []));'\'' 2>&1'
+
+copy_if_exists /tmp/socx-packet-radar.log packet-radar.log
+copy_if_exists /tmp/socx-wall.err socx-wall.err
+copy_if_exists /tmp/socx-wall-vpn.log socx-wall-vpn.log
+copy_if_exists /tmp/socx-speedtest-cache.json speedtest.json
+copy_if_exists /tmp/socx-ups-cache.json ups.json
+
+tail -500 /var/log/filter.log > "$CASE/filter.tail" 2>/dev/null || true
+tail -500 /var/log/system.log > "$CASE/system.tail" 2>/dev/null || true
+tail -500 /var/log/resolver.log > "$CASE/resolver.tail" 2>/dev/null || true
+tail -500 /var/log/pfblockerng/dnsbl.log > "$CASE/dnsbl.tail" 2>/dev/null || true
+find /var/log/suricata -type f -name 'alerts.log' -maxdepth 2 2>/dev/null | while read -r f; do
+    tail -300 "$f" > "$CASE/suricata-$(basename "$(dirname "$f")").tail" 2>/dev/null || true
+done
+
+sha256 /cf/conf/config.xml > "$CASE/config.xml.sha256" 2>/dev/null || true
+cp /cf/conf/config.xml "$CASE/config.xml.copy" 2>/dev/null || true
+
+if command -v timeout >/dev/null 2>&1; then
+    timeout "$SECONDS" tcpdump -i "$IFACE" -s 0 -w "$CASE/packet-sample-$IFACE.pcap" not port 22 >/dev/null 2>&1 || true
+else
+    tcpdump -i "$IFACE" -s 0 -c 500 -w "$CASE/packet-sample-$IFACE.pcap" not port 22 >/dev/null 2>&1 || true
+fi
+
+tar -C "$OUTDIR" -czf "$CASE.tgz" "incident-$STAMP" 2>/dev/null || true
+echo "$CASE"
+[ -f "$CASE.tgz" ] && echo "$CASE.tgz"

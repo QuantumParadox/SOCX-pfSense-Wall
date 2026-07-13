@@ -120,6 +120,7 @@ tmux bind-key r display-popup -E -w 96% -h 82% -T 'PACKET RADAR' "sh -lc 'SOCX_W
 tmux bind-key f display-popup -E -w 96% -h 82% -T 'PFTOP LIVE STATES' "pftop"
 tmux bind-key v display-popup -E -w 88% -h 74% -T 'VPN GATEWAY STATUS' "sh -lc '/usr/local/sbin/pfSsh.php playback gatewaystatus; echo; wg show 2>/dev/null; echo; read -r _'"
 tmux bind-key t display-popup -E -w 88% -h 74% -T 'TRAFFIC TOTALS' "sh -lc 'vnstat; echo; vnstat -i $IFWAN; echo; read -r _'"
+tmux bind-key i display-popup -E -w 88% -h 74% -T 'SOCX INCIDENT CAPTURE' "sh -lc '/usr/local/sbin/socx-incident-capture; echo; echo Incident capture complete.; read -r _'"
 if [ "$MODE" = "wall" ]; then
     tmux set-option -t socx -g status off
     tmux set-window-option -t socx:NETX pane-border-status off
@@ -173,12 +174,14 @@ Prefix + r  Packet Radar tcpdump view
 Prefix + f  pftop live states
 Prefix + v  VPN gateway and WireGuard detail
 Prefix + t  vnStat traffic totals
+Prefix + i  capture SOCX incident evidence bundle
 
 Useful commands:
   packet-radar
   tcpdumpx -i $IFWAN -nn -q $SOCX_PACKET_RADAR_FILTER
   pftop
   vnstat -i $IFWAN
+  socx-incident-capture
   tail -f /var/log/filter.log
 
 EOF

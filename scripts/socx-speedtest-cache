@@ -58,7 +58,11 @@ write_cache() {
 }
 
 speedtest_tool() {
-    if [ -x "$OOKLA_SPEEDTEST" ]; then
+    if [ "${SOCX_SPEEDTEST_PREFER_OOKLA:-false}" != "true" ] && command -v speedtest-go >/dev/null 2>&1; then
+        echo speedtest-go
+    elif [ "${SOCX_SPEEDTEST_PREFER_OOKLA:-false}" != "true" ] && command -v speedtest-cli >/dev/null 2>&1; then
+        echo speedtest-cli
+    elif [ -x "$OOKLA_SPEEDTEST" ]; then
         echo ookla:"$OOKLA_SPEEDTEST"
     elif command -v speedtest >/dev/null 2>&1 && speedtest --help 2>&1 | grep -q -- '--format'; then
         echo ookla:speedtest

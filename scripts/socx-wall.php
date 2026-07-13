@@ -4908,10 +4908,61 @@ function collect_soc_command_events(array &$state, array $hosts, float $now, arr
         if ($vpn !== null) {
             $events[] = $vpn;
         }
+        $lldp = lldp_status_event();
+        if ($lldp !== null) {
+            $events[] = $lldp;
+        }
+        $watchdog = service_watchdog_event();
+        if ($watchdog !== null) {
+            $events[] = $watchdog;
+        }
         $state['last_command_status_at'] = $now;
     }
 
     return $events;
+}
+
+function lldp_status_event(): ?array
+{
+    if (!is_executable('/usr/local/sbin/lldpctl') && trim(run_cmd('command -v lldpctl 2>/dev/null')) === '') {
+        return null;
+    }
+    $out = trim(run_cmd('lldpctl 2>/dev/null | /usr/bin/head -80'));
+    if ($out === '') {
+        return soc_event('IFACE', 'LOW', 'LLDP enabled | waiting for switch neighbor advertisements');
+    }
+    $neighbors = [];
+    foreach (preg_split('/\R/', $out) ?: [] as $line) {
+        if (preg_match('/^\s*Interface:\s*([^,]+),/', $line, $m)) {
+            $neighbors[] = trim($m[1]);
+        }
+    }
+    $count = count(array_unique($neighbors));
+    if ($count <= 0) {
+        return soc_event('IFACE', 'LOW', 'LLDP enabled | no neighbors visible yet');
+    }
+    return soc_event('IFACE', 'INFO', sprintf('LLDP neighbors %d | switch topology visible', $count));
+}
+
+function service_watchdog_event(): ?array
+{
+    $names = [];
+    $cmd = 'php -r ' . escapeshellarg('require_once("config.inc"); $items=config_get_path("installedpackages/servicewatchdog/item", []); foreach($items as $i){ if(!empty($i["name"])) echo $i["name"]."\n"; }') . ' 2>/dev/null';
+    $out = trim(run_cmd($cmd));
+    if ($out === '') {
+        return null;
+    }
+    foreach (preg_split('/\R/', $out) ?: [] as $line) {
+        $line = trim($line);
+        if ($line !== '') {
+            $names[] = $line;
+        }
+    }
+    $names = array_values(array_unique($names));
+    if (!$names) {
+        return null;
+    }
+    return soc_event('SYS', 'INFO', sprintf('Service Watchdog supervising %d services: %s', count($names), implode(', ', array_slice($names, 0, 5))));
 }
 
 function collect_activity_summary_events(array &$state, array $events, array $flows, array $ups, array $wan, array $lan, array $pf, float $now): array

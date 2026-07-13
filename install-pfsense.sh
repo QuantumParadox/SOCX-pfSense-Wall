@@ -14,6 +14,7 @@ install -m 0755 "$ROOT/scripts/socx-ups-status" /usr/local/sbin/socx-ups-status
 install -m 0755 "$ROOT/scripts/socx-ups-cache" /usr/local/sbin/socx-ups-cache
 install -m 0755 "$ROOT/scripts/socx-speedtest-cache" /usr/local/sbin/socx-speedtest-cache
 install -m 0755 "$ROOT/scripts/socx-packet-radar-cache" /usr/local/sbin/socx-packet-radar-cache
+install -m 0755 "$ROOT/scripts/socx-incident-capture" /usr/local/sbin/socx-incident-capture
 install -m 0755 "$ROOT/scripts/socx-iftop-color" /usr/local/sbin/socx-iftop-color
 install -m 0755 "$ROOT/scripts/socx-tcpdump-color" /usr/local/sbin/socx-tcpdump-color
 install -m 0755 "$ROOT/scripts/socx_iftop_color.pl" /usr/local/sbin/socx_iftop_color.pl
@@ -36,6 +37,9 @@ if [ ! -f /usr/local/etc/socx_hosts.conf ]; then
 fi
 if [ ! -f /usr/local/etc/socx_ai_lab.conf ]; then
     install -m 0644 "$ROOT/config/socx_ai_lab.conf.example" /usr/local/etc/socx_ai_lab.conf
+fi
+if [ ! -f /usr/local/etc/socx_services.conf ]; then
+    install -m 0644 "$ROOT/config/socx_services.conf.example" /usr/local/etc/socx_services.conf
 fi
 
 echo "SOCX pfSense Wall installed."

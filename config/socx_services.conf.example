@@ -1,0 +1,22 @@
+# SOCX service label overrides.
+# Format:
+# port=short-label
+#
+# These are used before system /etc/services lookups so local lab ports render
+# as useful app names on the wall.
+
+3000=ntop
+3001=webui
+8086=influx
+8093=miranda
+8094=socweb
+11434=ollama
+8000=vllm
+8001=vllm
+8002=vllm
+8888=jupyter
+9090=metrics
+9100=node
+8265=ray
+5000=mlflow
+7860=gradio

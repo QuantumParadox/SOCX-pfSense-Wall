@@ -4,6 +4,10 @@
 #
 # Local LAN hosts render as Name/LAN.x when a mapping exists.
 
+192.168.1.1=pfSense-JupiterLXI
+192.168.1.114=APC-SmartUPS
+192.168.1.116=MIRANDA-Workstation
+192.168.1.170=Metrics-Grafana
 192.168.1.161=JupiterLXI
 192.168.1.102=Enceladus
 192.168.1.127=NAS-Core

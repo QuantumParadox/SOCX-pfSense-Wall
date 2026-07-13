@@ -58,6 +58,8 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds `socx-wall`, a modern btop-inspired wall renderer with metric cards, pftop-style live PF states, flow table, Packet Radar, UPS sparkline, and smooth event ticker.
 - Runs wall mode inside a restart loop and logs renderer errors to `/tmp/socx-wall.err`.
 - Keeps wall mode full-screen. Operator commands live in the `COMMANDX` tmux window or popup shortcuts, so adding command access does not cut off the SOCX wall.
+- Adds an incident capture command that saves pf states, gateway/VPN state, recent logs, Packet Radar, checksums, and a short pcap into `/root/socx-incidents/`.
+- Can surface LLDP and Service Watchdog health in the rotating Event Feed when those pfSense packages are configured.
 - Shows truthful VPN gateway/interface health in the top status strip, including `VPN UP 3/3`, `VPN PARTIAL 1/3`, `VPN DOWN 0/3`, `VPN N/A`, or `VPN UNKNOWN` plus `DATA LIVE`/`DATA STALE`.
 - Adds a background Speedtest cache for scheduled Frontier/VPN path checks without blocking the 500 ms wall renderer.
 - Shows scheduled Speedtest results with latency, stable/stale state, and countdown to the next test.
@@ -184,6 +186,14 @@ Friendly hostnames are read from:
 /usr/local/etc/socx_hosts.conf
 ```
 
+Local service labels are read from:
+
+```sh
+/usr/local/etc/socx_services.conf
+```
+
+Use this for local lab ports such as MIRANDA, Ollama, vLLM, ntopng, InfluxDB, Grafana, Jupyter, Ray, and MLflow.
+
 AI/MIRANDA lab endpoints are read from:
 
 ```sh
@@ -226,6 +236,14 @@ packet-radar
 ```
 
 Inside tmux, use `Prefix + c` for a command popup, `Prefix + r` for live Packet Radar, `Prefix + f` for `pftop`, `Prefix + v` for VPN details, or switch to the `COMMANDX` window for a full command deck.
+
+Incident capture:
+
+```sh
+socx-incident-capture
+```
+
+The tmux shortcut is `Prefix + i`.
 
 Wall ticker speed can be tuned with:
 
