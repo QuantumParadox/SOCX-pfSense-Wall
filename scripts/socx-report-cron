@@ -1,0 +1,41 @@
+#!/bin/sh
+set -eu
+
+ACTION="${1:-install}"
+CRON_FILE="${SOCX_REPORT_CRON_FILE:-/etc/cron.d/socx-report}"
+HOUR="${SOCX_REPORT_HOUR:-3}"
+MINUTE="${SOCX_REPORT_MINUTE:-17}"
+KEEP="${SOCX_REPORT_KEEP_DAYS:-30}"
+
+case "$ACTION" in
+    install|enable)
+        mkdir -p "$(dirname "$CRON_FILE")"
+        cat > "$CRON_FILE" <<EOF
+# SOCX daily report and retention.
+SHELL=/bin/sh
+PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+
+$MINUTE $HOUR * * * root /usr/local/bin/socx-report daily >/dev/null 2>&1
+43 3 * * * root find /root/socx-reports -type f -name 'socx-*.txt' -mtime +$KEEP -delete >/dev/null 2>&1
+EOF
+        chmod 0644 "$CRON_FILE"
+        echo "SOCX report cron installed: $CRON_FILE"
+        cat "$CRON_FILE"
+        ;;
+    remove|disable)
+        rm -f "$CRON_FILE"
+        echo "SOCX report cron removed: $CRON_FILE"
+        ;;
+    status)
+        if [ -f "$CRON_FILE" ]; then
+            echo "SOCX report cron enabled: $CRON_FILE"
+            cat "$CRON_FILE"
+        else
+            echo "SOCX report cron not installed."
+        fi
+        ;;
+    *)
+        echo "Usage: socx-report-cron install|status|remove" >&2
+        exit 2
+        ;;
+esac

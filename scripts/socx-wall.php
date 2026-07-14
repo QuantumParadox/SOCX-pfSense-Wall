@@ -722,6 +722,10 @@ function collect_live_frame(array &$state, array $hosts): array
     if ($activityEvents) {
         $events = balance_events_for_feed(prioritize_events(array_merge($events, $activityEvents)), 80);
     }
+    $watchEvents = watchlist_events($flows, $events);
+    if ($watchEvents) {
+        $events = balance_events_for_feed(prioritize_events(array_merge($events, $watchEvents)), 80);
+    }
     $packets = packet_radar_merge(packet_radar_from_cache(), packets_from_events($packetEvents ?: $events));
     $pulse = threat_pulse_from_events($events, $packets, $hosts, $state);
     $wanHealth = wan_health_score($wan, $vpnStatus, $speedtest, $pulse);
@@ -5194,6 +5198,158 @@ function top_device_activity_events(array $flows): array
     return $events;
 }
 
+function watchlist_events(array $flows, array $events): array
+{
+    $rules = load_watchlist_rules();
+    if (!$rules) {
+        return [];
+    }
+    $matches = [];
+    foreach ($flows as $flow) {
+        $hay = strtolower(implode(' ', [
+            (string)($flow['src'] ?? ''),
+            (string)($flow['dst'] ?? ''),
+            (string)($flow['service'] ?? ''),
+            (string)($flow['sport'] ?? ''),
+            (string)($flow['dport'] ?? ''),
+            flow_path_text($flow, 80),
+        ]));
+        foreach ($rules as $rule) {
+            if (!watchlist_rule_matches($rule, $hay, $flow, null)) {
+                continue;
+            }
+            $label = $rule['label'] !== '' ? $rule['label'] : $rule['value'];
+            $matches[] = soc_event('WATCH', (string)$rule['severity'], sprintf('%s matched flow %s %s',
+                truncate_text($label, 22),
+                flow_path_text($flow, 32),
+                service_human_label((string)($flow['service'] ?? ''))));
+        }
+    }
+    foreach (array_slice($events, 0, 80) as $event) {
+        $text = strtolower((string)($event['ticker'] ?? ''));
+        if ($text === '') {
+            continue;
+        }
+        foreach ($rules as $rule) {
+            if (!watchlist_rule_matches($rule, $text, [], $event)) {
+                continue;
+            }
+            $label = $rule['label'] !== '' ? $rule['label'] : $rule['value'];
+            $matches[] = soc_event('WATCH', (string)$rule['severity'], sprintf('%s matched event %s',
+                truncate_text($label, 22),
+                truncate_text((string)($event['ticker'] ?? ''), 70)));
+        }
+    }
+    return watchlist_dedupe_events($matches);
+}
+
+function load_watchlist_rules(): array
+{
+    static $cache = null;
+    static $cachedAt = 0.0;
+    $now = microtime(true);
+    if (is_array($cache) && ($now - $cachedAt) < 20.0) {
+        return $cache;
+    }
+    $files = [];
+    $env = getenv('SOCX_WATCHLIST_FILE');
+    if ($env !== false && trim($env) !== '') {
+        $files[] = trim($env);
+    }
+    $files[] = '/usr/local/etc/socx_watchlist.conf';
+    $files[] = '/root/socx_watchlist.conf';
+    $rules = [];
+    foreach ($files as $file) {
+        if (!is_readable($file)) {
+            continue;
+        }
+        foreach (file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+            $rule = parse_watchlist_rule($line);
+            if ($rule !== null) {
+                $rules[] = $rule;
+            }
+        }
+    }
+    $cache = array_slice($rules, 0, 80);
+    $cachedAt = $now;
+    return $cache;
+}
+
+function parse_watchlist_rule(string $line): ?array
+{
+    $line = trim($line);
+    if ($line === '' || str_starts_with($line, '#') || !str_contains($line, '=')) {
+        return null;
+    }
+    [$kind, $rest] = array_map('trim', explode('=', $line, 2));
+    $kind = strtolower(preg_replace('/[^a-z0-9_-]/i', '', $kind) ?? '');
+    $parts = array_map('trim', explode('|', $rest));
+    $value = strtolower((string)array_shift($parts));
+    $label = '';
+    $severity = 'WARN';
+    foreach ($parts as $part) {
+        if (str_starts_with(strtolower($part), 'label:')) {
+            $label = trim(substr($part, 6));
+        } elseif (str_starts_with(strtolower($part), 'severity:')) {
+            $severity = strtoupper(trim(substr($part, 9)));
+        }
+    }
+    if ($kind === '' || $value === '') {
+        return null;
+    }
+    $severity = in_array($severity, ['INFO', 'LOW', 'WARN', 'MED', 'HIGH', 'CRIT'], true) ? $severity : 'WARN';
+    return ['kind' => $kind, 'value' => $value, 'label' => $label, 'severity' => $severity];
+}
+
+function watchlist_rule_matches(array $rule, string $hay, array $flow, ?array $event): bool
+{
+    $kind = (string)$rule['kind'];
+    $value = strtolower((string)$rule['value']);
+    if ($value === '') {
+        return false;
+    }
+    return match ($kind) {
+        'host', 'ip', 'device' => str_contains($hay, $value),
+        'domain' => str_contains($hay, $value),
+        'service', 'app' => strtolower((string)($flow['service'] ?? '')) === $value || str_contains($hay, ' ' . $value . ' '),
+        'port' => watchlist_port_matches($value, $flow, $hay),
+        'text', 'event' => str_contains($hay, $value),
+        default => str_contains($hay, $value),
+    };
+}
+
+function watchlist_port_matches(string $value, array $flow, string $hay): bool
+{
+    $value = preg_replace('/\D/', '', $value) ?? '';
+    if ($value === '') {
+        return false;
+    }
+    foreach (['sport', 'dport'] as $field) {
+        if ((string)($flow[$field] ?? '') === $value) {
+            return true;
+        }
+    }
+    return preg_match('/\b(?:port|p)?' . preg_quote($value, '/') . '\b/i', $hay) === 1;
+}
+
+function watchlist_dedupe_events(array $events): array
+{
+    $seen = [];
+    $out = [];
+    foreach ($events as $event) {
+        $key = strtolower((string)($event['ticker'] ?? ''));
+        if ($key === '' || isset($seen[$key])) {
+            continue;
+        }
+        $seen[$key] = true;
+        $out[] = $event;
+        if (count($out) >= 8) {
+            break;
+        }
+    }
+    return $out;
+}
+
 function known_unknown_device_event(array $flows): ?array
 {
     $known = [];
@@ -5815,6 +5971,7 @@ function category_weight(string $category, string $severity): int
     $severity = strtoupper($severity);
     return match ($category) {
         'IPS', 'IDS' => 50,
+        'WATCH' => 45,
         'WAN', 'VPN', 'UPS', 'DNS' => 40,
         'FW' => 30,
         'PULSE' => 25,
@@ -5848,6 +6005,7 @@ function balance_events_for_feed(array $events, int $limit): array
         'FLOW' => 5,
         'PF' => 5,
         'PULSE' => 4,
+        'WATCH' => 4,
         'AI' => 8,
         'LAB' => 6,
         'INTEL' => 3,
@@ -6006,6 +6164,7 @@ function ticker_event_texts(array $state): array
         'FLOW' => 5,
         'PF' => 5,
         'PULSE' => 4,
+        'WATCH' => 4,
         'INTEL' => 3,
         'TTP' => 3,
         'DETECT' => 3,
@@ -6063,7 +6222,7 @@ function interleave_event_rows(array $rows): array
 {
     $urgent = [];
     $buckets = [];
-    $categoryOrder = ['PULSE', 'INTEL', 'TTP', 'DETECT', 'EVID', 'CLOUD', 'SRC', 'FLOW', 'UPS', 'PF', 'DNSBL', 'WAN', 'DNS', 'VPN', 'IDS', 'IPS', 'DHCP', 'ARP', 'IFACE', 'SYS', 'DEVICE', 'SOCX', 'FW'];
+    $categoryOrder = ['WATCH', 'PULSE', 'INTEL', 'TTP', 'DETECT', 'EVID', 'CLOUD', 'SRC', 'FLOW', 'UPS', 'PF', 'DNSBL', 'WAN', 'DNS', 'VPN', 'IDS', 'IPS', 'DHCP', 'ARP', 'IFACE', 'SYS', 'DEVICE', 'SOCX', 'FW'];
     foreach ($rows as $row) {
         $parts = event_text_parts((string)$row);
         if (in_array($parts['severity'], ['CRIT', 'HIGH'], true)) {
@@ -7613,6 +7772,10 @@ function compact_endpoint_label(string $label, bool $mini = false): string
     }
     if (filter_var($label, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
         return compact_endpoint_label(lan_label($label), $mini);
+    }
+    if (preg_match('/^([^\/]+)\/(LAN\.\d+)$/', $label, $m)) {
+        $name = trim($m[1]);
+        return $mini ? str_replace('LAN.', 'L', $m[2]) : truncate_text($name !== '' ? $name : $m[2], 12);
     }
     if (preg_match('/\/(LAN\.\d+)/', $label, $m)) {
         return $mini ? str_replace('LAN.', 'L', $m[1]) : $m[1];

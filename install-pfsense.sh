@@ -17,6 +17,7 @@ install -m 0755 "$ROOT/scripts/socx-packet-radar-cache" /usr/local/sbin/socx-pac
 install -m 0755 "$ROOT/scripts/socx-incident-capture" /usr/local/sbin/socx-incident-capture
 install -m 0755 "$ROOT/scripts/socx-incident" /usr/local/bin/socx-incident
 install -m 0755 "$ROOT/scripts/socx-report" /usr/local/bin/socx-report
+install -m 0755 "$ROOT/scripts/socx-report-cron" /usr/local/bin/socx-report-cron
 install -m 0755 "$ROOT/scripts/socx-hosts-audit" /usr/local/bin/socx-hosts-audit
 install -m 0755 "$ROOT/scripts/socx-explain" /usr/local/bin/socx-explain
 install -m 0755 "$ROOT/scripts/socx-miranda-bridge" /usr/local/bin/socx-miranda-bridge
@@ -45,6 +46,9 @@ if [ ! -f /usr/local/etc/socx_ai_lab.conf ]; then
 fi
 if [ ! -f /usr/local/etc/socx_services.conf ]; then
     install -m 0644 "$ROOT/config/socx_services.conf.example" /usr/local/etc/socx_services.conf
+fi
+if [ ! -f /usr/local/etc/socx_watchlist.conf ]; then
+    install -m 0644 "$ROOT/config/socx_watchlist.conf.example" /usr/local/etc/socx_watchlist.conf
 fi
 
 echo "SOCX pfSense Wall installed."

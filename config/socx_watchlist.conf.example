@@ -1,0 +1,20 @@
+# SOCX watchlist.
+# Format:
+#   kind=value|label:Friendly name|severity:WARN
+#
+# Supported kinds:
+#   host, ip, device, domain, service, app, port, text, event
+#
+# Examples for a lab with MIRANDA and important infrastructure:
+
+host=LAN.116|label:MIRANDA workstation|severity:LOW
+host=MIRANDA-Workstation|label:MIRANDA workstation|severity:LOW
+host=Lenovo-M910t|label:Lenovo ThinkCentre|severity:LOW
+host=APC-SmartUPS|label:UPS management|severity:LOW
+service=miranda|label:MIRANDA service traffic|severity:LOW
+service=vpn|label:VPN tunnel traffic|severity:LOW
+domain=api.x.ai|label:xAI Grok API|severity:LOW
+domain=build.nvidia.com|label:NVIDIA Build|severity:LOW
+text=VPN DOWN|label:VPN outage|severity:HIGH
+text=UPS on battery|label:Power event|severity:HIGH
+text=IDS|label:IDS activity|severity:WARN

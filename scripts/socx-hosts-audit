@@ -3,9 +3,12 @@ set -eu
 
 HOSTS_FILE="${SOCX_HOSTS_FILE:-/usr/local/etc/socx_hosts.conf}"
 OUT="${SOCX_HOSTS_AUDIT_OUT:-/tmp/socx-hosts-audit.txt}"
+APPLY="${1:-}"
+SUGGESTIONS="${SOCX_HOSTS_SUGGESTIONS:-/tmp/socx-hosts-suggestions.conf}"
 
 tmp="$(mktemp /tmp/socx-hosts.XXXXXX)"
 trap 'rm -f "$tmp"' EXIT
+: > "$SUGGESTIONS"
 
 {
     echo "# SOCX host audit"
@@ -40,7 +43,7 @@ trap 'rm -f "$tmp"' EXIT
     ' /var/dhcpd/var/db/dhcpd.leases 2>/dev/null || true
 } | sort -u > "$tmp"
 
-awk -v hosts="$HOSTS_FILE" '
+awk -v hosts="$HOSTS_FILE" -v suggestions="$SUGGESTIONS" '
 BEGIN {
   while ((getline line < hosts) > 0) {
     if (line ~ /^[[:space:]]*#/ || line !~ /=/) continue
@@ -55,6 +58,7 @@ BEGIN {
   printf "%-15s %-17s %-8s %-7s %s\n", ip, mac, source, status, (label!=""?label:name)
   if (label=="" && ip ~ /^192\.168\.1\./) {
     split(ip, oct, ".")
+    if (oct[4] == "0" || oct[4] == "255") next
     suggestion=(name!=""?name:"Device-" oct[4])
     gsub(/[^A-Za-z0-9_.-]/, "", suggestion)
     missing[ip]=suggestion
@@ -65,7 +69,24 @@ END {
   print "Suggested additions:"
   for (ip in missing) {
     print ip "=" missing[ip]
+    print ip "=" missing[ip] >> suggestions
   }
 }' "$tmp" >> "$OUT"
 
 cat "$OUT"
+
+if [ "$APPLY" = "--apply-suggestions" ]; then
+    if [ ! -s "$SUGGESTIONS" ]; then
+        echo "No suggestions to apply."
+        exit 0
+    fi
+    cp "$HOSTS_FILE" "$HOSTS_FILE.bak-$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+    while IFS= read -r line; do
+        ip="${line%%=*}"
+        [ -n "$ip" ] || continue
+        grep -q "^$ip=" "$HOSTS_FILE" 2>/dev/null && continue
+        printf '%s\n' "$line" >> "$HOSTS_FILE"
+    done < "$SUGGESTIONS"
+    echo
+    echo "Applied suggestions from $SUGGESTIONS to $HOSTS_FILE"
+fi

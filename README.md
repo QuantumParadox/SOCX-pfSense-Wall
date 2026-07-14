@@ -62,7 +62,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Keeps wall mode full-screen. Operator commands live in the `COMMANDX` tmux window or popup shortcuts, so adding command access does not cut off the SOCX wall.
 - Adds an incident capture command that saves pf states, gateway/VPN state, recent logs, Packet Radar, checksums, and a short pcap into `/root/socx-incidents/`.
 - Adds `socx-incident`, a short operator command that runs the capture and prints the newest bundle path plus a quick manifest.
-- Adds `socx-report`, `socx-hosts-audit`, `socx-explain`, and `socx-miranda-bridge` for daily reports, device naming, label explanations, and MIRANDA/local-AI export.
+- Adds `socx-report`, `socx-report-cron`, `socx-hosts-audit`, `socx-explain`, and `socx-miranda-bridge` for scheduled reports, device naming, label explanations, and MIRANDA/local-AI export.
 - Can surface LLDP and Service Watchdog health in the rotating Event Feed when those pfSense packages are configured.
 - Adds a rotating SOCX health score based on WAN, VPN, UPS, RAM, CPU, Speedtest freshness, IDS, DNSBL, and firewall scan pressure.
 - Shows truthful VPN gateway/interface health in the top status strip, including `VPN UP 3/3`, `VPN PARTIAL 1/3`, `VPN DOWN 0/3`, `VPN N/A`, or `VPN UNKNOWN` plus `DATA LIVE`/`DATA STALE`.
@@ -72,6 +72,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Rotates top upload/download and top-device summaries through the Event Feed so `LAN.148` style traffic becomes easier to understand.
 - Learns friendly host names from `/usr/local/etc/socx_hosts.conf` and cached DHCP leases when available.
 - Tracks known vs unknown LAN devices and logs unknown service ports to `/var/db/socx_unknown_services.log` so the wall gets smarter over time.
+- Supports `/usr/local/etc/socx_watchlist.conf` for watched hosts, domains, services, ports, and event text.
 - Adds WAN health and Speedtest 24-hour average/trend events to the rotating feed.
 - Adds AI/MIRANDA lab awareness for Ollama, vLLM, xAI/Grok, NVIDIA Build, OpenAI, Anthropic, Gemini, Hugging Face, Jupyter, Ray, MLflow, and related local lab services.
 - Shows CPU graph, CPU cores, RAM/ARC, pf state/search counters, live interface rates, and top processes in the top cockpit.
@@ -100,6 +101,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-tcpdump-color` and `scripts/socx_tcpdump_color.pl` - color packet story wrapper and renderer.
 - `scripts/socx-incident` - short incident command that runs capture and prints the latest bundle manifest.
 - `scripts/socx-report` - daily/weekly text report generator for firewall, DNSBL, IDS, VPN, UPS, Speedtest, hosts, and unknown ports.
+- `scripts/socx-report-cron` - installs/removes a daily SOCX report cron entry with report retention cleanup.
 - `scripts/socx-hosts-audit` - builds a known/unknown LAN device list from host config, ARP, DHCP leases, and PF states.
 - `scripts/socx-explain` - explains short labels such as `tls`, `dnsbl`, `nut`, `sysl`, `game`, and `unk`.
 - `scripts/socx-miranda-bridge` - exports a compact JSON summary for MIRANDA or another local-AI/SOC collector.
@@ -109,6 +111,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `web/static/` - HTML, CSS, and JavaScript frontend for the modern card dashboard.
 - `config/socx_hosts.conf.example` - optional friendly-name map for local LAN hosts.
 - `config/socx_ai_lab.conf.example` - optional AI/MIRANDA endpoint map for local LLMs and external model APIs.
+- `config/socx_watchlist.conf.example` - optional watchlist for important devices, services, domains, ports, and event text.
 - `rc.d/socx` - pfSense/FreeBSD boot script for automatic detached startup.
 - `rc.d/socxweb` - optional pfSense/FreeBSD boot script for the browser dashboard service.
 
@@ -264,6 +267,7 @@ Friendly device names:
 
 ```sh
 socx-hosts-audit
+socx-hosts-audit --apply-suggestions
 vi /usr/local/etc/socx_hosts.conf
 ```
 
@@ -276,7 +280,25 @@ Example:
 192.168.1.170=Metrics-Grafana
 ```
 
-When a mapping exists, SOCX renders flows as names such as `MIRANDA-Workstation/LAN.116`; when there is no mapping, it falls back to DHCP lease hostnames and then compact `LAN.x` labels.
+When a mapping exists, SOCX renders flows as names such as `MIRANDA-Workstation/LAN.116`; when there is no mapping, it falls back to DHCP lease hostnames and then compact `LAN.x` labels. `--apply-suggestions` adds clear placeholder aliases like `Device-105`; use it when you want immediate readability, then rename those entries later.
+
+Watchlist:
+
+```sh
+vi /usr/local/etc/socx_watchlist.conf
+```
+
+Example:
+
+```text
+host=MIRANDA-Workstation|label:MIRANDA workstation|severity:LOW
+domain=api.x.ai|label:xAI Grok API|severity:LOW
+service=vpn|label:VPN tunnel traffic|severity:LOW
+text=VPN DOWN|label:VPN outage|severity:HIGH
+text=UPS on battery|label:Power event|severity:HIGH
+```
+
+Watchlist matches rotate into the Event Feed as `[WATCH]` events without adding another panel.
 
 Unknown ports and labels:
 
@@ -295,6 +317,8 @@ Daily/weekly report:
 ```sh
 socx-report daily
 socx-report weekly
+socx-report-cron install
+socx-report-cron status
 ```
 
 Reports are written to `/root/socx-reports/` and include firewall blocks, DNSBL samples, IDS samples, VPN/gateway status, Speedtest cache, UPS cache, top PF states, Service Watchdog data, unknown ports, and a host audit.
