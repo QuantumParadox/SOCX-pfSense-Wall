@@ -367,6 +367,42 @@ doctor_why() {
     finish
 }
 
+doctor_pi_llm() {
+    header "pi llm"
+    cron="${SOCX_PI_LLM_CRON_FILE:-/etc/cron.d/socx-pi-llm}"
+    cache="${SOCX_PI_LLM_ANALYSIS_CACHE:-/tmp/socx-pi-llm-analysis.env}"
+    url="${SOCX_PI_LLM_POST_URL:-http://192.168.1.180:8095/api/socx/triage}"
+    if [ -f "$cron" ]; then
+        mark OK "Pi LLM cron installed: $cron"
+        sed 's/^/      /' "$cron"
+    else
+        mark WARN "Pi LLM cron not installed; run socx-pi-llm-cron install"
+    fi
+    host="$(printf '%s' "$url" | sed -n 's#^https\{0,1\}://\([^/:]*\).*#\1#p')"
+    port="$(printf '%s' "$url" | sed -n 's#^https\{0,1\}://[^/:]*:\([0-9][0-9]*\).*#\1#p')"
+    [ -n "$port" ] || port=80
+    if [ -n "$host" ] && command -v nc >/dev/null 2>&1 && nc -z -w 2 "$host" "$port" >/dev/null 2>&1; then
+        mark OK "Pi LLM endpoint reachable: $host:$port"
+    else
+        mark WARN "Pi LLM endpoint not reachable yet: $url"
+    fi
+    if [ -f "$cache" ]; then
+        status="$(sed -n 's/^status=//p' "$cache" | tail -1)"
+        sev="$(sed -n 's/^severity=//p' "$cache" | tail -1)"
+        roles="$(sed -n 's/^roles=//p' "$cache" | tail -1)"
+        reason="$(sed -n 's/^reason=//p' "$cache" | tail -1)"
+        age="$(age_file "$cache")"
+        case "$status" in
+            ok) mark OK "Pi 3-LLM cache ok severity=${sev:-unknown} roles=${roles:-?} age=${age:-?}s ${reason:-}" ;;
+            off) mark WARN "Pi LLM bridge disabled age=${age:-?}s ${reason:-}" ;;
+            *) mark WARN "Pi LLM cache status=${status:-unknown} severity=${sev:-unknown} age=${age:-?}s ${reason:-}" ;;
+        esac
+    else
+        mark WARN "Pi LLM analysis cache missing; run socx pi-llm"
+    fi
+    finish
+}
+
 doctor_all() {
     header "all"
     if tmux has-session -t socx 2>/dev/null; then mark OK "wall tmux session is running"; else mark FAIL "wall tmux session is not running"; fi
@@ -397,6 +433,17 @@ doctor_all() {
     else
         mark WARN "MIRANDA insight cache missing; run socx-miranda-bridge or wait for cron"
     fi
+    [ -f /etc/cron.d/socx-pi-llm ] && mark OK "Pi 3-LLM export cron installed" || mark WARN "Pi 3-LLM export cron missing"
+    if [ -f /tmp/socx-pi-llm-analysis.env ]; then
+        status="$(sed -n 's/^status=//p' /tmp/socx-pi-llm-analysis.env | tail -1)"
+        sev="$(sed -n 's/^severity=//p' /tmp/socx-pi-llm-analysis.env | tail -1)"
+        roles="$(sed -n 's/^roles=//p' /tmp/socx-pi-llm-analysis.env | tail -1)"
+        reason="$(sed -n 's/^reason=//p' /tmp/socx-pi-llm-analysis.env | tail -1)"
+        age="$(age_file /tmp/socx-pi-llm-analysis.env)"
+        [ "$status" = "ok" ] && mark OK "Pi 3-LLM cache severity=${sev:-unknown}, roles=${roles:-?}, age ${age:-?}s, ${reason:-no reason}" || mark WARN "Pi 3-LLM cache status=${status:-unknown}, age ${age:-?}s, ${reason:-no reason}"
+    else
+        mark WARN "Pi 3-LLM cache missing; run socx pi-llm after Pi endpoint is online"
+    fi
     pgrep -f 'vnstatd' >/dev/null 2>&1 && mark OK "vnstatd is running" || mark WARN "vnstatd is not running"
     unknown_bytes="$(wc -c /var/db/socx_unknown_services.log 2>/dev/null | awk '{print $1}')"
     [ "${unknown_bytes:-0}" = "0" ] && mark OK "unknown service learner is clean" || mark WARN "unknown service learner has ${unknown_bytes} bytes"
@@ -412,10 +459,11 @@ case "$cmd" in
     tune-ids|ids-tune|tune_ids) doctor_tune_ids ;;
     vnstat|vnstatd|traffic) doctor_vnstat ;;
     why-slow|slow) doctor_why_slow ;;
+    pi-llm|llm|pi) doctor_pi_llm ;;
     logs|pressure|cpu) doctor_logs ;;
     why-blocked|why) doctor_why "$arg" ;;
     *)
-        echo "Usage: socx-doctor [all|gateways|dnsbl|dnsbl-review|ids|tune-ids|vnstat|why-slow|logs|why-blocked <term>]" >&2
+        echo "Usage: socx-doctor [all|gateways|dnsbl|dnsbl-review|ids|tune-ids|vnstat|why-slow|pi-llm|logs|why-blocked <term>]" >&2
         exit 2
         ;;
 esac

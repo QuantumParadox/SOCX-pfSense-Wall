@@ -1,0 +1,39 @@
+#!/bin/sh
+set -eu
+
+ACTION="${1:-install}"
+CRON_FILE="${SOCX_PI_LLM_CRON_FILE:-/etc/cron.d/socx-pi-llm}"
+POST_URL="${SOCX_PI_LLM_POST_URL:-http://192.168.1.180:8095/api/socx/triage}"
+INTERVAL="${SOCX_PI_LLM_INTERVAL_MINUTES:-5}"
+
+case "$ACTION" in
+    install|enable)
+        mkdir -p "$(dirname "$CRON_FILE")"
+        cat > "$CRON_FILE" <<EOF
+# SOCX compact network-health export to Raspberry Pi 5 AI HAT+ 3-LLM orchestration.
+SHELL=/bin/sh
+PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+
+*/$INTERVAL * * * * root SOCX_PI_LLM_POST_URL=$POST_URL /usr/local/bin/socx-pi-llm-bridge >/dev/null 2>&1
+EOF
+        chmod 0644 "$CRON_FILE"
+        echo "SOCX Pi LLM cron installed: $CRON_FILE"
+        cat "$CRON_FILE"
+        ;;
+    remove|disable)
+        rm -f "$CRON_FILE"
+        echo "SOCX Pi LLM cron removed: $CRON_FILE"
+        ;;
+    status)
+        if [ -f "$CRON_FILE" ]; then
+            echo "SOCX Pi LLM cron enabled: $CRON_FILE"
+            cat "$CRON_FILE"
+        else
+            echo "SOCX Pi LLM cron not installed."
+        fi
+        ;;
+    *)
+        echo "Usage: socx-pi-llm-cron install|status|remove" >&2
+        exit 2
+        ;;
+esac

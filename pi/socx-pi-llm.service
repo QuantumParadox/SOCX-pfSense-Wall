@@ -1,0 +1,17 @@
+[Unit]
+Description=SOCX Raspberry Pi 3-LLM Orchestrator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/socx-pi-llm
+Environment=SOCX_PI_LLM_TRIAGE_MODEL=llama3.2:3b
+Environment=SOCX_PI_LLM_EVIDENCE_MODEL=qwen2.5:3b
+Environment=SOCX_PI_LLM_ACTION_MODEL=phi3:mini
+ExecStart=/usr/bin/python3 -m uvicorn socx_pi_llm_orchestrator:app --host 0.0.0.0 --port 8095
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

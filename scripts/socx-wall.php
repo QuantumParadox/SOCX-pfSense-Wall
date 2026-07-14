@@ -5051,6 +5051,7 @@ function wall_doctor_status_event(float $now): ?array
         'speedtest' => getenv('SOCX_SPEEDTEST_CACHE') ?: '/tmp/socx-speedtest-cache.env',
         'ups' => getenv('SOCX_UPS_CACHE_FILE') ?: '/tmp/socx-ups-cache.env',
         'miranda' => getenv('SOCX_MIRANDA_ANALYSIS_CACHE') ?: '/tmp/socx-miranda-analysis.env',
+        'pi-llm' => getenv('SOCX_PI_LLM_ANALYSIS_CACHE') ?: '/tmp/socx-pi-llm-analysis.env',
     ] as $label => $file) {
         $checks++;
         if (!is_readable($file)) {
@@ -5533,6 +5534,49 @@ function miranda_insight_event(array $insight): array
     return soc_event('AI', $severity, $msg, ['confidence' => $conf]);
 }
 
+function collect_pi_llm_insight(float $now): array
+{
+    $file = getenv('SOCX_PI_LLM_ANALYSIS_CACHE') ?: '/tmp/socx-pi-llm-analysis.env';
+    if (!is_readable($file)) {
+        return ['available' => false, 'reason' => 'no Pi 3-LLM cache'];
+    }
+    $data = parse_env_file($file);
+    $updated = isset($data['updated']) && is_numeric($data['updated']) ? (float)$data['updated'] : 0.0;
+    $ageSeconds = $updated > 0 ? max(0.0, $now - $updated) : null;
+    $maxAge = (float)(getenv('SOCX_PI_LLM_ANALYSIS_MAX_AGE') ?: 900);
+    $status = strtolower((string)($data['status'] ?? 'unknown'));
+    $severity = strtoupper((string)($data['severity'] ?? ($status === 'ok' ? 'INFO' : 'WARN')));
+    return [
+        'available' => true,
+        'fresh' => $ageSeconds === null || $ageSeconds <= $maxAge,
+        'status' => $status,
+        'severity' => $severity !== '' ? $severity : 'INFO',
+        'reason' => trim((string)($data['reason'] ?? 'Pi 3-LLM analyzed SOCX')),
+        'age_seconds' => $ageSeconds,
+        'age' => $ageSeconds === null ? '' : format_age_seconds($ageSeconds),
+        'confidence' => (string)($data['confidence'] ?? ''),
+        'roles' => (string)($data['roles'] ?? ''),
+    ];
+}
+
+function pi_llm_insight_event(array $insight): array
+{
+    $severity = strtoupper((string)($insight['severity'] ?? 'INFO'));
+    if (empty($insight['fresh']) || !in_array((string)($insight['status'] ?? ''), ['ok', 'off'], true)) {
+        $severity = 'WARN';
+    }
+    $reason = trim((string)($insight['reason'] ?? 'Pi 3-LLM analyzed SOCX'));
+    $age = trim((string)($insight['age'] ?? ''));
+    $roles = trim((string)($insight['roles'] ?? ''));
+    $conf = trim((string)($insight['confidence'] ?? ''));
+    $msg = sprintf('PI 3LLM %s%s%s | %s',
+        !empty($insight['fresh']) ? 'analysis' : 'analysis stale',
+        $roles !== '' ? ' roles ' . $roles : '',
+        $age !== '' ? ' age ' . $age : '',
+        $reason !== '' ? $reason : 'SOCX analyzed');
+    return soc_event('AI', $severity, $msg, ['confidence' => $conf]);
+}
+
 function socx_health_score(array $wanHealth, array $vpnStatus, array $ups, array $mem, array $cpu, array $speedtest, array $pulse): array
 {
     $score = 100;
@@ -5678,6 +5722,10 @@ function collect_ai_lab_events(array &$state, array $metrics, bool $routineDue):
     }
     if ($signals) {
         $events[] = soc_event('AI', 'INFO', 'Local AI signals online: ' . implode(', ', array_slice(array_unique($signals), 0, 5)));
+    }
+    $piInsight = collect_pi_llm_insight(microtime(true));
+    if (!empty($piInsight['available'])) {
+        $events[] = pi_llm_insight_event($piInsight);
     }
 
     $checks = ai_lab_endpoint_checks();
@@ -8405,7 +8453,7 @@ function colorize_line($line, bool $color): string
     $line = color_replace('/(\[FW\]|\[VPN\]|\[WAN\]|\[DHCP\]|\[ARP\]|\[FLOW\]|\[RADAR\]|\[PF\]|\[UPS\]|\[SYS\]|\[DNS\]|\[IFACE\]|\[DEVICE\]|\[PULSE\]|\[SOCX\]|\[DOCTOR\]|\[AI\]|\[LAB\]|\[INTEL\]|\[TTP\]|\[DETECT\]|\[EVID\]|\[CLOUD\]|\[SRC\])/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[DNSBL\]|\[IDS\]|\[IPS\])|\b(DNS BLOCK|DNS SINK|DNSBL HIT|SINKHOLE|DNSBL|Suricata|suricata|Sigma|YARA|CVE|CPE|CWE|CAPEC|CVSS|EPSS|KEV|ATT&CK|D3FEND|OpenAI|Anthropic|Gemini|xAI|Grok|NVIDIA Build|Hugging Face|Ollama|vLLM|MIRANDA|Local LLM|reputation|threat-intel|known-bad|known bad|malware|botnet|C2|abuse:high|abuse high|tor\?)\b/i', $c['purple'] . '$0' . $c['reset'], $line);
     $line = color_replace('/\b(contain|quarantine|preserve|evidence|pcap|pfctl|config\.xml|CloudTrail|AzureActivity|VPC Flow|Windows|Linux|macOS|memory)\b/i', $c['yellow'] . '$0' . $c['reset'], $line);
-    $line = color_replace('/\b(CPU|RAM|ARC|SWAP|PF|LAN|WAN|IN|OUT|VPN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|PACKET RADAR|PFTOP|LIVE STATES|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES|THREAT PULSE|SPEEDTEST|SPD|DOCTOR|Mbps|STATES|SEARCH|TRAFFIC|TCP|UDP|ICMP|DIR|APP|PATH|TYPE|STAT|STATE|LEFT|PRO|SVC|RATE|FLOW|RADAR|AGE|EXP|PROTO|TEMP|HUMID|LOAD)\b/i', $c['cyan'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/\b(CPU|RAM|ARC|SWAP|PF|LAN|WAN|IN|OUT|VPN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|PACKET RADAR|PFTOP|LIVE STATES|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES|THREAT PULSE|SPEEDTEST|SPD|DOCTOR|PI|Mbps|STATES|SEARCH|TRAFFIC|TCP|UDP|ICMP|DIR|APP|PATH|TYPE|STAT|STATE|LEFT|PRO|SVC|RATE|FLOW|RADAR|AGE|EXP|PROTO|TEMP|HUMID|LOAD)\b/i', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/\b(tls|web|dns|dnsblk|ssh|vpn|ntp|smb|sysl|rip|snmp|ssdp|nut|olma|vllm|llm|tgi|grad|jupy|ray|mlfl|trtn|graf|oai|xai|ngc|anth|gemi|hf|rdis|metr|ping|plex|dhcp|mdns|mail|apns|gcm|team|rdp|vnc|irc|ftp|dot|mux|oth|block|p\d{1,5})\b/i', $c['blue'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[[#!.]+\])/', $c['green'] . '$1' . $c['reset'], $line);
     $line = color_replace('/([█▇▆▅▄▃▂▁▓]+)/u', $c['green'] . '$1' . $c['reset'], $line);

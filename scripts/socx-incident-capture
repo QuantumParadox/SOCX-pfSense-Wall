@@ -57,6 +57,8 @@ copy_if_exists /tmp/socx-speedtest-cache.env speedtest.env
 copy_if_exists /tmp/socx-ups-cache.json ups.json
 copy_if_exists /tmp/socx-ups-cache.env ups.env
 copy_if_exists /tmp/socx-miranda-analysis.env miranda-analysis.env
+copy_if_exists /tmp/socx-pi-llm-analysis.env pi-llm-analysis.env
+copy_if_exists /tmp/socx-pi-llm-export.json pi-llm-export.json
 copy_if_exists /var/db/socx_unknown_services.log unknown-services.log
 
 tail -500 /var/log/filter.log > "$CASE/filter.tail" 2>/dev/null || true

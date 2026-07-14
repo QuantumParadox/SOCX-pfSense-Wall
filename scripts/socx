@@ -18,6 +18,14 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-incident "$@"
         ;;
+    pi-llm|llm)
+        shift
+        exec /usr/local/bin/socx-pi-llm-bridge "$@"
+        ;;
+    pi-llm-cron|llm-cron)
+        shift
+        exec /usr/local/bin/socx-pi-llm-cron "$@"
+        ;;
     why-slow)
         exec /usr/local/bin/socx-doctor why-slow
         ;;

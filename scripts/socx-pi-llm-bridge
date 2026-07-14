@@ -1,0 +1,69 @@
+#!/bin/sh
+set -u
+
+OUT="${SOCX_PI_LLM_EXPORT:-/tmp/socx-pi-llm-export.json}"
+POST_URL="${SOCX_PI_LLM_POST_URL:-http://192.168.1.180:8095/api/socx/triage}"
+ANALYSIS_CACHE="${SOCX_PI_LLM_ANALYSIS_CACHE:-/tmp/socx-pi-llm-analysis.env}"
+TIMEOUT="${SOCX_PI_LLM_TIMEOUT:-12}"
+
+write_cache() {
+    status="$1"
+    severity="$2"
+    confidence="$3"
+    reason="$4"
+    next="$5"
+    source="$6"
+    roles="$7"
+    {
+        echo "updated=$(date +%s)"
+        echo "status=$status"
+        echo "severity=${severity:-UNKNOWN}"
+        echo "confidence=${confidence:-}"
+        echo "reason=$(printf '%s' "${reason:-}" | sed 's/[;&|`$<>]//g' | cut -c1-220)"
+        echo "next=$(printf '%s' "${next:-}" | sed 's/[;&|`$<>]//g' | cut -c1-220)"
+        echo "source=${source:-pi-llm}"
+        echo "roles=${roles:-}"
+        echo "post_url=$POST_URL"
+    } > "$ANALYSIS_CACHE"
+}
+
+if command -v socx-miranda-bridge >/dev/null 2>&1; then
+    SOCX_MIRANDA_EXPORT="$OUT" SOCX_MIRANDA_POST_URL= socx-miranda-bridge >/dev/null 2>&1 || true
+fi
+
+if [ ! -s "$OUT" ]; then
+    write_cache "error" "WARN" "" "SOCX export missing; cannot send to Pi LLM" "" "pi-llm" "0/3"
+    echo "SOCX Pi LLM export missing: $OUT" >&2
+    exit 1
+fi
+
+if [ -z "$POST_URL" ]; then
+    write_cache "off" "INFO" "" "Pi LLM bridge disabled; SOCX_PI_LLM_POST_URL is empty" "" "pi-llm" "0/3"
+    echo "$OUT"
+    exit 0
+fi
+
+if ! command -v curl >/dev/null 2>&1; then
+    write_cache "error" "WARN" "" "curl missing on pfSense; cannot post to Pi LLM" "" "pi-llm" "0/3"
+    echo "curl not installed; copy $OUT to the Pi or install curl" >&2
+    exit 1
+fi
+
+resp="$(curl -fsS --max-time "$TIMEOUT" -X POST -H 'Content-Type: application/json' --data-binary "@$OUT" "$POST_URL" 2>/tmp/socx-pi-llm-curl.err)"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+    err="$(cat /tmp/socx-pi-llm-curl.err 2>/dev/null | tr '\n' ' ' | cut -c1-180)"
+    write_cache "error" "WARN" "" "Pi LLM unreachable: ${err:-curl exit $rc}" "" "pi-llm" "0/3"
+    echo "SOCX Pi LLM post failed: ${err:-curl exit $rc}" >&2
+    exit "$rc"
+fi
+
+printf '%s\n' "$resp"
+severity="$(printf '%s' "$resp" | sed -n 's/.*"severity"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+confidence="$(printf '%s' "$resp" | sed -n 's/.*"confidence"[[:space:]]*:[[:space:]]*\([0-9.][0-9.]*\).*/\1/p' | head -1)"
+reason="$(printf '%s' "$resp" | sed -n 's/.*"reasons"[[:space:]]*:[[:space:]]*\["\([^"]*\)".*/\1/p' | head -1)"
+next="$(printf '%s' "$resp" | sed -n 's/.*"recommended_next_step"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+source="$(printf '%s' "$resp" | sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+roles="$(printf '%s' "$resp" | sed -n 's/.*"roles_online"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+
+write_cache "ok" "${severity:-INFO}" "${confidence:-}" "${reason:-Pi 3-LLM SOCX analysis received}" "${next:-}" "${source:-pi-3llm}" "${roles:-}"

@@ -10,6 +10,7 @@
 8086=influx
 8093=miranda
 8094=socweb
+8095=pi3llm
 11434=ollama
 8000=vllm
 8001=vllm

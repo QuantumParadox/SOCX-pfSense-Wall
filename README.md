@@ -106,6 +106,9 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-explain` - explains short labels such as `tls`, `dnsbl`, `nut`, `sysl`, `game`, and `unk`.
 - `scripts/socx-doctor` - live health check for wall, logs, VPN, Speedtest, UPS, reports, MIRANDA ingest, vnstatd, unknown-service noise, DNSBL review, IDS tuning, and slow-network triage.
 - `scripts/socx-miranda-bridge` - exports a compact JSON summary for MIRANDA or another local-AI/SOC collector.
+- `scripts/socx-pi-llm-bridge` - posts the compact SOCX summary to a Raspberry Pi 5 AI HAT+ 3-LLM orchestration endpoint and caches the verdict.
+- `scripts/socx-pi-llm-cron` - installs/removes the scheduled Pi 3-LLM export.
+- `pi/socx_pi_llm_orchestrator.py` - optional Raspberry Pi FastAPI receiver that fans SOCX evidence to three local model roles.
 - `scripts/iftopx`, `scripts/tcpdumpx`, `scripts/socx` - convenience launchers.
 - `scripts/socweb` - browser dashboard launcher.
 - `web/socx-web.py` - lightweight Python WebSocket/HTTP backend for the browser wall.
@@ -344,9 +347,40 @@ socx-miranda-bridge
 SOCX_MIRANDA_POST_URL=http://192.168.1.116:8093/api/socx/ingest socx-miranda-bridge
 socx-miranda-cron install
 socx-miranda-cron status
+socx pi-llm
+SOCX_PI_LLM_POST_URL=http://192.168.1.180:8095/api/socx/triage socx pi-llm
+socx-pi-llm-cron install
+socx-doctor pi-llm
 ```
 
 By default, this writes `/tmp/socx-miranda-export.json`. It only posts when `SOCX_MIRANDA_POST_URL` is set, so it is safe to use as a local export even before MIRANDA has an ingest endpoint. If MIRANDA is running on your LAN workstation, `socx-miranda-cron install` posts a compact SOCX summary to `/api/socx/ingest` every five minutes. Successful posts also write `/tmp/socx-miranda-analysis.env`, which the wall rotates into the NETWORK card as an `AI SOC` insight line.
+
+For a Raspberry Pi 5 AI HAT+ lab node, run the Pi receiver on the Pi and keep pfSense as the lightweight sender. The default pfSense target is `http://192.168.1.180:8095/api/socx/triage`; override it with `SOCX_PI_LLM_POST_URL` if your Pi uses a different IP.
+
+On the Pi:
+
+```sh
+sudo mkdir -p /opt/socx-pi-llm
+sudo cp pi/socx_pi_llm_orchestrator.py /opt/socx-pi-llm/
+sudo cp pi/socx-pi-llm.service /etc/systemd/system/
+python3 -m pip install fastapi uvicorn
+sudo systemctl daemon-reload
+sudo systemctl enable --now socx-pi-llm
+curl http://127.0.0.1:8095/health
+```
+
+The Pi receiver uses three roles: `triage`, `evidence`, and `action`. By default they call local Ollama-compatible `/api/generate` endpoints and can use small models such as `llama3.2:3b`, `qwen2.5:3b`, and `phi3:mini`. Override models or endpoints with:
+
+```sh
+SOCX_PI_LLM_TRIAGE_MODEL=llama3.2:3b
+SOCX_PI_LLM_EVIDENCE_MODEL=qwen2.5:3b
+SOCX_PI_LLM_ACTION_MODEL=phi3:mini
+SOCX_PI_LLM_TRIAGE_URL=http://127.0.0.1:11434/api/generate
+SOCX_PI_LLM_EVIDENCE_URL=http://127.0.0.1:11434/api/generate
+SOCX_PI_LLM_ACTION_URL=http://127.0.0.1:11434/api/generate
+```
+
+When the Pi answers, SOCX writes `/tmp/socx-pi-llm-analysis.env` and rotates wall events such as `PI 3LLM analysis roles 3/3 | routine IDS watch lines`. If the Pi is offline, pfSense keeps running normally and shows the Pi layer as waiting or unreachable instead of blocking the wall.
 
 SOCX separates routine Suricata stream chatter from high-signal IDS/IPS alerts. Routine TCP stream notices become `IDS INFO`/watch signals; malware, C2, exploit, IPS block/drop, priority-1, and scan-style alerts remain high-severity.
 
