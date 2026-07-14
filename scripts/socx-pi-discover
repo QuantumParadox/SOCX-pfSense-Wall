@@ -1,0 +1,140 @@
+#!/bin/sh
+set -u
+
+CACHE="${SOCX_PI_DISCOVERY_CACHE:-/tmp/socx-pi-discovery.env}"
+PORT="${SOCX_PI_LLM_PORT:-8095}"
+OLLAMA_PORT="${SOCX_PI_OLLAMA_PORT:-11434}"
+HINTS="${SOCX_PI_HOST_HINTS:-raspberrypi.local pi.local socx-pi.local ai-pi.local}"
+FALLBACK_IPS="${SOCX_PI_FALLBACK_IPS:-192.168.1.180 192.168.1.121}"
+TIMEOUT="${SOCX_PI_DISCOVERY_TIMEOUT:-1}"
+
+write_cache() {
+    status="$1"
+    ip="$2"
+    source="$3"
+    service="$4"
+    note="$5"
+    {
+        echo "updated=$(date +%s)"
+        echo "status=$status"
+        echo "ip=$ip"
+        echo "source=$source"
+        echo "service=$service"
+        echo "pi_llm_url=http://$ip:$PORT/api/socx/triage"
+        echo "ollama_url=http://$ip:$OLLAMA_PORT"
+        echo "note=$(printf '%s' "$note" | sed 's/[;&|`$<>]//g' | cut -c1-180)"
+    } > "$CACHE"
+}
+
+add_candidate() {
+    value="$(printf '%s' "$1" | tr -d '[](),')"
+    source="$2"
+    [ -n "$value" ] || return
+    case "$value" in
+        0.0.0.0|127.*|169.254.*|255.*) return ;;
+    esac
+    printf '%s %s\n' "$value" "$source" >> "$tmp"
+}
+
+probe_tcp() {
+    host="$1"
+    port="$2"
+    if command -v nc >/dev/null 2>&1; then
+        nc -z -w "$TIMEOUT" "$host" "$port" >/dev/null 2>&1
+        return $?
+    fi
+    return 1
+}
+
+probe_http() {
+    host="$1"
+    path="$2"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsS --max-time "$TIMEOUT" "http://$host:$PORT$path" >/dev/null 2>&1
+        return $?
+    fi
+    probe_tcp "$host" "$PORT"
+}
+
+tmp="/tmp/socx-pi-candidates.$$"
+: > "$tmp"
+
+for host in $HINTS; do
+    add_candidate "$host" "hint"
+done
+
+for name in raspberrypi pi socx-pi ai-pi; do
+    ip="$(getent hosts "$name.local" 2>/dev/null | awk '{print $1; exit}' || true)"
+    [ -n "$ip" ] && add_candidate "$ip" "mdns:$name.local"
+done
+
+lease_file="/var/dhcpd/var/db/dhcpd.leases"
+if [ -f "$lease_file" ]; then
+    awk '
+      /^lease / {ip=$2; gsub(/[{}]/, "", ip)}
+      /hardware ethernet/ {mac=tolower($3); gsub(/;/, "", mac)}
+      /client-hostname/ {host=tolower($2); gsub(/[";]/, "", host)}
+      /^}/ {
+        if (ip != "" && (host ~ /(rasp|pi|socx|ai|ollama|llm)/ || mac ~ /^(b8:27:eb|dc:a6:32|e4:5f:01|d8:3a:dd|2c:cf:67)/)) {
+          print ip " dhcp:" (host != "" ? host : mac)
+        }
+        ip=""; mac=""; host=""
+      }
+    ' "$lease_file" >> "$tmp" 2>/dev/null || true
+fi
+
+arp -an 2>/dev/null | awk '
+  tolower($0) ~ /(b8:27:eb|dc:a6:32|e4:5f:01|d8:3a:dd|2c:cf:67)/ {
+    ip=$2; gsub(/[()]/, "", ip); mac=tolower($4); print ip " arp:" mac
+  }
+' >> "$tmp" || true
+
+for host in $FALLBACK_IPS; do
+    add_candidate "$host" "fallback"
+done
+
+seen="/tmp/socx-pi-seen.$$"
+: > "$seen"
+best_ip=""
+best_source=""
+best_service=""
+while read -r ip source; do
+    [ -n "$ip" ] || continue
+    if grep -qx "$ip" "$seen" 2>/dev/null; then
+        continue
+    fi
+    echo "$ip" >> "$seen"
+    if probe_http "$ip" "/health"; then
+        write_cache "ok" "$ip" "$source" "pi-3llm" "SOCX Pi 3-LLM endpoint reachable"
+        echo "SOCX Pi discovered: $ip:$PORT via $source (3LLM)"
+        rm -f "$tmp" "$seen"
+        exit 0
+    fi
+    if probe_tcp "$ip" "$PORT"; then
+        write_cache "ok" "$ip" "$source" "pi-3llm" "SOCX Pi 3-LLM TCP port reachable"
+        echo "SOCX Pi discovered: $ip:$PORT via $source (3LLM TCP)"
+        rm -f "$tmp" "$seen"
+        exit 0
+    fi
+    if probe_tcp "$ip" "$OLLAMA_PORT"; then
+        best_ip="$ip"
+        best_source="$source"
+        best_service="ollama"
+    elif [ -z "$best_ip" ] && probe_tcp "$ip" 22; then
+        best_ip="$ip"
+        best_source="$source"
+        best_service="ssh"
+    fi
+done < "$tmp"
+
+if [ -n "$best_ip" ]; then
+    write_cache "found-no-llm" "$best_ip" "$best_source" "$best_service" "Pi candidate found, but SOCX 3-LLM port $PORT is not up"
+    echo "SOCX Pi candidate: $best_ip via $best_source ($best_service); 3LLM port $PORT not up"
+    rm -f "$tmp" "$seen"
+    exit 2
+fi
+
+write_cache "missing" "" "scan" "" "No Raspberry Pi candidate found"
+echo "SOCX Pi not found"
+rm -f "$tmp" "$seen"
+exit 1

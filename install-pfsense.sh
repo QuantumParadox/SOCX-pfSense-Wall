@@ -25,6 +25,7 @@ install -m 0755 "$ROOT/scripts/socx-miranda-bridge" /usr/local/bin/socx-miranda-
 install -m 0755 "$ROOT/scripts/socx-miranda-cron" /usr/local/bin/socx-miranda-cron
 install -m 0755 "$ROOT/scripts/socx-pi-llm-bridge" /usr/local/bin/socx-pi-llm-bridge
 install -m 0755 "$ROOT/scripts/socx-pi-llm-cron" /usr/local/bin/socx-pi-llm-cron
+install -m 0755 "$ROOT/scripts/socx-pi-discover" /usr/local/bin/socx-pi-discover
 install -m 0755 "$ROOT/scripts/socx-iftop-color" /usr/local/sbin/socx-iftop-color
 install -m 0755 "$ROOT/scripts/socx-tcpdump-color" /usr/local/sbin/socx-tcpdump-color
 install -m 0755 "$ROOT/scripts/socx_iftop_color.pl" /usr/local/sbin/socx_iftop_color.pl

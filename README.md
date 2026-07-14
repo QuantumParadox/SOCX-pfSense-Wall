@@ -348,6 +348,7 @@ SOCX_MIRANDA_POST_URL=http://192.168.1.116:8093/api/socx/ingest socx-miranda-bri
 socx-miranda-cron install
 socx-miranda-cron status
 socx pi-llm
+socx pi-discover
 SOCX_PI_LLM_POST_URL=http://192.168.1.180:8095/api/socx/triage socx pi-llm
 socx-pi-llm-cron install
 socx-doctor pi-llm
@@ -355,7 +356,17 @@ socx-doctor pi-llm
 
 By default, this writes `/tmp/socx-miranda-export.json`. It only posts when `SOCX_MIRANDA_POST_URL` is set, so it is safe to use as a local export even before MIRANDA has an ingest endpoint. If MIRANDA is running on your LAN workstation, `socx-miranda-cron install` posts a compact SOCX summary to `/api/socx/ingest` every five minutes. Successful posts also write `/tmp/socx-miranda-analysis.env`, which the wall rotates into the NETWORK card as an `AI SOC` insight line.
 
-For a Raspberry Pi 5 AI HAT+ lab node, run the Pi receiver on the Pi and keep pfSense as the lightweight sender. The default pfSense target is `http://192.168.1.180:8095/api/socx/triage`; override it with `SOCX_PI_LLM_POST_URL` if your Pi uses a different IP.
+For a Raspberry Pi 5 AI HAT+ lab node, run the Pi receiver on the Pi and keep pfSense as the lightweight sender. SOCX can autoscan for the Pi if its DHCP address changes. `socx pi-discover` checks host hints, common `.local` names, DHCP leases, ARP entries with Raspberry Pi MAC OUIs, SSH, Ollama `11434`, and the SOCX Pi 3-LLM service on `8095`. It writes `/tmp/socx-pi-discovery.env`; `socx pi-llm` uses that cache automatically when `SOCX_PI_LLM_POST_URL` is not set. Override with `SOCX_PI_LLM_POST_URL` only when you want a fixed target.
+
+Pi discovery knobs:
+
+```sh
+SOCX_PI_HOST_HINTS='raspberrypi.local pi.local 192.168.1.180'
+SOCX_PI_FALLBACK_IPS='192.168.1.180 192.168.1.121'
+SOCX_PI_LLM_PORT=8095
+SOCX_PI_OLLAMA_PORT=11434
+SOCX_PI_DISCOVERY_CACHE=/tmp/socx-pi-discovery.env
+```
 
 On the Pi:
 

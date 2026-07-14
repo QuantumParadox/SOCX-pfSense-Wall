@@ -3,7 +3,7 @@ set -eu
 
 ACTION="${1:-install}"
 CRON_FILE="${SOCX_PI_LLM_CRON_FILE:-/etc/cron.d/socx-pi-llm}"
-POST_URL="${SOCX_PI_LLM_POST_URL:-http://192.168.1.180:8095/api/socx/triage}"
+POST_URL="${SOCX_PI_LLM_POST_URL:-}"
 INTERVAL="${SOCX_PI_LLM_INTERVAL_MINUTES:-5}"
 
 case "$ACTION" in
@@ -15,6 +15,7 @@ SHELL=/bin/sh
 PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
 
 */$INTERVAL * * * * root SOCX_PI_LLM_POST_URL=$POST_URL /usr/local/bin/socx-pi-llm-bridge >/dev/null 2>&1
+*/$INTERVAL * * * * root /usr/local/bin/socx-pi-discover >/dev/null 2>&1
 EOF
         chmod 0644 "$CRON_FILE"
         echo "SOCX Pi LLM cron installed: $CRON_FILE"

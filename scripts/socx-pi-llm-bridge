@@ -2,9 +2,19 @@
 set -u
 
 OUT="${SOCX_PI_LLM_EXPORT:-/tmp/socx-pi-llm-export.json}"
-POST_URL="${SOCX_PI_LLM_POST_URL:-http://192.168.1.180:8095/api/socx/triage}"
+DISCOVERY_CACHE="${SOCX_PI_DISCOVERY_CACHE:-/tmp/socx-pi-discovery.env}"
+POST_URL="${SOCX_PI_LLM_POST_URL:-}"
 ANALYSIS_CACHE="${SOCX_PI_LLM_ANALYSIS_CACHE:-/tmp/socx-pi-llm-analysis.env}"
 TIMEOUT="${SOCX_PI_LLM_TIMEOUT:-12}"
+
+discover_pi_url() {
+    if command -v socx-pi-discover >/dev/null 2>&1; then
+        socx-pi-discover >/tmp/socx-pi-discover.out 2>/tmp/socx-pi-discover.err || true
+    fi
+    if [ -f "$DISCOVERY_CACHE" ]; then
+        sed -n 's/^pi_llm_url=//p' "$DISCOVERY_CACHE" | tail -1
+    fi
+}
 
 write_cache() {
     status="$1"
@@ -38,9 +48,13 @@ if [ ! -s "$OUT" ]; then
 fi
 
 if [ -z "$POST_URL" ]; then
-    write_cache "off" "INFO" "" "Pi LLM bridge disabled; SOCX_PI_LLM_POST_URL is empty" "" "pi-llm" "0/3"
+    POST_URL="$(discover_pi_url)"
+fi
+
+if [ -z "$POST_URL" ]; then
+    write_cache "error" "WARN" "" "Pi LLM bridge cannot find Raspberry Pi; run socx-pi-discover" "" "pi-llm" "0/3"
     echo "$OUT"
-    exit 0
+    exit 1
 fi
 
 if ! command -v curl >/dev/null 2>&1; then

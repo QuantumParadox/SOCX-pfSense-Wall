@@ -371,7 +371,30 @@ doctor_pi_llm() {
     header "pi llm"
     cron="${SOCX_PI_LLM_CRON_FILE:-/etc/cron.d/socx-pi-llm}"
     cache="${SOCX_PI_LLM_ANALYSIS_CACHE:-/tmp/socx-pi-llm-analysis.env}"
-    url="${SOCX_PI_LLM_POST_URL:-http://192.168.1.180:8095/api/socx/triage}"
+    discovery="${SOCX_PI_DISCOVERY_CACHE:-/tmp/socx-pi-discovery.env}"
+    url="${SOCX_PI_LLM_POST_URL:-}"
+    if command -v socx-pi-discover >/dev/null 2>&1; then
+        socx-pi-discover | sed 's/^/      /'
+    else
+        mark WARN "socx-pi-discover command missing"
+    fi
+    if [ -f "$discovery" ]; then
+        dip="$(sed -n 's/^ip=//p' "$discovery" | tail -1)"
+        dstatus="$(sed -n 's/^status=//p' "$discovery" | tail -1)"
+        dsource="$(sed -n 's/^source=//p' "$discovery" | tail -1)"
+        dservice="$(sed -n 's/^service=//p' "$discovery" | tail -1)"
+        durl="$(sed -n 's/^pi_llm_url=//p' "$discovery" | tail -1)"
+        dage="$(age_file "$discovery")"
+        case "$dstatus" in
+            ok) mark OK "Pi discovery ip=${dip:-?} source=${dsource:-?} service=${dservice:-?} age=${dage:-?}s" ;;
+            found-no-llm) mark WARN "Pi candidate ip=${dip:-?} source=${dsource:-?} service=${dservice:-?}; 3-LLM service not listening" ;;
+            *) mark WARN "Pi discovery status=${dstatus:-unknown} age=${dage:-?}s" ;;
+        esac
+        [ -n "$url" ] || url="$durl"
+    else
+        mark WARN "Pi discovery cache missing"
+    fi
+    [ -n "$url" ] || url="http://192.168.1.180:8095/api/socx/triage"
     if [ -f "$cron" ]; then
         mark OK "Pi LLM cron installed: $cron"
         sed 's/^/      /' "$cron"
@@ -434,6 +457,15 @@ doctor_all() {
         mark WARN "MIRANDA insight cache missing; run socx-miranda-bridge or wait for cron"
     fi
     [ -f /etc/cron.d/socx-pi-llm ] && mark OK "Pi 3-LLM export cron installed" || mark WARN "Pi 3-LLM export cron missing"
+    if [ -f /tmp/socx-pi-discovery.env ]; then
+        dstatus="$(sed -n 's/^status=//p' /tmp/socx-pi-discovery.env | tail -1)"
+        dip="$(sed -n 's/^ip=//p' /tmp/socx-pi-discovery.env | tail -1)"
+        dservice="$(sed -n 's/^service=//p' /tmp/socx-pi-discovery.env | tail -1)"
+        dage="$(age_file /tmp/socx-pi-discovery.env)"
+        [ "$dstatus" = "ok" ] && mark OK "Pi discovery found ${dip:-?} ${dservice:-?}, age ${dage:-?}s" || mark WARN "Pi discovery status=${dstatus:-unknown} ip=${dip:-?} service=${dservice:-?}, age ${dage:-?}s"
+    else
+        mark WARN "Pi discovery cache missing"
+    fi
     if [ -f /tmp/socx-pi-llm-analysis.env ]; then
         status="$(sed -n 's/^status=//p' /tmp/socx-pi-llm-analysis.env | tail -1)"
         sev="$(sed -n 's/^severity=//p' /tmp/socx-pi-llm-analysis.env | tail -1)"
