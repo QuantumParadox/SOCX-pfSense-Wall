@@ -266,6 +266,7 @@ async def stream() -> StreamingResponse:
             data = dict(LATEST_ANALYSIS)
             data["events"] = EVENTS[-30:]
             data["age_seconds"] = int(time.time() - float(data["updated"] or time.time()))
+            data["ollama"] = await check_ollama_tags()
             yield f"data: {json.dumps(data, separators=(',', ':'))}\n\n"
             await asyncio.sleep(1)
 
@@ -311,13 +312,15 @@ DASHBOARD_HTML = r"""<!doctype html>
 .top{display:grid;grid-template-columns:1fr auto;align-items:center;border:1px solid #1cfff355;background:linear-gradient(90deg,#071215,#0b1218);box-shadow:0 0 22px #1cfff322;padding:8px 12px}
 .brand{font-weight:800;letter-spacing:.08em;color:var(--cyan);font-size:18px}.status{display:flex;gap:14px;align-items:center;font-weight:800}.pill{padding:3px 8px;border:1px solid #ffffff22;background:#ffffff08}.ok{color:var(--green)}.warn{color:var(--yellow)}.bad{color:var(--red)}.mag{color:var(--mag)}.muted{color:var(--muted)}
 .main{display:grid;grid-template-columns:minmax(360px,1.1fr) minmax(420px,1.4fr) minmax(360px,1.1fr);gap:10px;min-height:0}
-.panel{border:1px solid #1cfff355;background:linear-gradient(180deg,#071116dd,#05090ddd);box-shadow:inset 0 0 22px #1cfff310,0 0 18px #1cfff314;min-height:0;padding:12px;overflow:hidden}
+.panel{border:1px solid #1cfff355;background:linear-gradient(180deg,#071116dd,#05090ddd);box-shadow:inset 0 0 22px #1cfff310,0 0 18px #1cfff314;min-height:0;padding:12px;overflow:auto}
 h2{margin:0 0 8px;color:var(--cyan);font-size:15px;letter-spacing:.08em}.metric{display:grid;grid-template-columns:140px 1fr;gap:8px;margin:6px 0;color:var(--muted)}.metric b{color:var(--ink)}
 .role{display:grid;grid-template-columns:88px 1fr;gap:10px;border-top:1px solid #ffffff17;padding:10px 0}.role:first-of-type{border-top:0}.role-name{font-weight:900;color:var(--blue);text-transform:uppercase}.role.ok .role-name{color:var(--green)}.role.fail .role-name{color:var(--red)}.role-text{font-size:14px;line-height:1.32;white-space:normal}.role-meta{font-size:12px;color:var(--muted);margin-top:4px}
 .viz{position:relative;height:100%;min-height:360px;overflow:hidden}.viz canvas{position:absolute;inset:0;width:100%;height:100%}.core{position:absolute;left:50%;top:50%;width:132px;height:132px;margin:-66px;border:2px solid var(--cyan);border-radius:50%;display:grid;place-items:center;text-align:center;font-weight:900;color:var(--cyan);box-shadow:0 0 36px #49fff466, inset 0 0 24px #49fff41e;animation:pulse 2.2s infinite}
+.vizhud{position:absolute;left:12px;right:12px;bottom:12px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px;pointer-events:none}.vizstat{border:1px solid #ffffff22;background:#02080caa;padding:7px 8px;font:700 12px ui-monospace,Consolas,monospace;color:var(--muted)}.vizstat b{display:block;color:var(--ink);font-size:16px;margin-top:2px}
 @keyframes pulse{50%{transform:scale(1.045);box-shadow:0 0 54px #49fff488,inset 0 0 34px #49fff433}}
 .feed{display:grid;grid-template-columns:1fr 1fr;gap:10px;min-height:0}.events{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:14px;line-height:1.45;overflow:hidden}.event{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.json{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;color:#d8fbff;overflow:hidden;white-space:pre-wrap}
 .bar{height:9px;background:#ffffff16;margin-top:6px;overflow:hidden}.bar span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--green))}
+.model-grid,.summary-grid{display:grid;gap:8px}.model-card,.summary-card{border:1px solid #ffffff1f;background:#ffffff08;padding:8px 10px}.model-card{display:grid;grid-template-columns:92px 1fr auto;gap:8px;align-items:center}.model-role{font-weight:900;text-transform:uppercase;color:var(--cyan)}.model-name{font-weight:800}.summary-grid{grid-template-columns:1fr 1fr}.summary-card span{display:block;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em}.summary-card b{display:block;color:var(--ink);font-size:20px;margin-top:2px}.plain{font-size:14px;line-height:1.45;color:var(--ink)}
 @media(max-width:1100px){.main{grid-template-columns:1fr}.shell{overflow:auto;height:auto}.viz{height:360px}.feed{grid-template-columns:1fr}body{overflow:auto}}
 </style>
 </head>
@@ -343,19 +346,25 @@ h2{margin:0 0 8px;color:var(--cyan);font-size:15px;letter-spacing:.08em}.metric{
     <section class="panel viz">
       <canvas id="space"></canvas>
       <div class="core"><div>SOCX<br>PI<br><span id="coreRoles">0/3</span></div></div>
+      <div class="vizhud">
+        <div class="vizstat">FW BLOCKS<b id="vizFw">0</b></div>
+        <div class="vizstat">DNSBL<b id="vizDns">0</b></div>
+        <div class="vizstat">IDS WATCH<b id="vizIds">0</b></div>
+        <div class="vizstat">ROLES<b id="vizRoles">0/3</b></div>
+      </div>
     </section>
     <section class="panel">
       <h2>Recommended Next Step</h2>
       <div id="next" class="role-text">waiting for pfSense evidence</div>
       <h2 style="margin-top:18px">Model Health</h2>
-      <div id="models" class="json"></div>
+      <div id="models" class="model-grid"></div>
       <h2 style="margin-top:18px">Latest Reasons</h2>
       <div id="reasons" class="events"></div>
     </section>
   </main>
   <footer class="feed">
     <section class="panel events"><h2>Live Events</h2><div id="events"></div></section>
-    <section class="panel json"><h2>Payload Summary</h2><div id="payload"></div></section>
+    <section class="panel"><h2>Payload Summary</h2><div id="payload" class="summary-grid"></div></section>
   </footer>
 </div>
 <script>
@@ -363,6 +372,9 @@ const $=id=>document.getElementById(id);
 const colors={INFO:'#49fff4',WARN:'#ffe35b',ERROR:'#ff5e78',CRITICAL:'#ff5e78'};
 let state={roles_online:'0/3',severity:'INFO',role_results:{}};
 function cls(sev){return sev==='INFO'||sev==='OK'?'ok':(sev==='WARN'?'warn':'bad')}
+function fmt(n){n=Number(n||0);return n>=1000?(n/1000).toFixed(n>=10000?0:1)+'K':String(n)}
+function ms(v){v=Number(v||0);return v>=1000?(v/1000).toFixed(1)+'s':v+'ms'}
+function healthWord(x){return x?'online':'offline'}
 function render(d){
   state=d; $('clock').textContent=new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
   $('svc').textContent=(d.status||'waiting').toUpperCase(); $('svc').className='pill '+(d.status==='ok'?'ok':d.status==='degraded'?'warn':'muted');
@@ -370,22 +382,24 @@ function render(d){
   $('coreRoles').textContent=d.roles_online||'0/3'; $('ollama').textContent=d.ollama&&d.ollama.ok?'OLLAMA '+d.ollama.model_count:'OLLAMA OFF'; $('ollama').className='pill '+(d.ollama&&d.ollama.ok?'ok':'bad');
   $('age').textContent='age '+(d.age_seconds??0)+'s'; $('severity').textContent=d.severity||'INFO'; $('severity').style.color=colors[d.severity]||colors.INFO;
   $('confidence').textContent=Math.round((d.confidence||0)*100)+'%'; $('confbar').style.width=Math.max(0,Math.min(100,(d.confidence||0)*100))+'%';
-  $('elapsed').textContent=(d.elapsed_ms||0)+'ms'; $('evidence').textContent=(d.payload_summary?Object.keys(d.payload_summary).length:0)+' summary fields';
+  $('elapsed').textContent=ms(d.elapsed_ms||0); $('evidence').textContent=(d.payload_summary?Object.keys(d.payload_summary).length:0)+' signal groups';
   $('next').textContent=d.recommended_next_step||'waiting';
   const roles=d.role_results||{}; $('rolebox').innerHTML=['triage','evidence','action'].map(r=>{const x=roles[r]||{};return `<div class="role ${x.ok?'ok':'fail'}"><div class="role-name">${r}</div><div><div class="role-text">${esc(x.summary||x.error||'waiting for role output')}</div><div class="role-meta">${esc(x.model||'model?')} ${x.ok?'online':'offline'} ${x.error?' | '+esc(x.error):''}</div></div></div>`}).join('');
-  $('models').textContent=JSON.stringify({models:d.models,ollama:d.ollama}, null, 2);
+  const models=d.models||{}; const ollama=d.ollama||{}; $('models').innerHTML=['triage','evidence','action'].map(r=>{const x=roles[r]||{};const ok=!!x.ok;return `<div class="model-card"><div class="model-role">${r}</div><div><div class="model-name">${esc(models[r]||x.model||'not set')}</div><div class="muted">${ok?'last role completed':'waiting or timed out'}</div></div><b class="${ok?'ok':'warn'}">${healthWord(ok)}</b></div>`}).join('')+`<div class="model-card"><div class="model-role">ollama</div><div><div class="model-name">${ollama.ok?fmt(ollama.model_count)+' local models':'not reachable'}</div><div class="muted">${esc((ollama.models||[]).slice(0,3).join(', ')||ollama.error||'local model server')}</div></div><b class="${ollama.ok?'ok':'bad'}">${ollama.ok?'online':'offline'}</b></div>`;
   $('reasons').innerHTML=(d.reasons||[]).map(r=>`<div class="event">${esc(r)}</div>`).join('');
   $('events').innerHTML=(d.events||[]).slice(-8).reverse().map(e=>`<div class="event"><span class="${cls(e.severity)}">[${esc(e.kind)}]</span> ${esc(e.message)}</div>`).join('');
-  $('payload').textContent=JSON.stringify(d.payload_summary||{}, null, 2);
+  const p=d.payload_summary||{}; const cards=[['Firewall blocks',p.firewall_blocks_sampled,'blocked samples'],['DNSBL hits',p.dnsbl_lines_sampled,'DNS blocks'],['IDS watch',p.ids_watch_sampled,'routine alerts'],['High IDS',p.ids_high_sampled,'urgent alerts'],['IDS lines',p.ids_alert_lines_sampled,'sample size']]; $('payload').innerHTML=cards.map(([k,v,s])=>`<div class="summary-card"><span>${esc(k)}</span><b>${fmt(v)}</b><small class="muted">${esc(s)}</small></div>`).join('');
+  $('vizFw').textContent=fmt(p.firewall_blocks_sampled); $('vizDns').textContent=fmt(p.dnsbl_lines_sampled); $('vizIds').textContent=fmt(p.ids_watch_sampled); $('vizRoles').textContent=d.roles_online||'0/3';
 }
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 async function poll(){try{render(await (await fetch('/api/socx/latest',{cache:'no-store'})).json())}catch(e){}}
 if(window.EventSource){const es=new EventSource('/api/socx/stream');es.onmessage=e=>{try{render(JSON.parse(e.data))}catch(_){}};es.onerror=poll}else setInterval(poll,1000); poll();
 const c=$('space'),ctx=c.getContext('2d');let t=0;
 function resize(){c.width=c.clientWidth*devicePixelRatio;c.height=c.clientHeight*devicePixelRatio}addEventListener('resize',resize);resize();
-function draw(){t+=0.012;ctx.clearRect(0,0,c.width,c.height);const w=c.width,h=c.height,cx=w/2,cy=h/2;const roles=['triage','evidence','action'];const online=(state.roles_online||'0/3').split('/')[0]*1;
- for(let i=0;i<90;i++){const z=((i*37+t*120)%100)/100;const a=i*2.399+t;const r=(80+z*380)*devicePixelRatio;ctx.fillStyle=`rgba(73,255,244,${0.05+z*0.22})`;ctx.fillRect(cx+Math.cos(a)*r,cy+Math.sin(a)*r*.55,2+z*3,2+z*3)}
- roles.forEach((r,i)=>{const a=t*1.8+i*Math.PI*2/3;const x=cx+Math.cos(a)*w*.28,y=cy+Math.sin(a)*h*.22;ctx.strokeStyle=i<online?'#66ff7c':'#ff5e78';ctx.lineWidth=2*devicePixelRatio;ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(x,y);ctx.stroke();ctx.fillStyle=i<online?'#66ff7c':'#ff5e78';ctx.beginPath();ctx.arc(x,y,14*devicePixelRatio,0,Math.PI*2);ctx.fill();ctx.fillStyle='#e8fbff';ctx.font=`${12*devicePixelRatio}px monospace`;ctx.fillText(r.toUpperCase(),x+18*devicePixelRatio,y+4*devicePixelRatio)})
+function draw(){t+=0.014;ctx.clearRect(0,0,c.width,c.height);const w=c.width,h=c.height,cx=w/2,cy=h/2;const roles=['triage','evidence','action'];const online=(state.roles_online||'0/3').split('/')[0]*1;const p=state.payload_summary||{};const fw=Math.min(1,(p.firewall_blocks_sampled||0)/2000),dns=Math.min(1,(p.dnsbl_lines_sampled||0)/2000),ids=Math.min(1,(p.ids_watch_sampled||0)/300);const energy=.45+fw*.25+dns*.2+ids*.15;
+ ctx.save();ctx.translate(cx,cy);for(let ring=0;ring<4;ring++){ctx.strokeStyle=`rgba(${ring%2?102:73},255,${ring%2?124:244},${0.16+ring*.05})`;ctx.lineWidth=(1+ring*.35)*devicePixelRatio;ctx.beginPath();const rx=(78+ring*38+Math.sin(t*3+ring)*8)*devicePixelRatio,ry=rx*(.48+ring*.045);for(let a=0;a<=Math.PI*2+.05;a+=.06){const twist=a+t*(ring%2?-1:1);const x=Math.cos(twist)*rx,y=Math.sin(twist)*ry;if(a===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)}ctx.stroke()}ctx.restore();
+ for(let i=0;i<150;i++){const z=((i*37+t*(90+energy*150))%100)/100;const a=i*2.399+t*(.8+energy);const r=(40+z*(260+fw*240))*devicePixelRatio;const hue=i%3===0?'255,227,91':i%3===1?'73,255,244':'102,255,124';ctx.fillStyle=`rgba(${hue},${0.035+z*0.22})`;ctx.fillRect(cx+Math.cos(a)*r,cy+Math.sin(a)*r*.55,1+z*3,1+z*3)}
+ roles.forEach((r,i)=>{const a=t*(1.1+energy)+i*Math.PI*2/3;const radius=w*(.21+.05*Math.sin(t+i));const x=cx+Math.cos(a)*radius,y=cy+Math.sin(a)*h*.22;ctx.strokeStyle=i<online?'#66ff7c':'#ff5e78';ctx.lineWidth=(2+energy*2)*devicePixelRatio;ctx.shadowColor=ctx.strokeStyle;ctx.shadowBlur=18*devicePixelRatio;ctx.beginPath();ctx.moveTo(cx,cy);ctx.bezierCurveTo(cx+Math.cos(a-.6)*90,cy+Math.sin(a-.6)*60,x-Math.cos(a)*40,y-Math.sin(a)*20,x,y);ctx.stroke();ctx.shadowBlur=0;ctx.fillStyle=i<online?'#66ff7c':'#ff5e78';ctx.beginPath();ctx.arc(x,y,(13+energy*5)*devicePixelRatio,0,Math.PI*2);ctx.fill();ctx.fillStyle='#e8fbff';ctx.font=`${12*devicePixelRatio}px monospace`;ctx.fillText(r.toUpperCase(),x+18*devicePixelRatio,y+4*devicePixelRatio)})
  requestAnimationFrame(draw)}draw();
 </script>
 </body></html>"""
