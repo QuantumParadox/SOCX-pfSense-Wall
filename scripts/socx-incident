@@ -2,14 +2,27 @@
 set -eu
 
 CAPTURE="${SOCX_INCIDENT_CAPTURE:-/usr/local/sbin/socx-incident-capture}"
+mode="${1:-full}"
 
 if [ ! -x "$CAPTURE" ]; then
     echo "SOCX incident capture tool not found: $CAPTURE" >&2
     exit 1
 fi
 
-echo "SOCX incident capture starting..."
-"$CAPTURE"
+case "$mode" in
+    quick)
+        echo "SOCX quick incident capture starting..."
+        SOCX_INCIDENT_PCAP_SECONDS="${SOCX_INCIDENT_PCAP_SECONDS:-3}" "$CAPTURE"
+        ;;
+    full|"")
+        echo "SOCX incident capture starting..."
+        "$CAPTURE"
+        ;;
+    *)
+        echo "Usage: socx-incident [quick|full]" >&2
+        exit 2
+        ;;
+esac
 
 latest="$(ls -1t /root/socx-incidents/incident-*.tgz 2>/dev/null | head -1 || true)"
 if [ -n "$latest" ]; then

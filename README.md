@@ -61,7 +61,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Runs wall mode inside a restart loop and logs renderer errors to `/tmp/socx-wall.err`.
 - Keeps wall mode full-screen. Operator commands live in the `COMMANDX` tmux window or popup shortcuts, so adding command access does not cut off the SOCX wall.
 - Adds an incident capture command that saves pf states, gateway/VPN state, recent logs, Packet Radar, checksums, and a short pcap into `/root/socx-incidents/`.
-- Adds `socx-incident`, a short operator command that runs the capture and prints the newest bundle path plus a quick manifest.
+- Adds `socx-incident`, a short operator command that runs the capture and prints the newest bundle path plus a quick manifest. `socx incident quick` captures the same core evidence with a shorter packet sample.
 - Adds `socx-report`, `socx-report-cron`, `socx-hosts-audit`, `socx-explain`, and `socx-miranda-bridge` for scheduled reports, device naming, label explanations, and MIRANDA/local-AI export.
 - Can surface LLDP and Service Watchdog health in the rotating Event Feed when those pfSense packages are configured.
 - Adds a rotating SOCX health score based on WAN, VPN, UPS, RAM, CPU, Speedtest freshness, IDS, DNSBL, and firewall scan pressure.
@@ -104,7 +104,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-report-cron` - installs/removes a daily SOCX report cron entry with report retention cleanup.
 - `scripts/socx-hosts-audit` - builds a known/unknown LAN device list from host config, ARP, DHCP leases, and PF states.
 - `scripts/socx-explain` - explains short labels such as `tls`, `dnsbl`, `nut`, `sysl`, `game`, and `unk`.
-- `scripts/socx-doctor` - live health check for wall, logs, VPN, Speedtest, UPS, reports, MIRANDA ingest, vnstatd, and unknown-service noise.
+- `scripts/socx-doctor` - live health check for wall, logs, VPN, Speedtest, UPS, reports, MIRANDA ingest, vnstatd, unknown-service noise, DNSBL review, IDS tuning, and slow-network triage.
 - `scripts/socx-miranda-bridge` - exports a compact JSON summary for MIRANDA or another local-AI/SOC collector.
 - `scripts/iftopx`, `scripts/tcpdumpx`, `scripts/socx` - convenience launchers.
 - `scripts/socweb` - browser dashboard launcher.
@@ -259,10 +259,11 @@ Incident capture:
 
 ```sh
 socx-incident
+socx incident quick
 socx-incident-capture
 ```
 
-Use `socx-incident` during a suspicious event. It calls `socx-incident-capture`, then prints the newest `/root/socx-incidents/incident-*.tgz` bundle and a short list of included evidence. The tmux shortcut is `Prefix + i`.
+Use `socx-incident` during a suspicious event. It calls `socx-incident-capture`, then prints the newest `/root/socx-incidents/incident-*.tgz` bundle and a short list of included evidence. Use `socx incident quick` when you want the same bundle with a shorter packet sample. The tmux shortcut is `Prefix + i`.
 
 Friendly device names:
 
@@ -323,15 +324,18 @@ socx-report-cron status
 socx-doctor
 socx-doctor gateways
 socx-doctor dnsbl
+socx-doctor dnsbl-review
 socx-doctor ids
+socx tune ids
 socx-doctor vnstat
+socx-doctor why-slow
 socx-doctor logs
 socx-doctor why-blocked samsungcloudsolution.net
 ```
 
 Reports are written to `/root/socx-reports/` and include firewall blocks, DNSBL samples, IDS samples, VPN/gateway status, Speedtest cache, UPS cache, top PF states, Service Watchdog data, unknown ports, and a host audit.
 
-`socx-doctor` is the operator troubleshooting command. It checks the wall, VPN/dpinger gateway health, DNSBL false-positive candidates, Suricata routine-vs-high-signal noise, Traffic Totals/vnStat, log pressure, and targeted “why was this blocked?” lookups.
+`socx-doctor` is the operator troubleshooting command. It checks the wall, VPN/dpinger gateway health, DNSBL false-positive candidates, Suricata routine-vs-high-signal noise, Traffic Totals/vnStat, log pressure, and targeted “why was this blocked?” lookups. `socx-doctor why-slow` pulls together load, gateway loss, interface counters, Speedtest cache, and PF state samples. `socx tune ids` prints the repeated Suricata signatures that are safest to threshold or suppress after review.
 
 MIRANDA/local-AI bridge:
 

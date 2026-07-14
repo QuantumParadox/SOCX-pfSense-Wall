@@ -1,2 +1,31 @@
 #!/bin/sh
-exec sh /root/socxboard.sh
+
+case "${1:-}" in
+    "")
+        exec sh /root/socxboard.sh
+        ;;
+    doctor)
+        shift
+        exec /usr/local/bin/socx-doctor "$@"
+        ;;
+    tune)
+        shift
+        topic="${1:-}"
+        [ $# -gt 0 ] && shift
+        exec /usr/local/bin/socx-doctor "tune-$topic" "$@"
+        ;;
+    incident)
+        shift
+        exec /usr/local/bin/socx-incident "$@"
+        ;;
+    why-slow)
+        exec /usr/local/bin/socx-doctor why-slow
+        ;;
+    why|why-blocked)
+        shift
+        exec /usr/local/bin/socx-doctor why-blocked "$@"
+        ;;
+    *)
+        exec sh /root/socxboard.sh "$@"
+        ;;
+esac

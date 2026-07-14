@@ -114,27 +114,82 @@ doctor_dnsbl() {
         rm -f "$tmp"
         mark OK "no recent DNSBL log data"
         finish
+        return
     fi
     mark INFO "top blocked domains:"
     awk -F, '
-      NF >= 3 && $3 ~ /\./ {print $3; next}
-      {print}
+      $1 ~ /^DNSBL/ && NF >= 8 && $8 ~ /\./ {print $8; next}
+      $1 ~ /^DNSBL/ && NF >= 3 && $3 ~ /\./ {print $3; next}
     ' "$tmp" |
-        sed -n 's/.*\([A-Za-z0-9][A-Za-z0-9._-]*\.[A-Za-z][A-Za-z][A-Za-z0-9.-]*\).*/\1/p' |
+        sed 's/^\.//;s/\.$//' |
         tr '[:upper:]' '[:lower:]' |
-        awk 'length($0) > 5 && $0 !~ /^[a-z]\.[a-z][a-z]/ && $0 !~ /^[a-z]\.com$/ && $0 !~ /^[a-z]\.net$/ && $0 !~ /^[a-z]\.org$/ {print}' |
+        awk 'length($0) > 5 && $0 ~ /^[a-z0-9][a-z0-9._-]*\.[a-z][a-z0-9.-]*$/ && $0 !~ /^[a-z]\.[a-z][a-z]/ && $0 !~ /^[a-z]\.com$/ && $0 !~ /^[a-z]\.net$/ && $0 !~ /^[a-z]\.org$/ {print}' |
         sort | uniq -c | sort -nr | head -12 |
         while read -r c d; do
             fam="$(domain_family "$d")"
             printf '      %-5s %-12s %s\n' "$c" "$fam" "$d"
         done
-    fp="$(awk -F, 'NF >= 3 && $3 ~ /\./ {print $3; next} {print}' "$tmp" | grep -Eic 'microsoft|windowsupdate|office|xbox|netflix|hulu|disney|youtube|googlevideo|icloud|apple')"
+    fp="$(awk -F, '$1 ~ /^DNSBL/ && NF >= 8 && $8 ~ /\./ {print $8; next} $1 ~ /^DNSBL/ && NF >= 3 && $3 ~ /\./ {print $3; next}' "$tmp" | grep -Eic 'microsoft|windowsupdate|office|xbox|netflix|hulu|disney|youtube|googlevideo|icloud|apple')"
     if [ "$fp" -gt 0 ] 2>/dev/null; then
         mark WARN "$fp possible app/streaming/vendor blocks; check before whitelisting"
     else
         mark OK "no obvious Microsoft/streaming/vendor false-positive domains in sample"
     fi
     rm -f "$tmp"
+    finish
+}
+
+doctor_dnsbl_review() {
+    header "dnsbl review"
+    logs="/var/log/pfblockerng/dnsbl.log /var/log/pfblockerng/dns_reply.log"
+    tmp="/tmp/socx-doctor-dnsbl-review.$$"
+    domains="/tmp/socx-doctor-dnsbl-domains.$$"
+    : > "$tmp"
+    for f in $logs; do
+        [ -f "$f" ] && tail -2000 "$f" >> "$tmp"
+    done
+    if [ ! -s "$tmp" ]; then
+        rm -f "$tmp" "$domains"
+        mark OK "no recent DNSBL data to review"
+        finish
+        return
+    fi
+    awk -F, '
+      $1 ~ /^DNSBL/ && NF >= 8 && $8 ~ /\./ {print $8; next}
+      $1 ~ /^DNSBL/ && NF >= 3 && $3 ~ /\./ {print $3; next}
+    ' "$tmp" |
+        sed 's/^\.//;s/\.$//' |
+        tr '[:upper:]' '[:lower:]' |
+        awk 'length($0) > 5 && $0 ~ /^[a-z0-9][a-z0-9._-]*\.[a-z][a-z0-9.-]*$/ && $0 !~ /^[a-z]\.[a-z][a-z]/ && $0 !~ /^[a-z]\.com$/ && $0 !~ /^[a-z]\.net$/ && $0 !~ /^[a-z]\.org$/ {print}' |
+        sort | uniq -c | sort -nr | head -30 > "$domains"
+
+    if [ ! -s "$domains" ]; then
+        rm -f "$tmp" "$domains"
+        mark OK "DNSBL log present, but no clean domain samples parsed"
+        finish
+        return
+    fi
+
+    mark INFO "review buckets from recent DNSBL hits:"
+    while read -r c d; do
+        fam="$(domain_family "$d")"
+        case "$fam" in
+            ads-tracker) bucket="ads/tracker" ;;
+            microsoft|streaming|apple|app-cdn) bucket="possible app breakage" ;;
+            *) bucket="known-bad or unknown" ;;
+        esac
+        printf '      %-5s %-22s %-12s %s\n' "$c" "$bucket" "$fam" "$d"
+    done < "$domains"
+
+    maybe="$(awk '{print $2}' "$domains" | grep -Ei 'microsoft|windowsupdate|office|xbox|netflix|hulu|disney|youtube|googlevideo|icloud|apple|samsung|segment\.io' | head -8 || true)"
+    if [ -n "$maybe" ]; then
+        mark WARN "review before whitelist; likely app/vendor domains:"
+        printf '%s\n' "$maybe" | sed 's/^/      /'
+    else
+        mark OK "no obvious app/vendor whitelist candidates in top sample"
+    fi
+    mark INFO "safe workflow: verify broken app -> whitelist exact FQDN -> rerun socx-doctor dnsbl-review"
+    rm -f "$tmp" "$domains"
     finish
 }
 
@@ -147,6 +202,7 @@ doctor_ids() {
         rm -f "$tmp"
         mark OK "no recent Suricata alert data"
         finish
+        return
     fi
     routine="$(grep -Eic 'SURICATA (Stream|Ethertype unknown)|Generic Protocol Command Decode|invalid ack|invalid timestamp|bad window|wrong seq|retransmission|decoder event' "$tmp" || true)"
     high="$(grep -Eiv 'SURICATA (Stream|Ethertype unknown)|Generic Protocol Command Decode|Raw pkt:' "$tmp" | grep -Eic 'Priority: 1|malware|trojan|ransom|command.?and.?control|c2 beacon|cnc|callback|exploit|blocked|drop' || true)"
@@ -164,6 +220,45 @@ doctor_ids() {
     mark INFO "top IDS messages:"
     sed -n 's/.*\[\*\*\][[:space:]]*\(\[[^]]*\][[:space:]]*\)\{0,1\}\([^[]*\)[[:space:]]*\[\*\*\].*/\2/p' "$tmp" |
         sed 's/^ *//;s/ *$//' | sort | uniq -c | sort -nr | head -8 | sed 's/^/      /'
+    rm -f "$tmp"
+    finish
+}
+
+doctor_tune_ids() {
+    header "tune ids"
+    tmp="/tmp/socx-doctor-tune-ids.$$"
+    find /var/log/suricata -maxdepth 2 -type f \( -name alerts.log -o -name fast.log \) 2>/dev/null |
+        xargs tail -1200 2>/dev/null > "$tmp"
+    if [ ! -s "$tmp" ]; then
+        rm -f "$tmp"
+        mark OK "no recent Suricata alerts to tune"
+        finish
+        return
+    fi
+
+    total="$(wc -l < "$tmp" | awk '{print $1}')"
+    routine="$(grep -Eic 'SURICATA (Stream|Ethertype unknown)|Generic Protocol Command Decode|invalid ack|invalid timestamp|bad window|wrong seq|retransmission|decoder event|HTTP unable to match response to request' "$tmp" || true)"
+    high="$(grep -Eiv 'SURICATA (Stream|Ethertype unknown)|Generic Protocol Command Decode|Raw pkt:|HTTP unable to match response to request' "$tmp" | grep -Eic 'Priority: 1|malware|trojan|ransom|command.?and.?control|c2 beacon|cnc|callback|exploit|blocked|drop' || true)"
+
+    if [ "$high" -gt 0 ] 2>/dev/null; then
+        mark WARN "$high high-signal alerts present; do not blanket-suppress"
+    else
+        mark OK "no high-signal alerts in sample"
+    fi
+    if [ "$routine" -gt 100 ] 2>/dev/null; then
+        mark WARN "$routine/$total alerts look routine/noisy; good candidate for thresholding or local suppress rules"
+    else
+        mark OK "routine IDS noise is moderate: $routine/$total"
+    fi
+
+    mark INFO "top suppression candidates:"
+    sed -n 's/.*\[\*\*\][[:space:]]*\(\[[^]]*\][[:space:]]*\)\{0,1\}\([^[]*\)[[:space:]]*\[\*\*\].*/\2/p' "$tmp" |
+        sed 's/^ *//;s/ *$//' |
+        grep -Ei 'SURICATA (Stream|Ethertype unknown)|Generic Protocol Command Decode|invalid ack|invalid timestamp|HTTP unable to match response to request|decoder event' |
+        sort | uniq -c | sort -nr | head -10 | sed 's/^/      /'
+
+    mark INFO "recommended action: suppress or threshold only the repeated routine signatures above; keep malware/C2/exploit rules enabled"
+    mark INFO "after tuning, run: socx-doctor ids"
     rm -f "$tmp"
     finish
 }
@@ -188,6 +283,57 @@ doctor_vnstat() {
             ls -la "$d" 2>/dev/null | tail -8 | sed 's/^/      /'
         fi
     done
+    finish
+}
+
+doctor_why_slow() {
+    header "why-slow"
+
+    load="$(uptime 2>/dev/null || true)"
+    [ -n "$load" ] && mark INFO "$load"
+
+    top_line="$(top -b -n 1 2>/dev/null | head -8 || true)"
+    if [ -n "$top_line" ]; then
+        mark INFO "top snapshot:"
+        printf '%s\n' "$top_line" | sed 's/^/      /'
+    else
+        mark WARN "top snapshot unavailable"
+    fi
+
+    if [ -f /tmp/socx-speedtest-cache.env ]; then
+        age="$(age_file /tmp/socx-speedtest-cache.env)"
+        status="$(sed -n 's/^status=//p' /tmp/socx-speedtest-cache.env | tail -1)"
+        down="$(sed -n 's/^download_mbps=//p' /tmp/socx-speedtest-cache.env | tail -1)"
+        up="$(sed -n 's/^upload_mbps=//p' /tmp/socx-speedtest-cache.env | tail -1)"
+        ping="$(sed -n 's/^ping_ms=//p' /tmp/socx-speedtest-cache.env | tail -1)"
+        mark INFO "speedtest status=${status:-unknown} down=${down:-?}Mbps up=${up:-?}Mbps ping=${ping:-?}ms age=${age:-?}s"
+    else
+        mark WARN "speedtest cache missing; cannot compare ISP baseline"
+    fi
+
+    gw="$(gateway_table)"
+    if [ -n "$gw" ]; then
+        mark INFO "gateway latency/loss:"
+        printf '%s\n' "$gw" | awk 'NR==1 || NR<8 {print "      " $0}'
+        bad="$(printf '%s\n' "$gw" | awk 'NR>1 && (tolower($7) !~ /online/ || $6 ~ /^[1-9]|100/) {print $1 ":" $6 "/" $7}' | tr '\n' ' ')"
+        [ -n "$bad" ] && mark WARN "gateway loss/down indicators: $bad" || mark OK "parsed gateways show no loss/down indicator"
+    else
+        mark WARN "gatewaystatus unavailable"
+    fi
+
+    if command -v netstat >/dev/null 2>&1; then
+        mark INFO "interface counters/errors:"
+        netstat -ibn 2>/dev/null | awk 'NR==1 || $1 ~ /^(ix|em|igb|re|vmx|vtnet|tun|wg|enc)/ {print "      " $0}' | head -12
+    fi
+
+    pf_count="$(pfctl -ss 2>/dev/null | wc -l | awk '{print $1}')"
+    if [ "$pf_count" -gt 100000 ] 2>/dev/null; then
+        mark WARN "very high PF state count: $pf_count"
+    else
+        mark OK "PF state count: ${pf_count:-0}"
+    fi
+    mark INFO "top active state sample:"
+    pfctl -ss 2>/dev/null | head -12 | sed 's/^/      /'
     finish
 }
 
@@ -261,12 +407,15 @@ case "$cmd" in
     all|"") doctor_all ;;
     gateways|gateway|dpinger) doctor_gateways ;;
     dnsbl|dns) doctor_dnsbl ;;
+    dnsbl-review|review-dnsbl) doctor_dnsbl_review ;;
     ids|suricata) doctor_ids ;;
+    tune-ids|ids-tune|tune_ids) doctor_tune_ids ;;
     vnstat|vnstatd|traffic) doctor_vnstat ;;
+    why-slow|slow) doctor_why_slow ;;
     logs|pressure|cpu) doctor_logs ;;
     why-blocked|why) doctor_why "$arg" ;;
     *)
-        echo "Usage: socx-doctor [all|gateways|dnsbl|ids|vnstat|logs|why-blocked <term>]" >&2
+        echo "Usage: socx-doctor [all|gateways|dnsbl|dnsbl-review|ids|tune-ids|vnstat|why-slow|logs|why-blocked <term>]" >&2
         exit 2
         ;;
 esac

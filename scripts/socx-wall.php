@@ -5004,10 +5004,72 @@ function collect_soc_command_events(array &$state, array $hosts, float $now, arr
         if ($watchdog !== null) {
             $events[] = $watchdog;
         }
+        $doctor = wall_doctor_status_event($now);
+        if ($doctor !== null) {
+            $events[] = $doctor;
+        }
         $state['last_command_status_at'] = $now;
     }
 
     return $events;
+}
+
+function wall_doctor_status_event(float $now): ?array
+{
+    if (!env_bool('SOCX_WALL_DOCTOR_ENABLED', true)) {
+        return null;
+    }
+
+    $warns = [];
+    $oks = 0;
+    $checks = 0;
+
+    $checks++;
+    $errBytes = is_readable('/tmp/socx-wall.err') ? (int)filesize('/tmp/socx-wall.err') : 0;
+    if ($errBytes > 0) {
+        $warns[] = 'wall err ' . short_bytes($errBytes);
+    } else {
+        $oks++;
+    }
+
+    $checks++;
+    $unknownBytes = is_readable('/var/db/socx_unknown_services.log') ? (int)filesize('/var/db/socx_unknown_services.log') : 0;
+    if ($unknownBytes > 0) {
+        $warns[] = 'unknown svc ' . short_bytes($unknownBytes);
+    } else {
+        $oks++;
+    }
+
+    $checks++;
+    if (!process_running('vnstatd')) {
+        $warns[] = 'vnstatd down';
+    } else {
+        $oks++;
+    }
+
+    foreach ([
+        'speedtest' => getenv('SOCX_SPEEDTEST_CACHE') ?: '/tmp/socx-speedtest-cache.env',
+        'ups' => getenv('SOCX_UPS_CACHE_FILE') ?: '/tmp/socx-ups-cache.env',
+        'miranda' => getenv('SOCX_MIRANDA_ANALYSIS_CACHE') ?: '/tmp/socx-miranda-analysis.env',
+    ] as $label => $file) {
+        $checks++;
+        if (!is_readable($file)) {
+            $warns[] = $label . ' missing';
+            continue;
+        }
+        $age = max(0, (int)round($now - (float)filemtime($file)));
+        $maxAge = $label === 'speedtest' ? 25200 : ($label === 'miranda' ? 900 : 120);
+        if ($age > $maxAge) {
+            $warns[] = $label . ' stale ' . format_age_seconds((float)$age);
+        } else {
+            $oks++;
+        }
+    }
+
+    if ($warns) {
+        return soc_event('DOCTOR', 'WARN', sprintf('Wall Doctor %d/%d OK | %s', $oks, $checks, implode(', ', array_slice($warns, 0, 3))));
+    }
+    return soc_event('DOCTOR', 'INFO', sprintf('Wall Doctor OK %d/%d | run socx doctor for detail', $oks, $checks));
 }
 
 function lldp_status_event(): ?array
@@ -7171,6 +7233,7 @@ function service_name_for_port(string $port, string $proto = ''): string
         '53' => 'dns',
         '67', '68' => 'dhcp',
         '80', '8000', '8001', '8080', '8888' => 'http',
+        '844' => 'https',
         '443', '8443', '9443' => 'https',
         '123' => 'ntp',
         '500', '1194', '1443', '4500', '51820', '51821' => 'vpn',
@@ -8339,10 +8402,10 @@ function colorize_line($line, bool $color): string
     $line = color_replace('/(\[DROP\]|\[HIGH\])|\b(FW BLOCK|FIREWALL BLOCK|IPS BLOCK|DROP|REJECT|BLOCK|blocked|failed|failure|critical|CRIT|HIGH|DOWN)\b/i', $c['red'] . '$0' . $c['reset'], $line);
     $line = color_replace('/(\[WARN\]|\[MED\])|\b(DNS DENY|WARN|warning|MED|PARTIAL|UNKNOWN|WATCH|stale|rising|falling|latency|loss|scanner|suspicious|burst|high-rate|high usage|SYN|FIN|SING|MULT)\b/i', $c['yellow'] . '$0' . $c['reset'], $line);
     $line = color_replace('/(\[INFO\]|\[LOW\])/', $c['green'] . '$1' . $c['reset'], $line);
-    $line = color_replace('/(\[FW\]|\[VPN\]|\[WAN\]|\[DHCP\]|\[ARP\]|\[FLOW\]|\[RADAR\]|\[PF\]|\[UPS\]|\[SYS\]|\[DNS\]|\[IFACE\]|\[DEVICE\]|\[PULSE\]|\[SOCX\]|\[AI\]|\[LAB\]|\[INTEL\]|\[TTP\]|\[DETECT\]|\[EVID\]|\[CLOUD\]|\[SRC\])/', $c['cyan'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/(\[FW\]|\[VPN\]|\[WAN\]|\[DHCP\]|\[ARP\]|\[FLOW\]|\[RADAR\]|\[PF\]|\[UPS\]|\[SYS\]|\[DNS\]|\[IFACE\]|\[DEVICE\]|\[PULSE\]|\[SOCX\]|\[DOCTOR\]|\[AI\]|\[LAB\]|\[INTEL\]|\[TTP\]|\[DETECT\]|\[EVID\]|\[CLOUD\]|\[SRC\])/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[DNSBL\]|\[IDS\]|\[IPS\])|\b(DNS BLOCK|DNS SINK|DNSBL HIT|SINKHOLE|DNSBL|Suricata|suricata|Sigma|YARA|CVE|CPE|CWE|CAPEC|CVSS|EPSS|KEV|ATT&CK|D3FEND|OpenAI|Anthropic|Gemini|xAI|Grok|NVIDIA Build|Hugging Face|Ollama|vLLM|MIRANDA|Local LLM|reputation|threat-intel|known-bad|known bad|malware|botnet|C2|abuse:high|abuse high|tor\?)\b/i', $c['purple'] . '$0' . $c['reset'], $line);
     $line = color_replace('/\b(contain|quarantine|preserve|evidence|pcap|pfctl|config\.xml|CloudTrail|AzureActivity|VPC Flow|Windows|Linux|macOS|memory)\b/i', $c['yellow'] . '$0' . $c['reset'], $line);
-    $line = color_replace('/\b(CPU|RAM|ARC|SWAP|PF|LAN|WAN|IN|OUT|VPN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|PACKET RADAR|PFTOP|LIVE STATES|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES|THREAT PULSE|SPEEDTEST|SPD|Mbps|STATES|SEARCH|TRAFFIC|TCP|UDP|ICMP|DIR|APP|PATH|TYPE|STAT|STATE|LEFT|PRO|SVC|RATE|FLOW|RADAR|AGE|EXP|PROTO|TEMP|HUMID|LOAD)\b/i', $c['cyan'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/\b(CPU|RAM|ARC|SWAP|PF|LAN|WAN|IN|OUT|VPN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|PACKET RADAR|PFTOP|LIVE STATES|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES|THREAT PULSE|SPEEDTEST|SPD|DOCTOR|Mbps|STATES|SEARCH|TRAFFIC|TCP|UDP|ICMP|DIR|APP|PATH|TYPE|STAT|STATE|LEFT|PRO|SVC|RATE|FLOW|RADAR|AGE|EXP|PROTO|TEMP|HUMID|LOAD)\b/i', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/\b(tls|web|dns|dnsblk|ssh|vpn|ntp|smb|sysl|rip|snmp|ssdp|nut|olma|vllm|llm|tgi|grad|jupy|ray|mlfl|trtn|graf|oai|xai|ngc|anth|gemi|hf|rdis|metr|ping|plex|dhcp|mdns|mail|apns|gcm|team|rdp|vnc|irc|ftp|dot|mux|oth|block|p\d{1,5})\b/i', $c['blue'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[[#!.]+\])/', $c['green'] . '$1' . $c['reset'], $line);
     $line = color_replace('/([█▇▆▅▄▃▂▁▓]+)/u', $c['green'] . '$1' . $c['reset'], $line);

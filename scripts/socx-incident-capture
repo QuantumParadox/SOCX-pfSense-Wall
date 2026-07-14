@@ -41,12 +41,23 @@ run_capture vnstat vnstat
 run_capture lldp sh -c 'command -v lldpctl >/dev/null 2>&1 && lldpctl || true'
 run_capture wireguard sh -c 'wg show 2>/dev/null || true'
 run_capture service_watchdog sh -c 'php -r '\''require_once("config.inc"); print_r(config_get_path("installedpackages/servicewatchdog", []));'\'' 2>&1'
+run_capture socx_doctor_all sh -c 'command -v socx-doctor >/dev/null 2>&1 && socx-doctor all || true'
+run_capture socx_doctor_gateways sh -c 'command -v socx-doctor >/dev/null 2>&1 && socx-doctor gateways || true'
+run_capture socx_doctor_dnsbl sh -c 'command -v socx-doctor >/dev/null 2>&1 && socx-doctor dnsbl-review || true'
+run_capture socx_doctor_ids sh -c 'command -v socx-doctor >/dev/null 2>&1 && socx-doctor ids || true'
+run_capture socx_doctor_vnstat sh -c 'command -v socx-doctor >/dev/null 2>&1 && socx-doctor vnstat || true'
+run_capture socx_doctor_logs sh -c 'command -v socx-doctor >/dev/null 2>&1 && socx-doctor logs || true'
+run_capture socx_wall_capture sh -c 'tmux capture-pane -pt socx:0 -S -80 2>/dev/null || true'
 
 copy_if_exists /tmp/socx-packet-radar.log packet-radar.log
 copy_if_exists /tmp/socx-wall.err socx-wall.err
 copy_if_exists /tmp/socx-wall-vpn.log socx-wall-vpn.log
 copy_if_exists /tmp/socx-speedtest-cache.json speedtest.json
+copy_if_exists /tmp/socx-speedtest-cache.env speedtest.env
 copy_if_exists /tmp/socx-ups-cache.json ups.json
+copy_if_exists /tmp/socx-ups-cache.env ups.env
+copy_if_exists /tmp/socx-miranda-analysis.env miranda-analysis.env
+copy_if_exists /var/db/socx_unknown_services.log unknown-services.log
 
 tail -500 /var/log/filter.log > "$CASE/filter.tail" 2>/dev/null || true
 tail -500 /var/log/system.log > "$CASE/system.tail" 2>/dev/null || true
