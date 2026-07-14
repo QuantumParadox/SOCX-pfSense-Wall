@@ -4,6 +4,7 @@ set -u
 OUT="${SOCX_PI_LLM_EXPORT:-/tmp/socx-pi-llm-export.json}"
 DISCOVERY_CACHE="${SOCX_PI_DISCOVERY_CACHE:-/tmp/socx-pi-discovery.env}"
 POST_URL="${SOCX_PI_LLM_POST_URL:-}"
+NETWORK_POST_URL="${SOCX_PI_NETWORK_POST_URL:-}"
 ANALYSIS_CACHE="${SOCX_PI_LLM_ANALYSIS_CACHE:-/tmp/socx-pi-llm-analysis.env}"
 TIMEOUT="${SOCX_PI_LLM_TIMEOUT:-300}"
 
@@ -51,6 +52,10 @@ if [ -z "$POST_URL" ]; then
     POST_URL="$(discover_pi_url)"
 fi
 
+if [ -z "$NETWORK_POST_URL" ]; then
+    NETWORK_POST_URL="$(printf '%s' "$POST_URL" | sed 's#/api/socx/triage$#/api/socx/network#')"
+fi
+
 if [ -z "$POST_URL" ]; then
     write_cache "error" "WARN" "" "Pi LLM bridge cannot find Raspberry Pi; run socx-pi-discover" "" "pi-llm" "0/3"
     echo "$OUT"
@@ -71,6 +76,9 @@ if [ "$rc" -ne 0 ]; then
     echo "SOCX Pi LLM post failed: ${err:-curl exit $rc}" >&2
     exit "$rc"
 fi
+
+# Refresh the lightweight digital twin independently of the slower LLM result.
+curl -fsS --max-time 5 -X POST -H 'Content-Type: application/json' --data-binary "@$OUT" "$NETWORK_POST_URL" >/dev/null 2>&1 || true
 
 printf '%s\n' "$resp"
 severity="$(printf '%s' "$resp" | sed -n 's/.*"severity"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"

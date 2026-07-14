@@ -435,6 +435,8 @@ POST /api/socx/experiment
 
 The dashboard style is intentionally a restrained LCARS/cyberpunk hybrid: warm LCARS orange marks the lab controls, cyan identifies neutral system data, green identifies healthy services, yellow marks watch conditions, red marks failure, and magenta marks AI/threat context. The Pi remains an analysis and experiment plane; pfSense remains the authoritative enforcement plane.
 
+The Pi dashboard also exposes a lightweight Network Digital Twin. The pfSense bridge samples current `pfctl` state rows and posts them to `/api/socx/network` separately from the slower LLM analysis, so the graph can refresh without waiting for all three roles. The read-only Command Center accepts `network` or `show network`, and the visual core shows the current node/link count. If no flow rows are available it explicitly shows `waiting for pfSense flow telemetry` instead of inventing paths.
+
 If SOCX shows the Pi endpoint as reachable but `roles 0/3`, the Pi receiver is running but the local model backend is not. On the Pi, check:
 
 ```sh

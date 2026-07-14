@@ -9,7 +9,7 @@ WorkingDirectory=/opt/socx-pi-llm
 Environment=SOCX_PI_LLM_TRIAGE_MODEL=llama3.2:3b
 Environment=SOCX_PI_LLM_EVIDENCE_MODEL=llama3.2:3b
 Environment=SOCX_PI_LLM_ACTION_MODEL=llama3.2:3b
-ExecStart=/usr/bin/python3 -m uvicorn socx_pi_llm_orchestrator:app --host 0.0.0.0 --port 8095
+ExecStart=/opt/socx-pi-llm/.venv/bin/python -m uvicorn socx_pi_llm_orchestrator:app --host 0.0.0.0 --port 8095
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=10

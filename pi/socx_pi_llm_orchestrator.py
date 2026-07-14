@@ -51,6 +51,7 @@ LATEST_ANALYSIS: dict[str, Any] = {
     "source": "raspberry-pi-5-ai-hat-3llm",
     "autonomy": {},
     "system": {},
+    "network": {"nodes": [], "links": [], "source": "waiting for pfSense flow telemetry"},
 }
 EVENTS: list[dict[str, Any]] = []
 MAX_EVENTS = 80
@@ -156,6 +157,12 @@ def command_result(command: str) -> dict[str, Any]:
             f"DNSBL hits sampled: {summary.get('dnsbl_lines_sampled', 0)}",
             "Detailed flow rows remain on the pfSense SOCX wall.",
         ]}
+    if normalized in {"network", "show network", "digital twin"}:
+        graph = build_network(LATEST_ANALYSIS.get("network_payload") or {})
+        return {"command": command, "title": "NETWORK DIGITAL TWIN", "lines": [
+            f"nodes: {len(graph['nodes'])} | links: {len(graph['links'])} | source: {graph['source']}",
+            *[f"{link['source']} -> {link['target']} | {link['label']}" for link in graph['links'][:6]],
+        ]}
     if normalized in {"thermal", "show thermal"}:
         sysm = system_metrics()
         return {"command": command, "title": "PI THERMAL", "lines": [
@@ -172,10 +179,41 @@ def command_result(command: str) -> dict[str, Any]:
         return {"command": command, "title": "EVIDENCE VAULT", "lines": [json.dumps(saved, separators=(",", ":"))]}
     if normalized in {"help", "?"}:
         return {"command": command, "title": "COMMANDS", "lines": [
-            "status | vpn | top talkers | thermal | models | preserve evidence",
+            "status | vpn | network | top talkers | thermal | models | preserve evidence",
             "All commands are read-only except local evidence preservation.",
         ]}
-    return {"command": command, "title": "UNKNOWN COMMAND", "lines": ["Try: status, vpn, top talkers, thermal, models, preserve evidence"]}
+    return {"command": command, "title": "UNKNOWN COMMAND", "lines": ["Try: status, vpn, network, top talkers, thermal, models, preserve evidence"]}
+
+
+def build_network(payload: dict[str, Any]) -> dict[str, Any]:
+    """Build a small truthful graph from pfSense flow rows when supplied."""
+    nodes: dict[str, dict[str, Any]] = {
+        "pfsense": {"id": "pfsense", "label": "pfSense", "kind": "firewall", "status": "online"},
+        "wan": {"id": "wan", "label": "WAN", "kind": "internet", "status": "online"},
+        "pi": {"id": "pi", "label": "Pi 5 AI", "kind": "ai", "status": "online"},
+    }
+    links: list[dict[str, Any]] = []
+    rows = payload.get("flows") if isinstance(payload.get("flows"), list) else []
+    if not rows:
+        raw = str(payload.get("flow_lines") or "")
+        rows = [{"raw": line} for line in raw.split(";") if line.strip()]
+    for idx, row in enumerate(rows[:12]):
+        if not isinstance(row, dict):
+            row = {"raw": str(row)}
+        source = str(row.get("src") or row.get("source") or "LAN").strip()
+        target = str(row.get("dst") or row.get("target") or "WAN").strip()
+        label = str(row.get("service") or row.get("proto") or "flow").strip()
+        source_id = "lan-" + source.replace(" ", "-")[:24].lower()
+        target_id = "wan-" + target.replace(" ", "-")[:24].lower()
+        nodes.setdefault(source_id, {"id": source_id, "label": source, "kind": "host", "status": "active"})
+        nodes.setdefault(target_id, {"id": target_id, "label": target, "kind": "peer", "status": "active"})
+        links.append({"id": f"flow-{idx}", "source": source_id, "target": target_id, "label": label[:18], "state": "live"})
+    return {
+        "nodes": list(nodes.values()),
+        "links": links,
+        "source": "pfSense live flow rows" if links else "waiting for pfSense flow telemetry",
+        "updated_iso": now_iso(),
+    }
 
 
 def summarize_role_text(text: str) -> str:
@@ -408,6 +446,7 @@ def compact_payload(payload: dict[str, Any]) -> str:
             "vpn_gateway_status": str(payload.get("vpn_gateway_status", ""))[:700],
             "speedtest_cache": str(payload.get("speedtest_cache", ""))[:500],
             "unknown_services": str(payload.get("unknown_services", ""))[:500],
+            "flow_lines": str(payload.get("flow_lines", ""))[:1800],
         },
         separators=(",", ":"),
     )
@@ -551,6 +590,7 @@ async def latest() -> JSONResponse:
     data["system"] = system_metrics()
     data["autonomy"] = AUTONOMY_STATE
     data["experiment"] = EXPERIMENT_STATE
+    data["network"] = build_network(data.get("network_payload") or {})
     data["history"] = HISTORY[-18:]
     return JSONResponse(data)
 
@@ -558,6 +598,20 @@ async def latest() -> JSONResponse:
 @app.get("/api/socx/autonomy")
 async def autonomy() -> JSONResponse:
     return JSONResponse({"autonomy": AUTONOMY_STATE, "history": HISTORY[-24:], "system": system_metrics(), "experiment": EXPERIMENT_STATE})
+
+
+@app.get("/api/socx/network")
+async def network() -> JSONResponse:
+    return JSONResponse(build_network(LATEST_ANALYSIS.get("network_payload") or {}))
+
+
+@app.post("/api/socx/network")
+async def network_ingest(request: Request) -> JSONResponse:
+    payload = await request.json()
+    LATEST_ANALYSIS["network_payload"] = payload
+    graph = build_network(payload)
+    event("FLOW", f"network twin refreshed nodes {len(graph['nodes'])} links {len(graph['links'])}", "INFO")
+    return JSONResponse(graph)
 
 
 @app.post("/api/socx/experiment")
@@ -607,6 +661,7 @@ async def stream() -> StreamingResponse:
             data["system"] = system_metrics()
             data["autonomy"] = AUTONOMY_STATE
             data["experiment"] = EXPERIMENT_STATE
+            data["network"] = build_network(data.get("network_payload") or {})
             data["history"] = HISTORY[-18:]
             yield f"data: {json.dumps(data, separators=(',', ':'))}\n\n"
             await asyncio.sleep(1)
@@ -629,6 +684,7 @@ async def triage(request: Request) -> dict[str, Any]:
             "models": {role: result.get("model", "") for role, result in role_results.items()},
             "role_results": role_results,
             "payload_summary": payload.get("summary", {}) if isinstance(payload.get("summary"), dict) else {},
+            "network_payload": payload,
             "status": "ok" if verdict.get("roles_online") != "0/3" else "degraded",
             "updated": updated,
             "updated_iso": now_iso(),
@@ -659,7 +715,7 @@ DASHBOARD_HTML = r"""<!doctype html>
 h2{margin:0 0 8px;color:var(--cyan);font-size:15px;letter-spacing:.08em}.metric{display:grid;grid-template-columns:140px 1fr;gap:8px;margin:6px 0;color:var(--muted)}.metric b{color:var(--ink)}
 .role{display:grid;grid-template-columns:88px 1fr;gap:10px;border-top:1px solid #ffffff17;padding:10px 0}.role:first-of-type{border-top:0}.role-name{font-weight:900;color:var(--blue);text-transform:uppercase}.role.ok .role-name{color:var(--green)}.role.fail .role-name{color:var(--red)}.role-text{font-size:14px;line-height:1.32;white-space:normal}.role-meta{font-size:12px;color:var(--muted);margin-top:4px}
 .viz{position:relative;height:100%;min-height:360px;overflow:hidden}.viz canvas{position:absolute;inset:0;width:100%;height:100%}.core{position:absolute;left:50%;top:50%;width:132px;height:132px;margin:-66px;border:2px solid var(--cyan);border-radius:50%;display:grid;place-items:center;text-align:center;font-weight:900;color:var(--cyan);box-shadow:0 0 36px #49fff466, inset 0 0 24px #49fff41e;animation:pulse 2.2s infinite}
-.vizhud{position:absolute;left:12px;right:12px;bottom:12px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px;pointer-events:none}.vizstat{border:1px solid #ffffff22;background:#02080caa;padding:7px 8px;font:700 12px ui-monospace,Consolas,monospace;color:var(--muted)}.vizstat b{display:block;color:var(--ink);font-size:16px;margin-top:2px}
+.vizhud{position:absolute;left:12px;right:12px;bottom:12px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px;pointer-events:none}.vizstat{border:1px solid #ffffff22;background:#02080caa;padding:7px 8px;font:700 12px ui-monospace,Consolas,monospace;color:var(--muted)}.vizstat b{display:block;color:var(--ink);font-size:16px;margin-top:2px}.twin-status{position:absolute;top:12px;left:12px;border:1px solid #ff9f4366;background:#1b1018cc;color:var(--lcars);padding:6px 8px;font:700 11px ui-monospace,Consolas,monospace;letter-spacing:.05em}
 @keyframes pulse{50%{transform:scale(1.045);box-shadow:0 0 54px #49fff488,inset 0 0 34px #49fff433}}
 .feed{display:grid;grid-template-columns:1fr 1fr;gap:10px;min-height:0}.events{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:14px;line-height:1.45;overflow:hidden}.event{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.json{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;color:#d8fbff;overflow:hidden;white-space:pre-wrap}
 .bar{height:9px;background:#ffffff16;margin-top:6px;overflow:hidden}.bar span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--lcars),var(--cyan),var(--green))}
@@ -691,6 +747,7 @@ h2{margin:0 0 8px;color:var(--cyan);font-size:15px;letter-spacing:.08em}.metric{
     <section class="panel viz">
       <canvas id="space"></canvas>
       <div class="core"><div>SOCX<br>PI<br><span id="coreRoles">0/3</span></div></div>
+      <div class="twin-status" id="twin-status">TWIN WAITING FOR FLOWS</div>
       <div class="vizhud">
         <div class="vizstat">FW BLOCKS<b id="vizFw">0</b></div>
         <div class="vizstat">DNSBL<b id="vizDns">0</b></div>
@@ -756,7 +813,7 @@ function render(d){
   const a=d.autonomy||{}; const ex=a.experiments||[]; $('autopilot').innerHTML=`<div class="autopilot"><div class="autopilot-title"><span>${esc((a.mode||'observe').toUpperCase())}</span><span>${a.score??0}/100</span></div><div class="plain">${esc(a.summary||'waiting for SOCX evidence')}</div><canvas id="trend" class="trend"></canvas><div class="experiment-grid">${ex.map(x=>`<div class="experiment-card"><b>${esc(x.name)}</b><span class="${x.status==='pass'||x.status==='stable'?'ok':x.status==='cooldown'?'bad':'warn'}">${esc(x.status)}</span> ${esc(x.detail)}</div>`).join('')}</div><div class="plain muted" style="margin-top:8px">${esc((a.recommendations||[]).join(' '))}</div></div>`; drawTrend(d.history||[]);
   const lab=d.experiment||{}; $('lab-progress').textContent=lab.active?((lab.progress||0)+'% '+String(lab.kind||'RUN').toUpperCase()):String(lab.status||'READY').toUpperCase(); $('lab-progress').className=lab.active?'warn':lab.status==='complete'?'ok':'muted'; $('lab-status').textContent=lab.result||'All experiments are bounded and read-only.'; $('lab-history').textContent=(lab.history||[]).slice(-2).map(x=>x.result).join(' | ');
   const p=d.payload_summary||{}; const cards=[['Firewall blocks',p.firewall_blocks_sampled,'blocked samples'],['DNSBL hits',p.dnsbl_lines_sampled,'DNS blocks'],['IDS watch',p.ids_watch_sampled,'routine alerts'],['High IDS',p.ids_high_sampled,'urgent alerts'],['IDS lines',p.ids_alert_lines_sampled,'sample size']]; $('payload').innerHTML=cards.map(([k,v,s])=>`<div class="summary-card"><span>${esc(k)}</span><b>${fmt(v)}</b><small class="muted">${esc(s)}</small></div>`).join('');
-  $('vizFw').textContent=fmt(p.firewall_blocks_sampled); $('vizDns').textContent=fmt(p.dnsbl_lines_sampled); $('vizIds').textContent=fmt(p.ids_watch_sampled); $('vizAuto').textContent=(a.mode||'observe').toUpperCase();
+  $('vizFw').textContent=fmt(p.firewall_blocks_sampled); $('vizDns').textContent=fmt(p.dnsbl_lines_sampled); $('vizIds').textContent=fmt(p.ids_watch_sampled); $('vizAuto').textContent=(a.mode||'observe').toUpperCase(); const twin=d.network||{}; $('twin-status').textContent='TWIN '+(twin.links||[]).length+' LINKS | '+(twin.nodes||[]).length+' NODES'; $('twin-status').style.color=(twin.links||[]).length?'var(--green)':'var(--lcars)';
 }
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function drawTrend(hist){const cv=$('trend'); if(!cv)return; const g=cv.getContext('2d'),r=cv.getBoundingClientRect(),dpr=devicePixelRatio||1; cv.width=Math.max(1,r.width*dpr); cv.height=Math.max(1,r.height*dpr); g.clearRect(0,0,cv.width,cv.height); const pts=(hist||[]).slice(-18); g.strokeStyle='rgba(73,255,244,.25)'; g.beginPath(); g.moveTo(0,cv.height-1); g.lineTo(cv.width,cv.height-1); g.stroke(); if(!pts.length)return; g.strokeStyle='#ff56f4'; g.lineWidth=2*dpr; g.beginPath(); pts.forEach((p,i)=>{const x=pts.length===1?0:i*(cv.width/(pts.length-1)); const y=cv.height-(Math.min(100,p.score||0)/100)*cv.height; if(i===0)g.moveTo(x,y); else g.lineTo(x,y)}); g.stroke();}
@@ -769,6 +826,7 @@ function resize(){c.width=c.clientWidth*devicePixelRatio;c.height=c.clientHeight
 function draw(){t+=0.014;ctx.clearRect(0,0,c.width,c.height);const w=c.width,h=c.height,cx=w/2,cy=h/2;const roles=['triage','evidence','action'];const online=(state.roles_online||'0/3').split('/')[0]*1;const p=state.payload_summary||{};const auto=state.autonomy||{};const fw=Math.min(1,(p.firewall_blocks_sampled||0)/2000),dns=Math.min(1,(p.dnsbl_lines_sampled||0)/2000),ids=Math.min(1,(p.ids_watch_sampled||0)/300),ascore=Math.min(1,(auto.score||0)/100);const energy=.45+fw*.22+dns*.18+ids*.12+ascore*.2;
  ctx.save();ctx.translate(cx,cy);for(let ring=0;ring<4;ring++){ctx.strokeStyle=`rgba(${ring%2?102:73},255,${ring%2?124:244},${0.16+ring*.05})`;ctx.lineWidth=(1+ring*.35)*devicePixelRatio;ctx.beginPath();const rx=(78+ring*38+Math.sin(t*3+ring)*8)*devicePixelRatio,ry=rx*(.48+ring*.045);for(let a=0;a<=Math.PI*2+.05;a+=.06){const twist=a+t*(ring%2?-1:1);const x=Math.cos(twist)*rx,y=Math.sin(twist)*ry;if(a===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)}ctx.stroke()}ctx.restore();
  for(let i=0;i<150;i++){const z=((i*37+t*(90+energy*150))%100)/100;const a=i*2.399+t*(.8+energy);const r=(40+z*(260+fw*240))*devicePixelRatio;const hue=i%5===0?'255,86,244':i%3===0?'255,227,91':i%3===1?'73,255,244':'102,255,124';ctx.fillStyle=`rgba(${hue},${0.035+z*(0.16+ascore*.12)})`;ctx.fillRect(cx+Math.cos(a)*r,cy+Math.sin(a)*r*.55,1+z*3,1+z*3)}
+ const twin=state.network||{}; const twinNodes=(twin.nodes||[]).slice(0,8); const positions=twinNodes.map((n,i)=>{const a=-Math.PI*.85+i*(Math.PI*1.7/Math.max(1,twinNodes.length-1));return {n,x:cx+Math.cos(a)*w*.36,y:cy+Math.sin(a)*h*.34}}); const byId={}; positions.forEach(p=>byId[p.n.id]=p); (twin.links||[]).slice(0,12).forEach(link=>{const s=byId[link.source],d=byId[link.target];if(!s||!d)return;ctx.strokeStyle='#ff9f43aa';ctx.lineWidth=1.5*devicePixelRatio;ctx.beginPath();ctx.moveTo(s.x,s.y);ctx.lineTo(d.x,d.y);ctx.stroke()}); positions.forEach(({n,x,y})=>{const color=n.kind==='firewall'?'#ffe35b':n.kind==='ai'?'#ff56f4':n.kind==='internet'?'#ff5e78':'#49fff4';ctx.fillStyle=color;ctx.shadowColor=color;ctx.shadowBlur=12*devicePixelRatio;ctx.beginPath();ctx.arc(x,y,7*devicePixelRatio,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.fillStyle='#d8fbff';ctx.font=`${10*devicePixelRatio}px monospace`;ctx.fillText(String(n.label).slice(0,16),x+10*devicePixelRatio,y+3*devicePixelRatio)});
  roles.forEach((r,i)=>{const a=t*(1.1+energy)+i*Math.PI*2/3;const radius=w*(.21+.05*Math.sin(t+i));const x=cx+Math.cos(a)*radius,y=cy+Math.sin(a)*h*.22;ctx.strokeStyle=i<online?'#66ff7c':'#ff5e78';ctx.lineWidth=(2+energy*2)*devicePixelRatio;ctx.shadowColor=ctx.strokeStyle;ctx.shadowBlur=18*devicePixelRatio;ctx.beginPath();ctx.moveTo(cx,cy);ctx.bezierCurveTo(cx+Math.cos(a-.6)*90,cy+Math.sin(a-.6)*60,x-Math.cos(a)*40,y-Math.sin(a)*20,x,y);ctx.stroke();ctx.shadowBlur=0;ctx.fillStyle=i<online?'#66ff7c':'#ff5e78';ctx.beginPath();ctx.arc(x,y,(13+energy*5)*devicePixelRatio,0,Math.PI*2);ctx.fill();ctx.fillStyle='#e8fbff';ctx.font=`${12*devicePixelRatio}px monospace`;ctx.fillText(r.toUpperCase(),x+18*devicePixelRatio,y+4*devicePixelRatio)})
  requestAnimationFrame(draw)}draw();
 </script>
