@@ -416,7 +416,13 @@ doctor_pi_llm() {
         reason="$(sed -n 's/^reason=//p' "$cache" | tail -1)"
         age="$(age_file "$cache")"
         case "$status" in
-            ok) mark OK "Pi 3-LLM cache ok severity=${sev:-unknown} roles=${roles:-?} age=${age:-?}s ${reason:-}" ;;
+            ok)
+                case "$roles" in
+                    0/*) mark WARN "Pi service reachable but model roles offline severity=${sev:-unknown} roles=${roles:-?} age=${age:-?}s ${reason:-}" ;;
+                    *) mark OK "Pi 3-LLM cache ok severity=${sev:-unknown} roles=${roles:-?} age=${age:-?}s ${reason:-}" ;;
+                esac
+                ;;
+            degraded) mark WARN "Pi 3-LLM degraded severity=${sev:-unknown} roles=${roles:-?} age=${age:-?}s ${reason:-}" ;;
             off) mark WARN "Pi LLM bridge disabled age=${age:-?}s ${reason:-}" ;;
             *) mark WARN "Pi LLM cache status=${status:-unknown} severity=${sev:-unknown} age=${age:-?}s ${reason:-}" ;;
         esac
@@ -472,7 +478,11 @@ doctor_all() {
         roles="$(sed -n 's/^roles=//p' /tmp/socx-pi-llm-analysis.env | tail -1)"
         reason="$(sed -n 's/^reason=//p' /tmp/socx-pi-llm-analysis.env | tail -1)"
         age="$(age_file /tmp/socx-pi-llm-analysis.env)"
-        [ "$status" = "ok" ] && mark OK "Pi 3-LLM cache severity=${sev:-unknown}, roles=${roles:-?}, age ${age:-?}s, ${reason:-no reason}" || mark WARN "Pi 3-LLM cache status=${status:-unknown}, age ${age:-?}s, ${reason:-no reason}"
+        if [ "$status" = "ok" ] && ! printf '%s' "$roles" | grep -q '^0/'; then
+            mark OK "Pi 3-LLM cache severity=${sev:-unknown}, roles=${roles:-?}, age ${age:-?}s, ${reason:-no reason}"
+        else
+            mark WARN "Pi 3-LLM cache status=${status:-unknown}, roles=${roles:-?}, age ${age:-?}s, ${reason:-no reason}"
+        fi
     else
         mark WARN "Pi 3-LLM cache missing; run socx pi-llm after Pi endpoint is online"
     fi

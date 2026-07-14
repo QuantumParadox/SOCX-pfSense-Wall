@@ -103,11 +103,11 @@ def heuristic_verdict(payload: dict[str, Any], role_results: dict[str, dict[str,
         reasons.append(f"{fw} firewall blocks sampled")
     if dns > 500:
         reasons.append(f"{dns} DNSBL lines sampled")
-    if not reasons:
-        reasons.append("primary SOCX signals nominal")
     confidence = 0.55 + (online * 0.12)
     if online == 0:
-        reasons.append("model endpoints offline; heuristic fallback")
+        reasons.insert(0, "model endpoints offline; heuristic fallback")
+    if not reasons:
+        reasons.append("primary SOCX signals nominal")
     return {
         "severity": severity,
         "confidence": round(min(confidence, 0.91), 2),
@@ -119,7 +119,12 @@ def heuristic_verdict(payload: dict[str, Any], role_results: dict[str, dict[str,
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    return {"status": "ok", "service": APP_NAME, "roles": list(DEFAULT_ROLES)}
+    return {
+        "status": "ok",
+        "service": APP_NAME,
+        "roles": list(DEFAULT_ROLES),
+        "ollama_hint": "curl http://127.0.0.1:11434/api/tags",
+    }
 
 
 @app.post("/api/socx/triage")

@@ -403,6 +403,25 @@ SOCX_PI_LLM_ACTION_URL=http://127.0.0.1:11434/api/generate
 
 When the Pi answers, SOCX writes `/tmp/socx-pi-llm-analysis.env` and rotates wall events such as `PI 3LLM analysis roles 3/3 | routine IDS watch lines`. If the Pi is offline, pfSense keeps running normally and shows the Pi layer as waiting or unreachable instead of blocking the wall.
 
+If SOCX shows the Pi endpoint as reachable but `roles 0/3`, the Pi receiver is running but the local model backend is not. On the Pi, check:
+
+```sh
+sudo systemctl status socx-pi-llm ollama
+curl http://127.0.0.1:8095/health
+curl http://127.0.0.1:11434/api/tags
+```
+
+Repair the usual Ollama case with:
+
+```sh
+curl -fsSL https://ollama.com/install.sh | sh
+sudo systemctl enable --now ollama
+ollama pull llama3.2:3b
+ollama pull qwen2.5:3b
+ollama pull phi3:mini
+sudo systemctl restart socx-pi-llm
+```
+
 Ask SOCX for the current AI explanation:
 
 ```sh

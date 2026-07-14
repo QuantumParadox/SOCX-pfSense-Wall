@@ -26,6 +26,8 @@ python3 -m venv "$APP_DIR/.venv"
 if ! command -v ollama >/dev/null 2>&1; then
     echo "Ollama is not installed. Install it from https://ollama.com/download/linux if you want local model roles."
 else
+    systemctl enable --now ollama >/dev/null 2>&1 || true
+    sleep 1
     ollama pull "${SOCX_PI_LLM_TRIAGE_MODEL:-llama3.2:3b}" || true
     ollama pull "${SOCX_PI_LLM_EVIDENCE_MODEL:-qwen2.5:3b}" || true
     ollama pull "${SOCX_PI_LLM_ACTION_MODEL:-phi3:mini}" || true
@@ -56,3 +58,10 @@ systemctl enable --now socx-pi-llm
 sleep 2
 systemctl --no-pager status socx-pi-llm || true
 curl -fsS http://127.0.0.1:8095/health || true
+echo
+if command -v ollama >/dev/null 2>&1 && curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+    echo "Ollama is reachable on 127.0.0.1:11434; SOCX model roles can run."
+else
+    echo "WARNING: Ollama is not reachable on 127.0.0.1:11434. SOCX Pi service will answer, but roles will show 0/3 until Ollama is installed and running."
+    echo "Repair on Pi: curl -fsSL https://ollama.com/install.sh | sh && sudo systemctl enable --now ollama"
+fi

@@ -76,6 +76,8 @@ print_cache "MIRANDA" "$MIRANDA_CACHE"
 echo
 if [ -f "$PI_CACHE" ] && [ "$(env_get status "$PI_CACHE")" = "ok" ]; then
     echo "plain English: Pi 3-LLM SOCX analysis is online. Use the reason/next lines above for the current summary."
+elif [ -f "$PI_CACHE" ] && [ "$(env_get status "$PI_CACHE")" = "degraded" ]; then
+    echo "plain English: The Raspberry Pi SOCX service is reachable, but no LLM model roles are answering. Start or repair Ollama on the Pi, then rerun: socx explain-now"
 else
     echo "plain English: SOCX can find a Pi candidate, but the Pi 3-LLM service is not answering yet. Start the Pi service on port 8095, then rerun: socx explain-now"
 fi

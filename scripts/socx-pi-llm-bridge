@@ -79,5 +79,14 @@ reason="$(printf '%s' "$resp" | sed -n 's/.*"reasons"[[:space:]]*:[[:space:]]*\[
 next="$(printf '%s' "$resp" | sed -n 's/.*"recommended_next_step"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
 source="$(printf '%s' "$resp" | sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
 roles="$(printf '%s' "$resp" | sed -n 's/.*"roles_online"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+cache_status="ok"
+case "$roles" in
+    0/*)
+        cache_status="degraded"
+        severity="WARN"
+        reason="Pi orchestrator online but model roles offline; ${reason:-check Ollama on Raspberry Pi}"
+        next="${next:-Start Ollama on the Raspberry Pi and verify http://127.0.0.1:11434/api/tags}"
+        ;;
+esac
 
-write_cache "ok" "${severity:-INFO}" "${confidence:-}" "${reason:-Pi 3-LLM SOCX analysis received}" "${next:-}" "${source:-pi-3llm}" "${roles:-}"
+write_cache "$cache_status" "${severity:-INFO}" "${confidence:-}" "${reason:-Pi 3-LLM SOCX analysis received}" "${next:-}" "${source:-pi-3llm}" "${roles:-}"
