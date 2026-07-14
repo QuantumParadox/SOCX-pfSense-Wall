@@ -7146,7 +7146,27 @@ function socx_learn_unknown_service(string $name, string $proto): void
     if ($port === '' || (int)$port <= 0) {
         return;
     }
-    if ((int)$port >= 32768) {
+    $portNum = (int)$port;
+    if ($portNum >= 32768) {
+        return;
+    }
+    $interestingHighPorts = [
+        4000 => true,
+        5355 => true,
+        5443 => true,
+        8000 => true,
+        8001 => true,
+        8002 => true,
+        8081 => true,
+        8089 => true,
+        8093 => true,
+        8094 => true,
+        8728 => true,
+        9042 => true,
+        9091 => true,
+        11434 => true,
+    ];
+    if ($portNum > 1024 && !isset($interestingHighPorts[$portNum])) {
         return;
     }
     $key = strtoupper($proto) . '/' . $port;

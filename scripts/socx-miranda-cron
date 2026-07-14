@@ -1,0 +1,39 @@
+#!/bin/sh
+set -eu
+
+ACTION="${1:-install}"
+CRON_FILE="${SOCX_MIRANDA_CRON_FILE:-/etc/cron.d/socx-miranda}"
+POST_URL="${SOCX_MIRANDA_POST_URL:-http://192.168.1.116:8093/api/socx/ingest}"
+INTERVAL="${SOCX_MIRANDA_INTERVAL_MINUTES:-5}"
+
+case "$ACTION" in
+    install|enable)
+        mkdir -p "$(dirname "$CRON_FILE")"
+        cat > "$CRON_FILE" <<EOF
+# SOCX compact network-health export to MIRANDA.
+SHELL=/bin/sh
+PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+
+*/$INTERVAL * * * * root SOCX_MIRANDA_POST_URL=$POST_URL /usr/local/bin/socx-miranda-bridge >/dev/null 2>&1
+EOF
+        chmod 0644 "$CRON_FILE"
+        echo "SOCX MIRANDA cron installed: $CRON_FILE"
+        cat "$CRON_FILE"
+        ;;
+    remove|disable)
+        rm -f "$CRON_FILE"
+        echo "SOCX MIRANDA cron removed: $CRON_FILE"
+        ;;
+    status)
+        if [ -f "$CRON_FILE" ]; then
+            echo "SOCX MIRANDA cron enabled: $CRON_FILE"
+            cat "$CRON_FILE"
+        else
+            echo "SOCX MIRANDA cron not installed."
+        fi
+        ;;
+    *)
+        echo "Usage: socx-miranda-cron install|status|remove" >&2
+        exit 2
+        ;;
+esac

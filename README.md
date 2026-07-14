@@ -327,10 +327,12 @@ MIRANDA/local-AI bridge:
 
 ```sh
 socx-miranda-bridge
-SOCX_MIRANDA_POST_URL=http://192.168.1.116:8093/api/socx socx-miranda-bridge
+SOCX_MIRANDA_POST_URL=http://192.168.1.116:8093/api/socx/ingest socx-miranda-bridge
+socx-miranda-cron install
+socx-miranda-cron status
 ```
 
-By default, this writes `/tmp/socx-miranda-export.json`. It only posts when `SOCX_MIRANDA_POST_URL` is set, so it is safe to use as a local export even before MIRANDA has an ingest endpoint.
+By default, this writes `/tmp/socx-miranda-export.json`. It only posts when `SOCX_MIRANDA_POST_URL` is set, so it is safe to use as a local export even before MIRANDA has an ingest endpoint. If MIRANDA is running on your LAN workstation, `socx-miranda-cron install` posts a compact SOCX summary to `/api/socx/ingest` every five minutes.
 
 Alert mode:
 

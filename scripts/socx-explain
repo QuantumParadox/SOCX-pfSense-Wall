@@ -19,6 +19,13 @@ nut     Network UPS Tools, UPS monitoring/control
 sysl    syslog forwarding
 ssdp    local discovery/UPnP multicast
 mdns    local mDNS/Bonjour discovery
+llmnr   Windows local-name lookup broadcast
+router  router/admin service traffic
+splunk  Splunk/HTTP event collector or log service
+cass    Cassandra/database service
+trans   Transmission or local app control service
+uucp    legacy UUCP port; unusual on modern LANs, worth checking if blocked
+legacy unusual low-port service; inspect before allowing
 game    Steam/game service range
 mail    mail protocols
 app     app-specific encrypted or unclassified service
@@ -50,6 +57,13 @@ case "$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')" in
     sysl) echo "sysl: syslog forwarding from pfSense to a log host/SIEM." ;;
     ssdp) echo "ssdp: local discovery/UPnP chatter on the LAN." ;;
     mdns) echo "mdns: local Bonjour/mDNS discovery." ;;
+    llmnr) echo "llmnr: Windows local-name lookup broadcast. Normal on many LANs, but noisy; DNS is cleaner when possible." ;;
+    router) echo "router: router/admin service traffic such as MikroTik/API-style management ports. Verify the device before allowing." ;;
+    splunk) echo "splunk: Splunk/log collector traffic or a local service using that common port." ;;
+    cass) echo "cass: Cassandra/database service port. Treat internet-facing hits as suspicious; local lab use may be normal." ;;
+    trans) echo "trans: Transmission or app-control traffic on a common local service port." ;;
+    uucp) echo "uucp: legacy TCP/540 service. Modern networks rarely need it; firewall blocks are usually scan/noise unless you run a legacy service." ;;
+    legacy) echo "legacy: unusual low-port traffic that SOCX labels to avoid raw p-numbers. Inspect the device and firewall rule before allowing." ;;
     game) echo "game: Steam/game service traffic, often ports 27015-27050." ;;
     mail) echo "mail: SMTP/IMAP/POP mail traffic." ;;
     app) echo "app: recognized application traffic that is not specific enough for a better short label yet." ;;

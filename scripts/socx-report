@@ -64,7 +64,22 @@ run php -r 'require_once("config.inc"); print_r(config_get_path("installedpackag
 
 section "Unknown Ports To Label"
 if [ -f /var/db/socx_unknown_services.log ]; then
-    tail -80 /var/db/socx_unknown_services.log >> "$OUT"
+    echo "Top actionable unknown ports sampled from SOCX learner:" >> "$OUT"
+    sed -n 's/.*port=\([0-9][0-9]*\).*/\1/p' /var/db/socx_unknown_services.log | awk '
+      {
+        port=$1+0
+        if (port <= 1024 || port == 4000 || port == 5355 || port == 5443 || port == 8081 || port == 8089 || port == 8728 || port == 9042 || port == 9091) {
+          count[port]++
+        }
+      }
+      END {
+        for (port in count) {
+          printf "%d port=%s observations=%d\n", count[port], port, count[port]
+        }
+      }' | sort -nr | sed 's/^[0-9][0-9]* //' | head -30 >> "$OUT"
+    echo "" >> "$OUT"
+    echo "Recent raw learner lines:" >> "$OUT"
+    tail -25 /var/db/socx_unknown_services.log >> "$OUT"
 else
     echo "No unknown-service log yet." >> "$OUT"
 fi
