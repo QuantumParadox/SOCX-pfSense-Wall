@@ -47,9 +47,22 @@ LATEST_ANALYSIS: dict[str, Any] = {
     "elapsed_ms": 0,
     "payload_summary": {},
     "source": "raspberry-pi-5-ai-hat-3llm",
+    "autonomy": {},
+    "system": {},
 }
 EVENTS: list[dict[str, Any]] = []
 MAX_EVENTS = 80
+HISTORY: list[dict[str, Any]] = []
+MAX_HISTORY = 48
+AUTONOMY_STATE: dict[str, Any] = {
+    "mode": "observe",
+    "score": 0,
+    "summary": "waiting for SOCX evidence",
+    "read_only": True,
+    "last_cycle_iso": None,
+    "experiments": [],
+    "recommendations": ["Keep SOCX collecting evidence."],
+}
 
 
 def role_url(role: str) -> str:
@@ -107,6 +120,126 @@ async def check_ollama_tags(timeout: float = 2.0) -> dict[str, Any]:
         return await asyncio.to_thread(call)
     except Exception as exc:  # health endpoint should never crash the dashboard
         return {"ok": False, "error": str(exc)[:220]}
+
+
+def system_metrics() -> dict[str, Any]:
+    metrics: dict[str, Any] = {}
+    try:
+        one, five, fifteen = os.getloadavg()
+        metrics["load"] = {"one": round(one, 2), "five": round(five, 2), "fifteen": round(fifteen, 2)}
+    except OSError:
+        pass
+    try:
+        meminfo: dict[str, int] = {}
+        with open("/proc/meminfo", "r", encoding="utf-8") as fh:
+            for line in fh:
+                key, rest = line.split(":", 1)
+                meminfo[key] = int(rest.strip().split()[0])
+        total = meminfo.get("MemTotal", 0)
+        available = meminfo.get("MemAvailable", 0)
+        if total:
+            metrics["memory"] = {
+                "total_gb": round(total / 1024 / 1024, 1),
+                "available_gb": round(available / 1024 / 1024, 1),
+                "used_pct": round((1 - available / total) * 100),
+            }
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp", "r", encoding="utf-8") as fh:
+            metrics["temp_c"] = round(int(fh.read().strip()) / 1000, 1)
+    except (OSError, ValueError):
+        pass
+    return metrics
+
+
+def autonomy_cycle(verdict: dict[str, Any]) -> dict[str, Any]:
+    summary = verdict.get("payload_summary") if isinstance(verdict.get("payload_summary"), dict) else {}
+    roles_online = str(verdict.get("roles_online") or "0/3")
+    elapsed_ms = int(verdict.get("elapsed_ms") or 0)
+    fw = int(summary.get("firewall_blocks_sampled") or 0)
+    dns = int(summary.get("dnsbl_lines_sampled") or 0)
+    ids_high = int(summary.get("ids_high_sampled") or 0)
+    ids_watch = int(summary.get("ids_watch_sampled") or 0)
+    sysm = system_metrics()
+    temp_c = float(sysm.get("temp_c") or 0)
+    load_one = float((sysm.get("load") or {}).get("one") or 0)
+    score = 0
+    score += min(35, fw // 80)
+    score += min(25, dns // 120)
+    score += min(20, ids_watch // 25)
+    score += min(30, ids_high * 10)
+    if roles_online != "3/3":
+        score += 20
+    if elapsed_ms > 180000:
+        score += 10
+    if temp_c >= 75:
+        score += 20
+    mode = "observe"
+    if score >= 75 or ids_high > 0:
+        mode = "investigate"
+    elif score >= 45:
+        mode = "watch"
+    if temp_c >= 78 or load_one >= 6:
+        mode = "cooldown"
+    previous = HISTORY[-1] if HISTORY else {}
+    prev_summary = previous.get("payload_summary") if isinstance(previous.get("payload_summary"), dict) else {}
+    delta_fw = fw - int(prev_summary.get("firewall_blocks_sampled") or fw)
+    delta_dns = dns - int(prev_summary.get("dnsbl_lines_sampled") or dns)
+    experiments = [
+        {
+            "name": "LLM latency watch",
+            "status": "pass" if roles_online == "3/3" and elapsed_ms < 180000 else "watch",
+            "detail": f"roles {roles_online}, analysis {round(elapsed_ms / 1000, 1)}s",
+        },
+        {
+            "name": "signal drift",
+            "status": "watch" if abs(delta_fw) > 250 or abs(delta_dns) > 250 else "stable",
+            "detail": f"FW delta {delta_fw:+d}, DNSBL delta {delta_dns:+d}",
+        },
+        {
+            "name": "Pi thermal headroom",
+            "status": "cooldown" if temp_c >= 75 else "pass",
+            "detail": f"{temp_c or 0}C, load {load_one}",
+        },
+    ]
+    recommendations = []
+    if mode == "investigate":
+        recommendations.append("Capture an incident bundle before changing policy.")
+    elif mode == "watch":
+        recommendations.append("Keep monitoring; compare the next two cycles for drift.")
+    elif mode == "cooldown":
+        recommendations.append("Reduce test frequency until Pi temperature/load drops.")
+    else:
+        recommendations.append("Continue autonomous read-only monitoring.")
+    recommendations.append("No firewall changes are made by Autopilot.")
+    state = {
+        "mode": mode,
+        "score": min(100, score),
+        "summary": f"{mode.upper()} score {min(100, score)} | FW {fw} DNSBL {dns} IDS watch {ids_watch}",
+        "read_only": True,
+        "last_cycle_iso": now_iso(),
+        "experiments": experiments,
+        "recommendations": recommendations,
+        "deltas": {"firewall_blocks": delta_fw, "dnsbl": delta_dns},
+    }
+    AUTONOMY_STATE.clear()
+    AUTONOMY_STATE.update(state)
+    HISTORY.append(
+        {
+            "ts": time.time(),
+            "iso": state["last_cycle_iso"],
+            "severity": verdict.get("severity"),
+            "roles_online": roles_online,
+            "elapsed_ms": elapsed_ms,
+            "payload_summary": summary,
+            "score": state["score"],
+            "mode": mode,
+        }
+    )
+    del HISTORY[:-MAX_HISTORY]
+    event("AUTO", state["summary"], "WARN" if mode in {"watch", "investigate", "cooldown"} else "INFO")
+    return state
 
 
 def compact_payload(payload: dict[str, Any]) -> str:
@@ -236,6 +369,8 @@ async def health() -> dict[str, Any]:
         "roles_online": LATEST_ANALYSIS.get("roles_online"),
         "updated_iso": LATEST_ANALYSIS.get("updated_iso"),
         "ollama": ollama,
+        "system": system_metrics(),
+        "autonomy": AUTONOMY_STATE,
         "ollama_hint": "curl http://127.0.0.1:11434/api/tags",
     }
 
@@ -256,7 +391,15 @@ async def latest() -> JSONResponse:
     data["events"] = EVENTS[-30:]
     data["age_seconds"] = int(time.time() - float(data["updated"] or time.time()))
     data["ollama"] = await check_ollama_tags()
+    data["system"] = system_metrics()
+    data["autonomy"] = AUTONOMY_STATE
+    data["history"] = HISTORY[-18:]
     return JSONResponse(data)
+
+
+@app.get("/api/socx/autonomy")
+async def autonomy() -> JSONResponse:
+    return JSONResponse({"autonomy": AUTONOMY_STATE, "history": HISTORY[-24:], "system": system_metrics()})
 
 
 @app.get("/api/socx/stream")
@@ -267,6 +410,9 @@ async def stream() -> StreamingResponse:
             data["events"] = EVENTS[-30:]
             data["age_seconds"] = int(time.time() - float(data["updated"] or time.time()))
             data["ollama"] = await check_ollama_tags()
+            data["system"] = system_metrics()
+            data["autonomy"] = AUTONOMY_STATE
+            data["history"] = HISTORY[-18:]
             yield f"data: {json.dumps(data, separators=(',', ':'))}\n\n"
             await asyncio.sleep(1)
 
@@ -291,8 +437,10 @@ async def triage(request: Request) -> dict[str, Any]:
             "status": "ok" if verdict.get("roles_online") != "0/3" else "degraded",
             "updated": updated,
             "updated_iso": now_iso(),
+            "system": system_metrics(),
         }
     )
+    verdict["autonomy"] = autonomy_cycle(verdict)
     LATEST_ANALYSIS.clear()
     LATEST_ANALYSIS.update(verdict)
     event("LLM", f"analysis complete roles {verdict.get('roles_online')} severity {verdict.get('severity')}", str(verdict.get("severity", "INFO")))
@@ -320,7 +468,7 @@ h2{margin:0 0 8px;color:var(--cyan);font-size:15px;letter-spacing:.08em}.metric{
 @keyframes pulse{50%{transform:scale(1.045);box-shadow:0 0 54px #49fff488,inset 0 0 34px #49fff433}}
 .feed{display:grid;grid-template-columns:1fr 1fr;gap:10px;min-height:0}.events{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:14px;line-height:1.45;overflow:hidden}.event{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.json{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;color:#d8fbff;overflow:hidden;white-space:pre-wrap}
 .bar{height:9px;background:#ffffff16;margin-top:6px;overflow:hidden}.bar span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--green))}
-.model-grid,.summary-grid{display:grid;gap:8px}.model-card,.summary-card{border:1px solid #ffffff1f;background:#ffffff08;padding:8px 10px}.model-card{display:grid;grid-template-columns:92px 1fr auto;gap:8px;align-items:center}.model-role{font-weight:900;text-transform:uppercase;color:var(--cyan)}.model-name{font-weight:800}.summary-grid{grid-template-columns:1fr 1fr}.summary-card span{display:block;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em}.summary-card b{display:block;color:var(--ink);font-size:20px;margin-top:2px}.plain{font-size:14px;line-height:1.45;color:var(--ink)}
+.model-grid,.summary-grid,.experiment-grid{display:grid;gap:8px}.model-card,.summary-card,.experiment-card{border:1px solid #ffffff1f;background:#ffffff08;padding:8px 10px}.model-card{display:grid;grid-template-columns:92px 1fr auto;gap:8px;align-items:center}.model-role{font-weight:900;text-transform:uppercase;color:var(--cyan)}.model-name{font-weight:800}.summary-grid{grid-template-columns:1fr 1fr}.summary-card span{display:block;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em}.summary-card b{display:block;color:var(--ink);font-size:20px;margin-top:2px}.plain{font-size:14px;line-height:1.45;color:var(--ink)}.autopilot{border:1px solid #ff56f455;background:#210a2438;padding:9px 10px;margin-top:10px}.autopilot-title{display:flex;justify-content:space-between;gap:10px;font-weight:900;color:var(--mag);letter-spacing:.06em}.experiment-card{font-size:13px}.experiment-card b{display:block;color:var(--ink)}.trend{height:34px;width:100%;margin-top:8px}
 @media(max-width:1100px){.main{grid-template-columns:1fr}.shell{overflow:auto;height:auto}.viz{height:360px}.feed{grid-template-columns:1fr}body{overflow:auto}}
 </style>
 </head>
@@ -350,7 +498,7 @@ h2{margin:0 0 8px;color:var(--cyan);font-size:15px;letter-spacing:.08em}.metric{
         <div class="vizstat">FW BLOCKS<b id="vizFw">0</b></div>
         <div class="vizstat">DNSBL<b id="vizDns">0</b></div>
         <div class="vizstat">IDS WATCH<b id="vizIds">0</b></div>
-        <div class="vizstat">ROLES<b id="vizRoles">0/3</b></div>
+        <div class="vizstat">AUTO<b id="vizAuto">OBSERVE</b></div>
       </div>
     </section>
     <section class="panel">
@@ -360,6 +508,8 @@ h2{margin:0 0 8px;color:var(--cyan);font-size:15px;letter-spacing:.08em}.metric{
       <div id="models" class="model-grid"></div>
       <h2 style="margin-top:18px">Latest Reasons</h2>
       <div id="reasons" class="events"></div>
+      <h2 style="margin-top:18px">Autopilot</h2>
+      <div id="autopilot"></div>
     </section>
   </main>
   <footer class="feed">
@@ -388,17 +538,19 @@ function render(d){
   const models=d.models||{}; const ollama=d.ollama||{}; $('models').innerHTML=['triage','evidence','action'].map(r=>{const x=roles[r]||{};const ok=!!x.ok;return `<div class="model-card"><div class="model-role">${r}</div><div><div class="model-name">${esc(models[r]||x.model||'not set')}</div><div class="muted">${ok?'last role completed':'waiting or timed out'}</div></div><b class="${ok?'ok':'warn'}">${healthWord(ok)}</b></div>`}).join('')+`<div class="model-card"><div class="model-role">ollama</div><div><div class="model-name">${ollama.ok?fmt(ollama.model_count)+' local models':'not reachable'}</div><div class="muted">${esc((ollama.models||[]).slice(0,3).join(', ')||ollama.error||'local model server')}</div></div><b class="${ollama.ok?'ok':'bad'}">${ollama.ok?'online':'offline'}</b></div>`;
   $('reasons').innerHTML=(d.reasons||[]).map(r=>`<div class="event">${esc(r)}</div>`).join('');
   $('events').innerHTML=(d.events||[]).slice(-8).reverse().map(e=>`<div class="event"><span class="${cls(e.severity)}">[${esc(e.kind)}]</span> ${esc(e.message)}</div>`).join('');
+  const a=d.autonomy||{}; const ex=a.experiments||[]; $('autopilot').innerHTML=`<div class="autopilot"><div class="autopilot-title"><span>${esc((a.mode||'observe').toUpperCase())}</span><span>${a.score??0}/100</span></div><div class="plain">${esc(a.summary||'waiting for SOCX evidence')}</div><canvas id="trend" class="trend"></canvas><div class="experiment-grid">${ex.map(x=>`<div class="experiment-card"><b>${esc(x.name)}</b><span class="${x.status==='pass'||x.status==='stable'?'ok':x.status==='cooldown'?'bad':'warn'}">${esc(x.status)}</span> ${esc(x.detail)}</div>`).join('')}</div><div class="plain muted" style="margin-top:8px">${esc((a.recommendations||[]).join(' '))}</div></div>`; drawTrend(d.history||[]);
   const p=d.payload_summary||{}; const cards=[['Firewall blocks',p.firewall_blocks_sampled,'blocked samples'],['DNSBL hits',p.dnsbl_lines_sampled,'DNS blocks'],['IDS watch',p.ids_watch_sampled,'routine alerts'],['High IDS',p.ids_high_sampled,'urgent alerts'],['IDS lines',p.ids_alert_lines_sampled,'sample size']]; $('payload').innerHTML=cards.map(([k,v,s])=>`<div class="summary-card"><span>${esc(k)}</span><b>${fmt(v)}</b><small class="muted">${esc(s)}</small></div>`).join('');
-  $('vizFw').textContent=fmt(p.firewall_blocks_sampled); $('vizDns').textContent=fmt(p.dnsbl_lines_sampled); $('vizIds').textContent=fmt(p.ids_watch_sampled); $('vizRoles').textContent=d.roles_online||'0/3';
+  $('vizFw').textContent=fmt(p.firewall_blocks_sampled); $('vizDns').textContent=fmt(p.dnsbl_lines_sampled); $('vizIds').textContent=fmt(p.ids_watch_sampled); $('vizAuto').textContent=(a.mode||'observe').toUpperCase();
 }
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function drawTrend(hist){const cv=$('trend'); if(!cv)return; const g=cv.getContext('2d'),r=cv.getBoundingClientRect(),dpr=devicePixelRatio||1; cv.width=Math.max(1,r.width*dpr); cv.height=Math.max(1,r.height*dpr); g.clearRect(0,0,cv.width,cv.height); const pts=(hist||[]).slice(-18); g.strokeStyle='rgba(73,255,244,.25)'; g.beginPath(); g.moveTo(0,cv.height-1); g.lineTo(cv.width,cv.height-1); g.stroke(); if(!pts.length)return; g.strokeStyle='#ff56f4'; g.lineWidth=2*dpr; g.beginPath(); pts.forEach((p,i)=>{const x=pts.length===1?0:i*(cv.width/(pts.length-1)); const y=cv.height-(Math.min(100,p.score||0)/100)*cv.height; if(i===0)g.moveTo(x,y); else g.lineTo(x,y)}); g.stroke();}
 async function poll(){try{render(await (await fetch('/api/socx/latest',{cache:'no-store'})).json())}catch(e){}}
 if(window.EventSource){const es=new EventSource('/api/socx/stream');es.onmessage=e=>{try{render(JSON.parse(e.data))}catch(_){}};es.onerror=poll}else setInterval(poll,1000); poll();
 const c=$('space'),ctx=c.getContext('2d');let t=0;
 function resize(){c.width=c.clientWidth*devicePixelRatio;c.height=c.clientHeight*devicePixelRatio}addEventListener('resize',resize);resize();
-function draw(){t+=0.014;ctx.clearRect(0,0,c.width,c.height);const w=c.width,h=c.height,cx=w/2,cy=h/2;const roles=['triage','evidence','action'];const online=(state.roles_online||'0/3').split('/')[0]*1;const p=state.payload_summary||{};const fw=Math.min(1,(p.firewall_blocks_sampled||0)/2000),dns=Math.min(1,(p.dnsbl_lines_sampled||0)/2000),ids=Math.min(1,(p.ids_watch_sampled||0)/300);const energy=.45+fw*.25+dns*.2+ids*.15;
+function draw(){t+=0.014;ctx.clearRect(0,0,c.width,c.height);const w=c.width,h=c.height,cx=w/2,cy=h/2;const roles=['triage','evidence','action'];const online=(state.roles_online||'0/3').split('/')[0]*1;const p=state.payload_summary||{};const auto=state.autonomy||{};const fw=Math.min(1,(p.firewall_blocks_sampled||0)/2000),dns=Math.min(1,(p.dnsbl_lines_sampled||0)/2000),ids=Math.min(1,(p.ids_watch_sampled||0)/300),ascore=Math.min(1,(auto.score||0)/100);const energy=.45+fw*.22+dns*.18+ids*.12+ascore*.2;
  ctx.save();ctx.translate(cx,cy);for(let ring=0;ring<4;ring++){ctx.strokeStyle=`rgba(${ring%2?102:73},255,${ring%2?124:244},${0.16+ring*.05})`;ctx.lineWidth=(1+ring*.35)*devicePixelRatio;ctx.beginPath();const rx=(78+ring*38+Math.sin(t*3+ring)*8)*devicePixelRatio,ry=rx*(.48+ring*.045);for(let a=0;a<=Math.PI*2+.05;a+=.06){const twist=a+t*(ring%2?-1:1);const x=Math.cos(twist)*rx,y=Math.sin(twist)*ry;if(a===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)}ctx.stroke()}ctx.restore();
- for(let i=0;i<150;i++){const z=((i*37+t*(90+energy*150))%100)/100;const a=i*2.399+t*(.8+energy);const r=(40+z*(260+fw*240))*devicePixelRatio;const hue=i%3===0?'255,227,91':i%3===1?'73,255,244':'102,255,124';ctx.fillStyle=`rgba(${hue},${0.035+z*0.22})`;ctx.fillRect(cx+Math.cos(a)*r,cy+Math.sin(a)*r*.55,1+z*3,1+z*3)}
+ for(let i=0;i<150;i++){const z=((i*37+t*(90+energy*150))%100)/100;const a=i*2.399+t*(.8+energy);const r=(40+z*(260+fw*240))*devicePixelRatio;const hue=i%5===0?'255,86,244':i%3===0?'255,227,91':i%3===1?'73,255,244':'102,255,124';ctx.fillStyle=`rgba(${hue},${0.035+z*(0.16+ascore*.12)})`;ctx.fillRect(cx+Math.cos(a)*r,cy+Math.sin(a)*r*.55,1+z*3,1+z*3)}
  roles.forEach((r,i)=>{const a=t*(1.1+energy)+i*Math.PI*2/3;const radius=w*(.21+.05*Math.sin(t+i));const x=cx+Math.cos(a)*radius,y=cy+Math.sin(a)*h*.22;ctx.strokeStyle=i<online?'#66ff7c':'#ff5e78';ctx.lineWidth=(2+energy*2)*devicePixelRatio;ctx.shadowColor=ctx.strokeStyle;ctx.shadowBlur=18*devicePixelRatio;ctx.beginPath();ctx.moveTo(cx,cy);ctx.bezierCurveTo(cx+Math.cos(a-.6)*90,cy+Math.sin(a-.6)*60,x-Math.cos(a)*40,y-Math.sin(a)*20,x,y);ctx.stroke();ctx.shadowBlur=0;ctx.fillStyle=i<online?'#66ff7c':'#ff5e78';ctx.beginPath();ctx.arc(x,y,(13+energy*5)*devicePixelRatio,0,Math.PI*2);ctx.fill();ctx.fillStyle='#e8fbff';ctx.font=`${12*devicePixelRatio}px monospace`;ctx.fillText(r.toUpperCase(),x+18*devicePixelRatio,y+4*devicePixelRatio)})
  requestAnimationFrame(draw)}draw();
 </script>

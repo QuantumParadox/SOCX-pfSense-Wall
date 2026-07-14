@@ -411,6 +411,21 @@ http://<pi-ip>:8095/dashboard
 
 It shows the latest SOCX verdict, visible role summaries for `triage`, `evidence`, and `action`, Ollama health, model names, live events, pfSense payload summary, and an animated SOCX AI/network visualization. The dashboard intentionally shows visible role summaries and model status, not hidden chain-of-thought. If the model backend is offline, it will show `OLLAMA OFF` and `roles 0/3`.
 
+The dashboard includes a read-only `Autopilot` layer for experimental local-AI SOC testing. Autopilot does not change firewall rules. After each SOCX analysis it records an in-memory trend point, scores the cycle, chooses an operator mode such as `OBSERVE`, `WATCH`, `INVESTIGATE`, or `COOLDOWN`, and shows safe experiment notes:
+
+```text
+LLM latency watch
+signal drift
+Pi thermal headroom
+```
+
+Autopilot and Pi telemetry are available as JSON too:
+
+```sh
+curl http://<pi-ip>:8095/api/socx/autonomy
+curl http://<pi-ip>:8095/api/socx/latest
+```
+
 If SOCX shows the Pi endpoint as reachable but `roles 0/3`, the Pi receiver is running but the local model backend is not. On the Pi, check:
 
 ```sh
