@@ -49,6 +49,8 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 
 ## What It Does
 
+- Live wall sample: [`docs/socx-live-wall-capture.md`](docs/socx-live-wall-capture.md)
+
 - Starts a full-screen tmux dashboard called `socx`.
 - Adds `socweb`, a local browser dashboard for the modern btop-style SOC wall when terminal rendering is too limiting.
 - Serves WebSocket updates from pfSense collectors with no heavy Python framework dependency.
@@ -60,6 +62,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Keeps wall mode full-screen. Operator commands live in the `COMMANDX` tmux window or popup shortcuts, so adding command access does not cut off the SOCX wall.
 - Adds an incident capture command that saves pf states, gateway/VPN state, recent logs, Packet Radar, checksums, and a short pcap into `/root/socx-incidents/`.
 - Adds `socx-incident`, a short operator command that runs the capture and prints the newest bundle path plus a quick manifest.
+- Adds `socx-report`, `socx-hosts-audit`, `socx-explain`, and `socx-miranda-bridge` for daily reports, device naming, label explanations, and MIRANDA/local-AI export.
 - Can surface LLDP and Service Watchdog health in the rotating Event Feed when those pfSense packages are configured.
 - Adds a rotating SOCX health score based on WAN, VPN, UPS, RAM, CPU, Speedtest freshness, IDS, DNSBL, and firewall scan pressure.
 - Shows truthful VPN gateway/interface health in the top status strip, including `VPN UP 3/3`, `VPN PARTIAL 1/3`, `VPN DOWN 0/3`, `VPN N/A`, or `VPN UNKNOWN` plus `DATA LIVE`/`DATA STALE`.
@@ -68,6 +71,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds live WAN/LAN download/upload bars and a top-talker line in the NETWORK card.
 - Rotates top upload/download and top-device summaries through the Event Feed so `LAN.148` style traffic becomes easier to understand.
 - Learns friendly host names from `/usr/local/etc/socx_hosts.conf` and cached DHCP leases when available.
+- Tracks known vs unknown LAN devices and logs unknown service ports to `/var/db/socx_unknown_services.log` so the wall gets smarter over time.
 - Adds WAN health and Speedtest 24-hour average/trend events to the rotating feed.
 - Adds AI/MIRANDA lab awareness for Ollama, vLLM, xAI/Grok, NVIDIA Build, OpenAI, Anthropic, Gemini, Hugging Face, Jupyter, Ray, MLflow, and related local lab services.
 - Shows CPU graph, CPU cores, RAM/ARC, pf state/search counters, live interface rates, and top processes in the top cockpit.
@@ -95,6 +99,10 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-iftop-color` and `scripts/socx_iftop_color.pl` - color flow radar wrapper and renderer.
 - `scripts/socx-tcpdump-color` and `scripts/socx_tcpdump_color.pl` - color packet story wrapper and renderer.
 - `scripts/socx-incident` - short incident command that runs capture and prints the latest bundle manifest.
+- `scripts/socx-report` - daily/weekly text report generator for firewall, DNSBL, IDS, VPN, UPS, Speedtest, hosts, and unknown ports.
+- `scripts/socx-hosts-audit` - builds a known/unknown LAN device list from host config, ARP, DHCP leases, and PF states.
+- `scripts/socx-explain` - explains short labels such as `tls`, `dnsbl`, `nut`, `sysl`, `game`, and `unk`.
+- `scripts/socx-miranda-bridge` - exports a compact JSON summary for MIRANDA or another local-AI/SOC collector.
 - `scripts/iftopx`, `scripts/tcpdumpx`, `scripts/socx` - convenience launchers.
 - `scripts/socweb` - browser dashboard launcher.
 - `web/socx-web.py` - lightweight Python WebSocket/HTTP backend for the browser wall.
@@ -255,6 +263,7 @@ Use `socx-incident` during a suspicious event. It calls `socx-incident-capture`,
 Friendly device names:
 
 ```sh
+socx-hosts-audit
 vi /usr/local/etc/socx_hosts.conf
 ```
 
@@ -268,6 +277,44 @@ Example:
 ```
 
 When a mapping exists, SOCX renders flows as names such as `MIRANDA-Workstation/LAN.116`; when there is no mapping, it falls back to DHCP lease hostnames and then compact `LAN.x` labels.
+
+Unknown ports and labels:
+
+```sh
+socx-explain tls
+socx-explain dnsbl
+socx-explain unknowns
+tail -40 /var/db/socx_unknown_services.log
+vi /usr/local/etc/socx_services.conf
+```
+
+When SOCX repeatedly sees an unlabeled port, it appends a compact observation to `/var/db/socx_unknown_services.log`. Add stable local labels to `/usr/local/etc/socx_services.conf` using `port=name`, for example `540=custom-app`.
+
+Daily/weekly report:
+
+```sh
+socx-report daily
+socx-report weekly
+```
+
+Reports are written to `/root/socx-reports/` and include firewall blocks, DNSBL samples, IDS samples, VPN/gateway status, Speedtest cache, UPS cache, top PF states, Service Watchdog data, unknown ports, and a host audit.
+
+MIRANDA/local-AI bridge:
+
+```sh
+socx-miranda-bridge
+SOCX_MIRANDA_POST_URL=http://192.168.1.116:8093/api/socx socx-miranda-bridge
+```
+
+By default, this writes `/tmp/socx-miranda-export.json`. It only posts when `SOCX_MIRANDA_POST_URL` is set, so it is safe to use as a local export even before MIRANDA has an ingest endpoint.
+
+Alert mode:
+
+```sh
+SOCX_ALERT_MODE=auto
+```
+
+`auto` keeps high/critical events visible longer in rotate mode while preserving the current wall layout. Use `SOCX_ALERT_MODE=off` if you want the feed to rotate at the raw configured timing.
 
 Wall ticker speed can be tuned with:
 

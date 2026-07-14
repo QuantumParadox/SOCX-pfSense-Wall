@@ -1,0 +1,39 @@
+#!/bin/sh
+set -u
+
+OUT="${SOCX_MIRANDA_EXPORT:-/tmp/socx-miranda-export.json}"
+POST_URL="${SOCX_MIRANDA_POST_URL:-}"
+
+fw="$(tail -2000 /var/log/filter.log 2>/dev/null | grep -Eic ',block,|,reject,' || true)"
+dns="$(tail -2000 /var/log/pfblockerng/dnsbl.log 2>/dev/null | wc -l | awk '{print $1}' || echo 0)"
+ids="$(find /var/log/suricata -type f -name alerts.log -maxdepth 2 2>/dev/null | xargs tail -300 2>/dev/null | wc -l | awk '{print $1}' || echo 0)"
+vpn="$(/usr/local/sbin/pfSsh.php playback gatewaystatus 2>/dev/null | tr '\n' ' ' | sed 's/"/\\"/g' | cut -c1-800)"
+speed="$(cat /tmp/socx-speedtest-cache.env 2>/dev/null | tr '\n' ';' | sed 's/"/\\"/g' | cut -c1-800)"
+unknown="$(tail -20 /var/db/socx_unknown_services.log 2>/dev/null | sed 's/"/\\"/g' | awk '{printf "%s\\n",$0}' | tr '\n' ';' | cut -c1-800)"
+
+cat > "$OUT" <<EOF
+{
+  "source": "SOCX-pfSense-Wall",
+  "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "summary": {
+    "firewall_blocks_sampled": $fw,
+    "dnsbl_lines_sampled": $dns,
+    "ids_alert_lines_sampled": $ids
+  },
+  "vpn_gateway_status": "$vpn",
+  "speedtest_cache": "$speed",
+  "unknown_services": "$unknown",
+  "recommended_prompt": "Summarize SOCX network health, likely benign noise vs items worth checking, and evidence-preserving next steps."
+}
+EOF
+
+echo "$OUT"
+
+if [ -n "$POST_URL" ]; then
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsS -X POST -H 'Content-Type: application/json' --data-binary "@$OUT" "$POST_URL" && echo
+    else
+        echo "curl not installed; set up a local collector or copy $OUT" >&2
+        exit 1
+    fi
+fi

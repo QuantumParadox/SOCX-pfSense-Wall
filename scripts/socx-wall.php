@@ -5088,6 +5088,10 @@ function collect_activity_summary_events(array &$state, array $events, array $fl
     foreach (top_device_activity_events($flows) as $event) {
         $summary[] = $event;
     }
+    $deviceEvent = known_unknown_device_event($flows);
+    if ($deviceEvent !== null) {
+        $summary[] = $deviceEvent;
+    }
 
     $wanRate = (int)($wan['rx'] ?? 0) + (int)($wan['tx'] ?? 0);
     $lanRate = (int)($lan['rx'] ?? 0) + (int)($lan['tx'] ?? 0);
@@ -5188,6 +5192,49 @@ function top_device_activity_events(array $flows): array
             $services ? implode('+', $services) : 'flow'));
     }
     return $events;
+}
+
+function known_unknown_device_event(array $flows): ?array
+{
+    $known = [];
+    $unknown = [];
+    foreach ($flows as $flow) {
+        foreach (['src', 'dst'] as $field) {
+            $label = (string)($flow[$field] ?? '');
+            if (!endpoint_is_lan($label)) {
+                continue;
+            }
+            $key = lan_endpoint_key($label);
+            if ($key === '') {
+                continue;
+            }
+            if (str_contains($label, '/LAN.')) {
+                $known[$key] = true;
+            } else {
+                $unknown[$key] = true;
+            }
+        }
+    }
+    $knownCount = count($known);
+    $unknownCount = count($unknown);
+    if (($knownCount + $unknownCount) <= 0) {
+        return null;
+    }
+    $severity = $unknownCount > 0 ? 'LOW' : 'INFO';
+    return soc_event('DEVICE', $severity, sprintf('Known devices %d | unknown %d | name unknowns in socx_hosts.conf',
+        $knownCount,
+        $unknownCount));
+}
+
+function lan_endpoint_key(string $label): string
+{
+    if (preg_match('/LAN\.(\d+)/', $label, $m)) {
+        return 'LAN.' . $m[1];
+    }
+    if (preg_match('/192\.168\.1\.(\d+)/', $label, $m)) {
+        return 'LAN.' . $m[1];
+    }
+    return '';
 }
 
 function socx_health_score(array $wanHealth, array $vpnStatus, array $ups, array $mem, array $cpu, array $speedtest, array $pulse): array
@@ -6108,11 +6155,13 @@ function advance_rotating_event_feed(array &$state, array $cfg, float $now): voi
 
 function event_feed_duration(string $event, array $cfg): int
 {
+    $alertMode = strtolower((string)(getenv('SOCX_ALERT_MODE') ?: 'auto'));
+    $boost = in_array($alertMode, ['auto', 'alert', 'aggressive', '1', 'true', 'yes'], true);
     if (str_contains($event, '[CRIT]')) {
-        return (int)($cfg['crit_seconds'] ?? 8);
+        return $boost ? max(8, (int)($cfg['crit_seconds'] ?? 8)) : (int)($cfg['crit_seconds'] ?? 8);
     }
     if (str_contains($event, '[HIGH]')) {
-        return (int)($cfg['high_seconds'] ?? 6);
+        return $boost ? max(4, (int)($cfg['high_seconds'] ?? 6)) : (int)($cfg['high_seconds'] ?? 6);
     }
     if (str_contains($event, '[MED]')) {
         return (int)($cfg['med_seconds'] ?? 4);
@@ -6921,7 +6970,39 @@ function service_name_for_ports(string $dstPort, string $srcPort, string $proto)
     if ($srcName !== '' && !str_starts_with($srcName, 'port')) {
         return $srcName;
     }
-    return $dstName !== '' ? $dstName : ($srcName !== '' ? $srcName : 'unknown');
+    $name = $dstName !== '' ? $dstName : ($srcName !== '' ? $srcName : 'unknown');
+    if (str_starts_with($name, 'port')) {
+        socx_learn_unknown_service($name, $proto);
+    }
+    return $name;
+}
+
+function socx_learn_unknown_service(string $name, string $proto): void
+{
+    static $seen = [];
+    if (!preg_match('/^port(\d+)$/', $name, $m)) {
+        return;
+    }
+    $port = $m[1];
+    if ($port === '' || (int)$port <= 0) {
+        return;
+    }
+    if ((int)$port >= 32768) {
+        return;
+    }
+    $key = strtoupper($proto) . '/' . $port;
+    $now = time();
+    if (isset($seen[$key]) && ($now - $seen[$key]) < 60) {
+        return;
+    }
+    $seen[$key] = $now;
+    $file = getenv('SOCX_UNKNOWN_SERVICES_LOG') ?: '/var/db/socx_unknown_services.log';
+    $line = sprintf("%s %s port=%s proto=%s hint=add_to_/usr/local/etc/socx_services.conf\n",
+        date('c'),
+        $key,
+        $port,
+        strtoupper($proto));
+    @file_put_contents($file, $line, FILE_APPEND | LOCK_EX);
 }
 
 function service_override_name(string $port): string

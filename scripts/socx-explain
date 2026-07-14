@@ -1,0 +1,58 @@
+#!/bin/sh
+set -eu
+
+label="${1:-}"
+
+show_all() {
+cat <<'EOF'
+SOCX service labels
+
+tls     HTTPS/TLS encrypted web or app traffic
+web     plain HTTP/web traffic
+dns     DNS resolver traffic
+dnsbl   DNSBL or sinkhole match from pfBlockerNG-style logs
+ssh     SSH remote shell traffic
+vpn     WireGuard/OpenVPN/IPsec tunnel or gateway traffic
+ntp     time sync
+snmp    SNMP monitoring, often UPS/switch/AP telemetry
+nut     Network UPS Tools, UPS monitoring/control
+sysl    syslog forwarding
+ssdp    local discovery/UPnP multicast
+mdns    local mDNS/Bonjour discovery
+game    Steam/game service range
+mail    mail protocols
+app     app-specific encrypted or unclassified service
+ping    ICMP health check
+unk     unknown service; check /var/db/socx_unknown_services.log
+
+Commands:
+  socx-explain tls
+  socx-explain unknowns
+  socx-explain all
+EOF
+}
+
+case "$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')" in
+    ""|all) show_all ;;
+    unknowns|unk)
+        echo "Unknown service observations:"
+        tail -40 /var/db/socx_unknown_services.log 2>/dev/null || echo "No unknown-service log yet."
+        ;;
+    tls) echo "tls: encrypted HTTPS/TLS traffic. Normal for web apps, cloud APIs, LLM services, phones, and browsers." ;;
+    web) echo "web: plain HTTP traffic. Less common now; inspect if it carries sensitive data." ;;
+    dns) echo "dns: DNS query/response traffic, usually pfSense Unbound or upstream DNS." ;;
+    dnsbl) echo "dnsbl: DNS block/sinkhole match. This is a domain reputation/filtering event, not always a full app outage." ;;
+    ssh) echo "ssh: secure shell/admin traffic." ;;
+    vpn) echo "vpn: tunnel traffic or VPN gateway/interface flow." ;;
+    ntp) echo "ntp: time synchronization." ;;
+    snmp) echo "snmp: monitoring telemetry, commonly UPS, switch, AP, or printer data." ;;
+    nut) echo "nut: Network UPS Tools traffic for UPS telemetry." ;;
+    sysl) echo "sysl: syslog forwarding from pfSense to a log host/SIEM." ;;
+    ssdp) echo "ssdp: local discovery/UPnP chatter on the LAN." ;;
+    mdns) echo "mdns: local Bonjour/mDNS discovery." ;;
+    game) echo "game: Steam/game service traffic, often ports 27015-27050." ;;
+    mail) echo "mail: SMTP/IMAP/POP mail traffic." ;;
+    app) echo "app: recognized application traffic that is not specific enough for a better short label yet." ;;
+    ping) echo "ping: ICMP health check or gateway monitor traffic." ;;
+    *) echo "$label: no built-in explanation yet. Check /usr/local/etc/socx_services.conf and /var/db/socx_unknown_services.log." ;;
+esac

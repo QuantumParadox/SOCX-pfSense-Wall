@@ -1,0 +1,88 @@
+#!/bin/sh
+set -u
+
+OUTDIR="${SOCX_REPORT_DIR:-/root/socx-reports}"
+PERIOD="${1:-daily}"
+STAMP="$(date +%Y%m%d-%H%M%S)"
+OUT="$OUTDIR/socx-$PERIOD-$STAMP.txt"
+
+mkdir -p "$OUTDIR"
+
+section() {
+    {
+        echo
+        echo "## $1"
+        echo
+    } >> "$OUT"
+}
+
+run() {
+    "$@" >> "$OUT" 2>&1 || true
+}
+
+{
+    echo "SOCX $PERIOD report"
+    echo "Generated: $(date)"
+    echo "Host: $(hostname 2>/dev/null || echo pfSense)"
+} > "$OUT"
+
+section "Executive Summary"
+fw="$(tail -2000 /var/log/filter.log 2>/dev/null | grep -Eic ',block,|,reject,' || true)"
+dns="$(tail -2000 /var/log/pfblockerng/dnsbl.log 2>/dev/null | wc -l | awk '{print $1}' || echo 0)"
+ids="$(find /var/log/suricata -type f -name alerts.log -maxdepth 2 2>/dev/null | xargs tail -300 2>/dev/null | wc -l | awk '{print $1}' || echo 0)"
+echo "Firewall blocks sampled: $fw" >> "$OUT"
+echo "DNSBL lines sampled: $dns" >> "$OUT"
+echo "Suricata alert lines sampled: $ids" >> "$OUT"
+
+section "Speedtest"
+if [ -f /tmp/socx-speedtest-cache.env ]; then
+    cat /tmp/socx-speedtest-cache.env >> "$OUT"
+elif [ -f /tmp/socx-speedtest-cache.json ]; then
+    cat /tmp/socx-speedtest-cache.json >> "$OUT"
+else
+    echo "No speedtest cache found." >> "$OUT"
+fi
+
+section "UPS"
+if [ -f /tmp/socx-ups-cache.env ]; then
+    cat /tmp/socx-ups-cache.env >> "$OUT"
+elif [ -f /tmp/socx-ups-cache.json ]; then
+    cat /tmp/socx-ups-cache.json >> "$OUT"
+else
+    echo "No UPS cache found." >> "$OUT"
+fi
+
+section "VPN And Gateways"
+run /usr/local/sbin/pfSsh.php playback gatewaystatus
+run sh -c 'wg show 2>/dev/null || true'
+
+section "Top PF States"
+run sh -c 'pfctl -ss 2>/dev/null | head -80'
+
+section "Service Watchdog"
+run php -r 'require_once("config.inc"); print_r(config_get_path("installedpackages/servicewatchdog", []));'
+
+section "Unknown Ports To Label"
+if [ -f /var/db/socx_unknown_services.log ]; then
+    tail -80 /var/db/socx_unknown_services.log >> "$OUT"
+else
+    echo "No unknown-service log yet." >> "$OUT"
+fi
+
+section "Host Audit"
+if command -v socx-hosts-audit >/dev/null 2>&1; then
+    SOCX_HOSTS_AUDIT_OUT=/tmp/socx-report-hosts.txt socx-hosts-audit >> "$OUT" 2>&1
+else
+    echo "socx-hosts-audit not installed." >> "$OUT"
+fi
+
+section "Recent Firewall Blocks"
+run sh -c 'tail -200 /var/log/filter.log 2>/dev/null | grep -Ei ",block,|,reject," | tail -40'
+
+section "Recent DNSBL"
+run sh -c 'tail -80 /var/log/pfblockerng/dnsbl.log 2>/dev/null'
+
+section "Recent IDS"
+run sh -c 'find /var/log/suricata -type f -name alerts.log -maxdepth 2 2>/dev/null | xargs tail -80 2>/dev/null'
+
+echo "$OUT"

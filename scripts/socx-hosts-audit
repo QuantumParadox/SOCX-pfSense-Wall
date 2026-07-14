@@ -1,0 +1,71 @@
+#!/bin/sh
+set -eu
+
+HOSTS_FILE="${SOCX_HOSTS_FILE:-/usr/local/etc/socx_hosts.conf}"
+OUT="${SOCX_HOSTS_AUDIT_OUT:-/tmp/socx-hosts-audit.txt}"
+
+tmp="$(mktemp /tmp/socx-hosts.XXXXXX)"
+trap 'rm -f "$tmp"' EXIT
+
+{
+    echo "# SOCX host audit"
+    echo "# generated $(date)"
+    echo
+    echo "Configured host names:"
+    if [ -f "$HOSTS_FILE" ]; then
+        grep -Ev '^\s*(#|$)' "$HOSTS_FILE" || true
+    else
+        echo "missing $HOSTS_FILE"
+    fi
+    echo
+    echo "Observed LAN devices:"
+} > "$OUT"
+
+{
+    arp -an 2>/dev/null | sed -n 's/.*(\([0-9][0-9.]*\)) at \([0-9a-f:][0-9a-f:]*\).*/\1 \2 arp/p'
+    pfctl -ss 2>/dev/null | awk '
+      {
+        for (i=1; i<=NF; i++) {
+          if (match($i, /192\.168\.1\.[0-9]+/)) {
+            ip=substr($i, RSTART, RLENGTH)
+            print ip " - pfstate"
+          }
+        }
+      }'
+    awk '
+      /lease 192\.168\.1\./ {ip=$2}
+      /hardware ethernet/ {mac=$3; gsub(";","",mac)}
+      /client-hostname/ {name=$2; gsub(/[\";]/,"",name)}
+      /}/ {if (ip!="") {print ip " " (mac==""?"-":mac) " dhcp " (name==""?"":name)}; ip=""; mac=""; name=""}
+    ' /var/dhcpd/var/db/dhcpd.leases 2>/dev/null || true
+} | sort -u > "$tmp"
+
+awk -v hosts="$HOSTS_FILE" '
+BEGIN {
+  while ((getline line < hosts) > 0) {
+    if (line ~ /^[[:space:]]*#/ || line !~ /=/) continue
+    split(line, a, "=")
+    known[a[1]]=a[2]
+  }
+}
+{
+  ip=$1; mac=$2; source=$3; name=$4
+  label=(ip in known ? known[ip] : "")
+  status=(label=="" ? "UNKNOWN" : "KNOWN")
+  printf "%-15s %-17s %-8s %-7s %s\n", ip, mac, source, status, (label!=""?label:name)
+  if (label=="" && ip ~ /^192\.168\.1\./) {
+    split(ip, oct, ".")
+    suggestion=(name!=""?name:"Device-" oct[4])
+    gsub(/[^A-Za-z0-9_.-]/, "", suggestion)
+    missing[ip]=suggestion
+  }
+}
+END {
+  print ""
+  print "Suggested additions:"
+  for (ip in missing) {
+    print ip "=" missing[ip]
+  }
+}' "$tmp" >> "$OUT"
+
+cat "$OUT"

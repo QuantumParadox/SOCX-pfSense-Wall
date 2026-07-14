@@ -16,6 +16,10 @@ install -m 0755 "$ROOT/scripts/socx-speedtest-cache" /usr/local/sbin/socx-speedt
 install -m 0755 "$ROOT/scripts/socx-packet-radar-cache" /usr/local/sbin/socx-packet-radar-cache
 install -m 0755 "$ROOT/scripts/socx-incident-capture" /usr/local/sbin/socx-incident-capture
 install -m 0755 "$ROOT/scripts/socx-incident" /usr/local/bin/socx-incident
+install -m 0755 "$ROOT/scripts/socx-report" /usr/local/bin/socx-report
+install -m 0755 "$ROOT/scripts/socx-hosts-audit" /usr/local/bin/socx-hosts-audit
+install -m 0755 "$ROOT/scripts/socx-explain" /usr/local/bin/socx-explain
+install -m 0755 "$ROOT/scripts/socx-miranda-bridge" /usr/local/bin/socx-miranda-bridge
 install -m 0755 "$ROOT/scripts/socx-iftop-color" /usr/local/sbin/socx-iftop-color
 install -m 0755 "$ROOT/scripts/socx-tcpdump-color" /usr/local/sbin/socx-tcpdump-color
 install -m 0755 "$ROOT/scripts/socx_iftop_color.pl" /usr/local/sbin/socx_iftop_color.pl
