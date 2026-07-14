@@ -55,6 +55,37 @@ fi
 section "VPN And Gateways"
 run /usr/local/sbin/pfSsh.php playback gatewaystatus
 run sh -c 'wg show 2>/dev/null || true'
+if command -v socx-doctor >/dev/null 2>&1; then
+    run socx-doctor gateways
+fi
+
+section "SOCX Doctor DNSBL"
+if command -v socx-doctor >/dev/null 2>&1; then
+    run socx-doctor dnsbl
+else
+    echo "socx-doctor not installed." >> "$OUT"
+fi
+
+section "SOCX Doctor IDS"
+if command -v socx-doctor >/dev/null 2>&1; then
+    run socx-doctor ids
+else
+    echo "socx-doctor not installed." >> "$OUT"
+fi
+
+section "SOCX Doctor Traffic Totals"
+if command -v socx-doctor >/dev/null 2>&1; then
+    run socx-doctor vnstat
+else
+    echo "socx-doctor not installed." >> "$OUT"
+fi
+
+section "SOCX Doctor Log Pressure"
+if command -v socx-doctor >/dev/null 2>&1; then
+    run socx-doctor logs
+else
+    echo "socx-doctor not installed." >> "$OUT"
+fi
 
 section "Top PF States"
 run sh -c 'pfctl -ss 2>/dev/null | head -80'

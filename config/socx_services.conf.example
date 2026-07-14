@@ -25,10 +25,13 @@
 27018=steam
 540=uucp
 81=web
+57=legacy
 306=legacy
 935=legacy
 943=vpn
+1009=legacy
 1013=legacy
+1018=legacy
 4000=app
 5355=llmnr
 5443=https

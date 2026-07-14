@@ -1,6 +1,8 @@
 #!/bin/sh
 set -u
 
+cmd="${1:-all}"
+arg="${2:-}"
 ok=0
 warn=0
 fail=0
@@ -12,8 +14,15 @@ mark() {
         OK) ok=$((ok + 1)) ;;
         WARN) warn=$((warn + 1)) ;;
         FAIL) fail=$((fail + 1)) ;;
+        INFO) ;;
     esac
     printf '%-5s %s\n' "$level" "$*"
+}
+
+finish() {
+    echo
+    printf 'summary OK=%d WARN=%d FAIL=%d\n' "$ok" "$warn" "$fail"
+    [ "$fail" -eq 0 ] || exit 1
 }
 
 age_file() {
@@ -25,91 +34,239 @@ age_file() {
     echo $((now - mod))
 }
 
-echo "SOCX doctor"
-echo "generated $(date)"
-echo
+header() {
+    echo "SOCX doctor: $1"
+    echo "generated $(date)"
+    echo
+}
 
-if tmux has-session -t socx 2>/dev/null; then
-    mark OK "wall tmux session is running"
-else
-    mark FAIL "wall tmux session is not running"
-fi
+gateway_table() {
+    /usr/local/sbin/pfSsh.php playback gatewaystatus 2>/dev/null || true
+}
 
-err_bytes="$(wc -c /tmp/socx-wall.err 2>/dev/null | awk '{print $1}')"
-if [ "${err_bytes:-0}" = "0" ]; then
-    mark OK "wall error log is clean"
-else
-    mark FAIL "wall error log has ${err_bytes} bytes: /tmp/socx-wall.err"
-fi
-
-if [ -f /tmp/socx-speedtest-cache.env ]; then
-    status="$(sed -n 's/^status=//p' /tmp/socx-speedtest-cache.env | tail -1)"
-    age="$(age_file /tmp/socx-speedtest-cache.env)"
-    case "$status" in
-        ok) mark OK "speedtest cache ok, age ${age:-?}s" ;;
-        running|waiting) mark WARN "speedtest cache status=$status, age ${age:-?}s" ;;
-        *) mark WARN "speedtest cache status=${status:-unknown}, age ${age:-?}s" ;;
-    esac
-else
-    mark WARN "speedtest cache missing"
-fi
-
-if [ -f /tmp/socx-ups-cache.env ] || [ -f /tmp/socx-ups-cache.json ]; then
-    mark OK "UPS cache exists"
-else
-    mark WARN "UPS cache missing"
-fi
-
-vpn_line="$(/usr/local/sbin/pfSsh.php playback gatewaystatus 2>/dev/null | awk 'NR>1 && $1 !~ /WAN/ {total++; if (tolower($7) ~ /online/) up++} END {if (total>0) printf "%d/%d", up, total}')"
-if [ -n "$vpn_line" ]; then
-    up="${vpn_line%/*}"
-    total="${vpn_line#*/}"
-    if [ "$up" = "$total" ]; then
-        mark OK "VPN gateways online $vpn_line"
-    elif [ "$up" = "0" ]; then
-        mark FAIL "VPN gateways down $vpn_line"
-    else
-        mark WARN "VPN gateways partial $vpn_line"
+doctor_gateways() {
+    header "gateways"
+    table="$(gateway_table)"
+    if [ -z "$table" ]; then
+        mark FAIL "gatewaystatus unavailable"
+        finish
     fi
-else
-    mark WARN "VPN gateway status unavailable or no VPN gateways found"
-fi
+    printf '%s\n' "$table" | awk 'NR==1 || NF {print}'
+    echo
+    printf '%s\n' "$table" | awk '
+      NR>1 && NF>=7 {
+        name=$1; mon=$2; loss=$6; status=tolower($7)
+        total++
+        if (name ~ /WAN/) wan++
+        if (status ~ /online/) up++
+        else downlist=downlist " " name ":" $7 "/" loss
+        if (status ~ /pending|unknown|down|alarm/ || loss ~ /^100/) bad++
+      }
+      END {
+        if (total == 0) print "WARN no monitored gateways parsed"
+        else if (bad > 0) print "WARN gateway monitor watch: " bad "/" total " problematic" downlist
+        else print "OK all parsed gateways online: " up "/" total
+      }' | while IFS= read -r line; do
+        set -- $line
+        level="$1"; shift
+        mark "$level" "$*"
+    done
 
-if [ -f /etc/cron.d/socx-report ]; then
-    mark OK "daily report cron installed"
-else
-    mark WARN "daily report cron missing"
-fi
+    dp="$(pgrep -af dpinger 2>/dev/null || true)"
+    if [ -n "$dp" ]; then
+        count="$(printf '%s\n' "$dp" | wc -l | awk '{print $1}')"
+        mark OK "dpinger processes running: $count"
+    else
+        mark WARN "no dpinger processes found"
+    fi
 
-if [ -f /etc/cron.d/socx-miranda ]; then
-    mark OK "MIRANDA export cron installed"
-else
-    mark WARN "MIRANDA export cron missing"
-fi
+    recent="$(tail -200 /var/log/gateways.log 2>/dev/null | grep -Ei 'sendto error| alarm | down | pending | unknown | packet loss|100% loss' | tail -5)"
+    if [ -n "$recent" ]; then
+        mark WARN "recent gateway log warnings:"
+        printf '%s\n' "$recent" | sed 's/^/      /'
+    else
+        mark OK "no recent gateway warning lines"
+    fi
+    finish
+}
 
-if [ -f /tmp/socx-miranda-analysis.env ]; then
-    sev="$(sed -n 's/^severity=//p' /tmp/socx-miranda-analysis.env | tail -1)"
-    reason="$(sed -n 's/^reason=//p' /tmp/socx-miranda-analysis.env | tail -1)"
-    age="$(age_file /tmp/socx-miranda-analysis.env)"
-    mark OK "MIRANDA insight cache severity=${sev:-unknown}, age ${age:-?}s, ${reason:-no reason}"
-else
-    mark WARN "MIRANDA insight cache missing; run socx-miranda-bridge or wait for cron"
-fi
+domain_family() {
+    d="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+    case "$d" in
+        *microsoft*|*windowsupdate*|*office*|*xbox*|*live.com*) echo microsoft ;;
+        *netflix*|*hulu*|*disney*|*roku*|*youtube*|*googlevideo*) echo streaming ;;
+        *apple*|*icloud*|*mzstatic*) echo apple ;;
+        *doubleclick*|*adservice*|*adsystem*|*analytics*|*metrics*) echo ads-tracker ;;
+        *samsung*|*segment.io*|*cloudfront*|*akamai*|*fastly*) echo app-cdn ;;
+        *) echo unknown ;;
+    esac
+}
 
-if pgrep -f 'vnstatd' >/dev/null 2>&1; then
-    mark OK "vnstatd is running"
-else
-    mark WARN "vnstatd is not running"
-fi
+doctor_dnsbl() {
+    header "dnsbl"
+    logs="/var/log/pfblockerng/dnsbl.log /var/log/pfblockerng/dns_reply.log"
+    tmp="/tmp/socx-doctor-dnsbl.$$"
+    : > "$tmp"
+    for f in $logs; do
+        [ -f "$f" ] && tail -1000 "$f" >> "$tmp"
+    done
+    if [ ! -s "$tmp" ]; then
+        rm -f "$tmp"
+        mark OK "no recent DNSBL log data"
+        finish
+    fi
+    mark INFO "top blocked domains:"
+    awk -F, '
+      NF >= 3 && $3 ~ /\./ {print $3; next}
+      {print}
+    ' "$tmp" |
+        sed -n 's/.*\([A-Za-z0-9][A-Za-z0-9._-]*\.[A-Za-z][A-Za-z][A-Za-z0-9.-]*\).*/\1/p' |
+        tr '[:upper:]' '[:lower:]' |
+        awk 'length($0) > 5 && $0 !~ /^[a-z]\.[a-z][a-z]/ && $0 !~ /^[a-z]\.com$/ && $0 !~ /^[a-z]\.net$/ && $0 !~ /^[a-z]\.org$/ {print}' |
+        sort | uniq -c | sort -nr | head -12 |
+        while read -r c d; do
+            fam="$(domain_family "$d")"
+            printf '      %-5s %-12s %s\n' "$c" "$fam" "$d"
+        done
+    fp="$(awk -F, 'NF >= 3 && $3 ~ /\./ {print $3; next} {print}' "$tmp" | grep -Eic 'microsoft|windowsupdate|office|xbox|netflix|hulu|disney|youtube|googlevideo|icloud|apple')"
+    if [ "$fp" -gt 0 ] 2>/dev/null; then
+        mark WARN "$fp possible app/streaming/vendor blocks; check before whitelisting"
+    else
+        mark OK "no obvious Microsoft/streaming/vendor false-positive domains in sample"
+    fi
+    rm -f "$tmp"
+    finish
+}
 
-unknown_bytes="$(wc -c /var/db/socx_unknown_services.log 2>/dev/null | awk '{print $1}')"
-if [ "${unknown_bytes:-0}" = "0" ]; then
-    mark OK "unknown service learner is clean"
-else
-    mark WARN "unknown service learner has ${unknown_bytes} bytes"
-fi
+doctor_ids() {
+    header "ids"
+    tmp="/tmp/socx-doctor-ids.$$"
+    find /var/log/suricata -maxdepth 2 -type f \( -name alerts.log -o -name fast.log \) 2>/dev/null |
+        xargs tail -600 2>/dev/null > "$tmp"
+    if [ ! -s "$tmp" ]; then
+        rm -f "$tmp"
+        mark OK "no recent Suricata alert data"
+        finish
+    fi
+    routine="$(grep -Eic 'SURICATA (Stream|Ethertype unknown)|Generic Protocol Command Decode|invalid ack|invalid timestamp|bad window|wrong seq|retransmission|decoder event' "$tmp" || true)"
+    high="$(grep -Eiv 'SURICATA (Stream|Ethertype unknown)|Generic Protocol Command Decode|Raw pkt:' "$tmp" | grep -Eic 'Priority: 1|malware|trojan|ransom|command.?and.?control|c2 beacon|cnc|callback|exploit|blocked|drop' || true)"
+    total="$(wc -l < "$tmp" | awk '{print $1}')"
+    if [ "$high" -gt 0 ] 2>/dev/null; then
+        mark WARN "$high high-signal IDS/IPS lines in last sample"
+    else
+        mark OK "no high-signal IDS/IPS lines in last sample"
+    fi
+    if [ "$routine" -gt 50 ] 2>/dev/null; then
+        mark WARN "$routine routine Suricata decode/watch lines; consider rule suppression/tuning"
+    else
+        mark OK "routine IDS noise is moderate: $routine/$total"
+    fi
+    mark INFO "top IDS messages:"
+    sed -n 's/.*\[\*\*\][[:space:]]*\(\[[^]]*\][[:space:]]*\)\{0,1\}\([^[]*\)[[:space:]]*\[\*\*\].*/\2/p' "$tmp" |
+        sed 's/^ *//;s/ *$//' | sort | uniq -c | sort -nr | head -8 | sed 's/^/      /'
+    rm -f "$tmp"
+    finish
+}
 
-echo
-printf 'summary OK=%d WARN=%d FAIL=%d\n' "$ok" "$warn" "$fail"
-[ "$fail" -eq 0 ] || exit 1
-exit 0
+doctor_vnstat() {
+    header "vnstat"
+    if pgrep -f 'vnstatd' >/dev/null 2>&1; then
+        mark OK "vnstatd process is running"
+    else
+        mark WARN "vnstatd process is not running"
+    fi
+    if command -v vnstat >/dev/null 2>&1; then
+        out="$(vnstat --iflist 2>/dev/null || true)"
+        [ -n "$out" ] && mark INFO "vnstat interfaces: $out" || mark WARN "vnstat --iflist returned no interfaces"
+        vnstat --oneline 2>/dev/null | head -1 | sed 's/^/      /'
+    else
+        mark WARN "vnstat command missing"
+    fi
+    for d in /var/db/vnstat /var/lib/vnstat; do
+        if [ -d "$d" ]; then
+            mark OK "vnstat database directory exists: $d"
+            ls -la "$d" 2>/dev/null | tail -8 | sed 's/^/      /'
+        fi
+    done
+    finish
+}
+
+doctor_logs() {
+    header "log pressure"
+    for f in /var/log/filter.log /var/log/system.log /var/log/resolver.log /var/log/gateways.log /var/log/pfblockerng/dnsbl.log; do
+        [ -f "$f" ] || continue
+        bytes="$(wc -c "$f" 2>/dev/null | awk '{print $1}')"
+        lines="$(tail -1000 "$f" 2>/dev/null | wc -l | awk '{print $1}')"
+        case "$bytes" in ''|0) mark OK "$f empty" ;; *) mark INFO "$f size=${bytes}B sample_lines=$lines" ;; esac
+    done
+    top -b -n 1 2>/dev/null | head -18 | sed 's/^/      /'
+    finish
+}
+
+doctor_why() {
+    target="$1"
+    if [ -z "$target" ]; then
+        echo "Usage: socx-doctor why-blocked <host|domain|ip|port>" >&2
+        exit 2
+    fi
+    header "why-blocked $target"
+    grep -Fih "$target" /var/log/filter.log /var/log/pfblockerng/dnsbl.log /var/log/pfblockerng/dns_reply.log 2>/dev/null |
+        tail -30 | sed 's/^/      /'
+    hits="$(grep -Fih "$target" /var/log/filter.log /var/log/pfblockerng/dnsbl.log /var/log/pfblockerng/dns_reply.log 2>/dev/null | wc -l | awk '{print $1}')"
+    if [ "$hits" -gt 0 ] 2>/dev/null; then
+        mark WARN "$hits matching block/filter/DNSBL lines found"
+    else
+        mark OK "no direct block/DNSBL hits found for $target"
+    fi
+    finish
+}
+
+doctor_all() {
+    header "all"
+    if tmux has-session -t socx 2>/dev/null; then mark OK "wall tmux session is running"; else mark FAIL "wall tmux session is not running"; fi
+    err_bytes="$(wc -c /tmp/socx-wall.err 2>/dev/null | awk '{print $1}')"
+    [ "${err_bytes:-0}" = "0" ] && mark OK "wall error log is clean" || mark FAIL "wall error log has ${err_bytes} bytes: /tmp/socx-wall.err"
+    if [ -f /tmp/socx-speedtest-cache.env ]; then
+        status="$(sed -n 's/^status=//p' /tmp/socx-speedtest-cache.env | tail -1)"
+        age="$(age_file /tmp/socx-speedtest-cache.env)"
+        [ "$status" = "ok" ] && mark OK "speedtest cache ok, age ${age:-?}s" || mark WARN "speedtest cache status=${status:-unknown}, age ${age:-?}s"
+    else
+        mark WARN "speedtest cache missing"
+    fi
+    [ -f /tmp/socx-ups-cache.env ] || [ -f /tmp/socx-ups-cache.json ] && mark OK "UPS cache exists" || mark WARN "UPS cache missing"
+    vpn_line="$(gateway_table | awk 'NR>1 && $1 !~ /WAN/ {total++; if (tolower($7) ~ /online/) up++} END {if (total>0) printf "%d/%d", up, total}')"
+    if [ -n "$vpn_line" ]; then
+        up="${vpn_line%/*}"; total="${vpn_line#*/}"
+        [ "$up" = "$total" ] && mark OK "VPN gateways online $vpn_line" || mark WARN "VPN gateways not fully online $vpn_line"
+    else
+        mark WARN "VPN gateway status unavailable or no VPN gateways found"
+    fi
+    [ -f /etc/cron.d/socx-report ] && mark OK "daily report cron installed" || mark WARN "daily report cron missing"
+    [ -f /etc/cron.d/socx-miranda ] && mark OK "MIRANDA export cron installed" || mark WARN "MIRANDA export cron missing"
+    if [ -f /tmp/socx-miranda-analysis.env ]; then
+        sev="$(sed -n 's/^severity=//p' /tmp/socx-miranda-analysis.env | tail -1)"
+        reason="$(sed -n 's/^reason=//p' /tmp/socx-miranda-analysis.env | tail -1)"
+        age="$(age_file /tmp/socx-miranda-analysis.env)"
+        mark OK "MIRANDA insight cache severity=${sev:-unknown}, age ${age:-?}s, ${reason:-no reason}"
+    else
+        mark WARN "MIRANDA insight cache missing; run socx-miranda-bridge or wait for cron"
+    fi
+    pgrep -f 'vnstatd' >/dev/null 2>&1 && mark OK "vnstatd is running" || mark WARN "vnstatd is not running"
+    unknown_bytes="$(wc -c /var/db/socx_unknown_services.log 2>/dev/null | awk '{print $1}')"
+    [ "${unknown_bytes:-0}" = "0" ] && mark OK "unknown service learner is clean" || mark WARN "unknown service learner has ${unknown_bytes} bytes"
+    finish
+}
+
+case "$cmd" in
+    all|"") doctor_all ;;
+    gateways|gateway|dpinger) doctor_gateways ;;
+    dnsbl|dns) doctor_dnsbl ;;
+    ids|suricata) doctor_ids ;;
+    vnstat|vnstatd|traffic) doctor_vnstat ;;
+    logs|pressure|cpu) doctor_logs ;;
+    why-blocked|why) doctor_why "$arg" ;;
+    *)
+        echo "Usage: socx-doctor [all|gateways|dnsbl|ids|vnstat|logs|why-blocked <term>]" >&2
+        exit 2
+        ;;
+esac

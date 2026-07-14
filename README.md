@@ -321,9 +321,17 @@ socx-report weekly
 socx-report-cron install
 socx-report-cron status
 socx-doctor
+socx-doctor gateways
+socx-doctor dnsbl
+socx-doctor ids
+socx-doctor vnstat
+socx-doctor logs
+socx-doctor why-blocked samsungcloudsolution.net
 ```
 
 Reports are written to `/root/socx-reports/` and include firewall blocks, DNSBL samples, IDS samples, VPN/gateway status, Speedtest cache, UPS cache, top PF states, Service Watchdog data, unknown ports, and a host audit.
+
+`socx-doctor` is the operator troubleshooting command. It checks the wall, VPN/dpinger gateway health, DNSBL false-positive candidates, Suricata routine-vs-high-signal noise, Traffic Totals/vnStat, log pressure, and targeted “why was this blocked?” lookups.
 
 MIRANDA/local-AI bridge:
 
