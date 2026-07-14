@@ -1,0 +1,115 @@
+#!/bin/sh
+set -u
+
+ok=0
+warn=0
+fail=0
+
+mark() {
+    level="$1"
+    shift
+    case "$level" in
+        OK) ok=$((ok + 1)) ;;
+        WARN) warn=$((warn + 1)) ;;
+        FAIL) fail=$((fail + 1)) ;;
+    esac
+    printf '%-5s %s\n' "$level" "$*"
+}
+
+age_file() {
+    file="$1"
+    [ -f "$file" ] || { echo ""; return; }
+    now="$(date +%s)"
+    mod="$(stat -f %m "$file" 2>/dev/null || stat -c %Y "$file" 2>/dev/null || echo 0)"
+    [ "$mod" -gt 0 ] 2>/dev/null || { echo ""; return; }
+    echo $((now - mod))
+}
+
+echo "SOCX doctor"
+echo "generated $(date)"
+echo
+
+if tmux has-session -t socx 2>/dev/null; then
+    mark OK "wall tmux session is running"
+else
+    mark FAIL "wall tmux session is not running"
+fi
+
+err_bytes="$(wc -c /tmp/socx-wall.err 2>/dev/null | awk '{print $1}')"
+if [ "${err_bytes:-0}" = "0" ]; then
+    mark OK "wall error log is clean"
+else
+    mark FAIL "wall error log has ${err_bytes} bytes: /tmp/socx-wall.err"
+fi
+
+if [ -f /tmp/socx-speedtest-cache.env ]; then
+    status="$(sed -n 's/^status=//p' /tmp/socx-speedtest-cache.env | tail -1)"
+    age="$(age_file /tmp/socx-speedtest-cache.env)"
+    case "$status" in
+        ok) mark OK "speedtest cache ok, age ${age:-?}s" ;;
+        running|waiting) mark WARN "speedtest cache status=$status, age ${age:-?}s" ;;
+        *) mark WARN "speedtest cache status=${status:-unknown}, age ${age:-?}s" ;;
+    esac
+else
+    mark WARN "speedtest cache missing"
+fi
+
+if [ -f /tmp/socx-ups-cache.env ] || [ -f /tmp/socx-ups-cache.json ]; then
+    mark OK "UPS cache exists"
+else
+    mark WARN "UPS cache missing"
+fi
+
+vpn_line="$(/usr/local/sbin/pfSsh.php playback gatewaystatus 2>/dev/null | awk 'NR>1 && $1 !~ /WAN/ {total++; if (tolower($7) ~ /online/) up++} END {if (total>0) printf "%d/%d", up, total}')"
+if [ -n "$vpn_line" ]; then
+    up="${vpn_line%/*}"
+    total="${vpn_line#*/}"
+    if [ "$up" = "$total" ]; then
+        mark OK "VPN gateways online $vpn_line"
+    elif [ "$up" = "0" ]; then
+        mark FAIL "VPN gateways down $vpn_line"
+    else
+        mark WARN "VPN gateways partial $vpn_line"
+    fi
+else
+    mark WARN "VPN gateway status unavailable or no VPN gateways found"
+fi
+
+if [ -f /etc/cron.d/socx-report ]; then
+    mark OK "daily report cron installed"
+else
+    mark WARN "daily report cron missing"
+fi
+
+if [ -f /etc/cron.d/socx-miranda ]; then
+    mark OK "MIRANDA export cron installed"
+else
+    mark WARN "MIRANDA export cron missing"
+fi
+
+if [ -f /tmp/socx-miranda-analysis.env ]; then
+    sev="$(sed -n 's/^severity=//p' /tmp/socx-miranda-analysis.env | tail -1)"
+    reason="$(sed -n 's/^reason=//p' /tmp/socx-miranda-analysis.env | tail -1)"
+    age="$(age_file /tmp/socx-miranda-analysis.env)"
+    mark OK "MIRANDA insight cache severity=${sev:-unknown}, age ${age:-?}s, ${reason:-no reason}"
+else
+    mark WARN "MIRANDA insight cache missing; run socx-miranda-bridge or wait for cron"
+fi
+
+if pgrep -f 'vnstatd' >/dev/null 2>&1; then
+    mark OK "vnstatd is running"
+else
+    mark WARN "vnstatd is not running"
+fi
+
+unknown_bytes="$(wc -c /var/db/socx_unknown_services.log 2>/dev/null | awk '{print $1}')"
+if [ "${unknown_bytes:-0}" = "0" ]; then
+    mark OK "unknown service learner is clean"
+else
+    mark WARN "unknown service learner has ${unknown_bytes} bytes"
+fi
+
+echo
+printf 'summary OK=%d WARN=%d FAIL=%d\n' "$ok" "$warn" "$fail"
+[ "$fail" -eq 0 ] || exit 1
+exit 0

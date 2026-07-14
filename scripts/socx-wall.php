@@ -686,6 +686,7 @@ function collect_live_frame(array &$state, array $hosts): array
     $ups = collect_ups_metrics($state, $now);
     $vpnStatus = collect_vpn_status($state, $now);
     $speedtest = collect_speedtest_metrics($state, $now);
+    $mirandaInsight = collect_miranda_insight($now);
     update_speedtest_history($state, $speedtest, $now);
     update_metric_histories($state, $now, $wan, $lan, $pf);
     $commandEvents = collect_soc_command_events($state, $hosts, $now, [
@@ -711,6 +712,9 @@ function collect_live_frame(array &$state, array $hosts): array
     $speedtestEvent = speedtest_status_event($speedtest);
     if ($speedtestEvent !== null) {
         $events[] = $speedtestEvent;
+    }
+    if (!empty($mirandaInsight['available'])) {
+        $events[] = miranda_insight_event($mirandaInsight);
     }
     $events = balance_events_for_feed(prioritize_events($events), 80);
     $flows = collect_pf_state_flows($state, $hosts, $now);
@@ -786,6 +790,7 @@ function collect_live_frame(array &$state, array $hosts): array
         'ups' => $ups,
         'vpn_status' => $vpnStatus,
         'speedtest' => $speedtest,
+        'miranda_insight' => $mirandaInsight,
         'procs' => $procs,
         'flows' => $flows,
         'top_flow' => $topFlow,
@@ -1905,8 +1910,9 @@ function modern_network_rows(array $f, array $p): array
     $trend = trend_arrow($f, 'wan_traffic');
     $topFlow = is_array($f['top_flow'] ?? null) ? $f['top_flow'] : first_useful_flow($f['flows'] ?? []);
     $rotate = ((int)($f['tick'] ?? 0) % 24);
-    $showHealth = !empty($f['socx_health']) && $rotate >= 8 && $rotate < 14;
-    $showAi = !empty($f['ai_lab']) && $rotate >= 14;
+    $showHealth = !empty($f['socx_health']) && $rotate >= 6 && $rotate < 11;
+    $showInsight = !empty($f['miranda_insight']['available']) && $rotate >= 11 && $rotate < 17;
+    $showAi = !empty($f['ai_lab']) && $rotate >= 17;
     if ($w < 22) {
         $rows = [
             network_rate_line('WAN', (string)$f['wan']['down'], (string)$f['wan']['up'], $w),
@@ -1914,7 +1920,11 @@ function modern_network_rows(array $f, array $p): array
             network_dual_bar((int)($f['wan']['rx_bps'] ?? 0), (int)($f['wan']['tx_bps'] ?? 0), $w),
         ];
         if ($contentH >= 4) {
-            $rows[] = $showHealth ? socx_health_mini_line((array)$f['socx_health'], $w) : ($showAi ? ai_lab_mini_line((array)$f['ai_lab'], $w) : top_flow_mini_line($topFlow, $w));
+            $rows[] = $showHealth
+                ? socx_health_mini_line((array)$f['socx_health'], $w)
+                : ($showInsight
+                    ? miranda_insight_mini_line((array)$f['miranda_insight'], $w)
+                    : ($showAi ? ai_lab_mini_line((array)$f['ai_lab'], $w) : top_flow_mini_line($topFlow, $w)));
         }
         return $rows;
     }
@@ -1924,7 +1934,11 @@ function modern_network_rows(array $f, array $p): array
         network_bar_line('WAN', (int)($f['wan']['rx_bps'] ?? 0), (int)($f['wan']['tx_bps'] ?? 0), $w),
     ];
     if ($contentH >= 4) {
-        $rows[] = $showHealth ? socx_health_line((array)$f['socx_health'], $w) : ($showAi ? ai_lab_line((array)$f['ai_lab'], $w) : top_flow_line($topFlow, $w));
+        $rows[] = $showHealth
+            ? socx_health_line((array)$f['socx_health'], $w)
+            : ($showInsight
+                ? miranda_insight_line((array)$f['miranda_insight'], $w)
+                : ($showAi ? ai_lab_line((array)$f['ai_lab'], $w) : top_flow_line($topFlow, $w)));
     }
     return $rows;
 }
@@ -1974,6 +1988,21 @@ function ai_lab_short_name(string $name): string
         return 'AI';
     }
     return substr($clean, 0, 5);
+}
+
+function miranda_insight_mini_line(array $insight, int $width): string
+{
+    $severity = strtoupper((string)($insight['severity'] ?? 'INFO'));
+    $age = (string)($insight['age'] ?? '');
+    return truncate_text(sprintf('AI %s %s', $severity, $age), $width);
+}
+
+function miranda_insight_line(array $insight, int $width): string
+{
+    $severity = strtoupper((string)($insight['severity'] ?? 'INFO'));
+    $reason = trim((string)($insight['reason'] ?? 'SOCX analyzed'));
+    $age = trim((string)($insight['age'] ?? ''));
+    return truncate_text(sprintf('AI SOC %s%s | %s', $severity, $age !== '' ? ' ' . $age : '', $reason), $width);
 }
 
 function network_dual_bar(int $down, int $up, int $width): string
@@ -4531,6 +4560,8 @@ function threat_pulse_from_events(array $events, array $packets, array $hosts, a
     $fwDrops = 0;
     $dnsbl = 0;
     $ids = 0;
+    $idsHigh = 0;
+    $idsWatch = 0;
     $newHosts = 0;
     $seen = is_array($state['new_hosts_seen'] ?? null) ? $state['new_hosts_seen'] : [];
 
@@ -4544,6 +4575,12 @@ function threat_pulse_from_events(array $events, array $packets, array $hosts, a
             $dnsbl++;
         } elseif ($category === 'IDS' || $category === 'IPS') {
             $ids++;
+            $sev = strtoupper((string)($event['severity'] ?? 'WARN'));
+            if (in_array($sev, ['HIGH', 'CRIT'], true)) {
+                $idsHigh++;
+            } else {
+                $idsWatch++;
+            }
         }
 
         if (in_array($category, ['DHCP', 'ARP', 'DEVICE'], true)) {
@@ -4572,6 +4609,8 @@ function threat_pulse_from_events(array $events, array $packets, array $hosts, a
         'fw_drops_min' => $fwDrops,
         'dnsbl_min' => $dnsbl,
         'ids_alerts' => $ids,
+        'ids_high' => $idsHigh,
+        'ids_watch' => $idsWatch,
         'new_hosts' => $newHosts,
     ];
 }
@@ -5393,6 +5432,45 @@ function lan_endpoint_key(string $label): string
     return '';
 }
 
+function collect_miranda_insight(float $now): array
+{
+    $file = getenv('SOCX_MIRANDA_ANALYSIS_CACHE') ?: '/tmp/socx-miranda-analysis.env';
+    if (!is_readable($file)) {
+        return ['available' => false, 'reason' => 'no MIRANDA cache'];
+    }
+    $data = parse_env_file($file);
+    $updated = isset($data['updated']) && is_numeric($data['updated']) ? (float)$data['updated'] : 0.0;
+    $ageSeconds = $updated > 0 ? max(0.0, $now - $updated) : null;
+    $maxAge = (float)(getenv('SOCX_MIRANDA_ANALYSIS_MAX_AGE') ?: 900);
+    $severity = strtoupper((string)($data['severity'] ?? 'INFO'));
+    $reason = trim((string)($data['reason'] ?? 'SOCX analyzed'));
+    return [
+        'available' => true,
+        'fresh' => $ageSeconds === null || $ageSeconds <= $maxAge,
+        'severity' => $severity !== '' ? $severity : 'INFO',
+        'reason' => $reason !== '' ? $reason : 'SOCX analyzed',
+        'age_seconds' => $ageSeconds,
+        'age' => $ageSeconds === null ? '' : format_age_seconds($ageSeconds),
+        'confidence' => (string)($data['confidence'] ?? ''),
+    ];
+}
+
+function miranda_insight_event(array $insight): array
+{
+    $severity = strtoupper((string)($insight['severity'] ?? 'INFO'));
+    if (empty($insight['fresh'])) {
+        $severity = 'WARN';
+    }
+    $reason = trim((string)($insight['reason'] ?? 'SOCX analyzed'));
+    $age = trim((string)($insight['age'] ?? ''));
+    $conf = trim((string)($insight['confidence'] ?? ''));
+    $msg = sprintf('MIRANDA %s%s | %s',
+        !empty($insight['fresh']) ? 'analysis' : 'analysis stale',
+        $age !== '' ? ' age ' . $age : '',
+        $reason !== '' ? $reason : 'SOCX analyzed');
+    return soc_event('AI', $severity, $msg, ['confidence' => $conf]);
+}
+
 function socx_health_score(array $wanHealth, array $vpnStatus, array $ups, array $mem, array $cpu, array $speedtest, array $pulse): array
 {
     $score = 100;
@@ -5446,9 +5524,14 @@ function socx_health_score(array $wanHealth, array $vpnStatus, array $ups, array
     $drops = (int)($pulse['fw_drops_min'] ?? 0);
     $dns = (int)($pulse['dnsbl_min'] ?? 0);
     $ids = (int)($pulse['ids_alerts'] ?? 0);
-    if ($ids > 0) {
-        $score -= min(10, $ids * 3);
-        $reasons[] = 'IDS alert';
+    $idsHigh = (int)($pulse['ids_high'] ?? 0);
+    $idsWatch = (int)($pulse['ids_watch'] ?? max(0, $ids - $idsHigh));
+    if ($idsHigh > 0) {
+        $score -= min(12, $idsHigh * 4);
+        $reasons[] = 'IDS high';
+    } elseif ($idsWatch >= 10) {
+        $score -= 4;
+        $reasons[] = 'IDS watch';
     }
     if ($drops > 60) {
         $score -= 5;
@@ -5815,10 +5898,7 @@ function parse_suricata_event(string $line, array $hosts): ?array
         $priority = (int)$m[1];
     }
     $category = preg_match('/\b(drop|blocked|ips)\b/i', $line) ? 'IPS' : 'IDS';
-    $severity = $priority <= 1 ? 'HIGH' : ($priority === 2 ? 'MED' : 'WARN');
-    if (preg_match('/\b(malware|c2|callback|exploit)\b/i', $msg) && $priority <= 1) {
-        $severity = 'CRIT';
-    }
+    $severity = suricata_event_severity($msg, $priority, $category, $line);
     $proto = 'IP';
     $src = 'network';
     $dst = 'internet';
@@ -5840,6 +5920,30 @@ function parse_suricata_event(string $line, array $hosts): ?array
         'class' => strtolower($category),
         'context' => $context,
     ]);
+}
+
+function suricata_event_severity(string $msg, int $priority, string $category, string $line = ''): string
+{
+    $text = strtolower($msg . ' ' . $line);
+    if (preg_match('/\b(suricata stream|ethertype unknown|generic protocol command decode|invalid ack|invalid timestamp|bad window|wrong seq|retransmission|tcp segment|checksum|decoder event)\b/i', $text)) {
+        return 'INFO';
+    }
+    if (preg_match('/\b(malware|trojan|ransom|command and control|command-and-control|c2 beacon|cnc|callback|exploit kit|shellcode)\b/i', $text)) {
+        return $priority <= 2 ? 'CRIT' : 'HIGH';
+    }
+    if (strtoupper($category) === 'IPS' || preg_match('/\b(drop|blocked)\b/i', $text)) {
+        return $priority <= 2 ? 'HIGH' : 'WARN';
+    }
+    if (preg_match('/\b(ike invalid proposal|scan|nmap|bruteforce|brute force|scanner)\b/i', $text)) {
+        return $priority <= 1 ? 'HIGH' : 'WARN';
+    }
+    if ($priority <= 1) {
+        return 'HIGH';
+    }
+    if ($priority === 2) {
+        return 'WARN';
+    }
+    return 'INFO';
 }
 
 function parse_dhcp_event(string $line, array $hosts): ?array

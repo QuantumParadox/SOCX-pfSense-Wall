@@ -3,10 +3,14 @@ set -u
 
 OUT="${SOCX_MIRANDA_EXPORT:-/tmp/socx-miranda-export.json}"
 POST_URL="${SOCX_MIRANDA_POST_URL:-}"
+ANALYSIS_CACHE="${SOCX_MIRANDA_ANALYSIS_CACHE:-/tmp/socx-miranda-analysis.env}"
 
 fw="$(tail -2000 /var/log/filter.log 2>/dev/null | grep -Eic ',block,|,reject,' || true)"
 dns="$(tail -2000 /var/log/pfblockerng/dnsbl.log 2>/dev/null | wc -l | awk '{print $1}' || echo 0)"
 ids="$(find /var/log/suricata -type f -name alerts.log -maxdepth 2 2>/dev/null | xargs tail -300 2>/dev/null | wc -l | awk '{print $1}' || echo 0)"
+ids_high="$(find /var/log/suricata -maxdepth 2 -type f \( -name alerts.log -o -name fast.log \) 2>/dev/null | xargs tail -300 2>/dev/null | grep -Eiv 'SURICATA (Stream|Ethertype unknown)|Generic Protocol Command Decode|Raw pkt:' | grep -Eic 'Priority: 1|malware|trojan|ransom|command.?and.?control|c2 beacon|cnc|callback|exploit|blocked|drop' || true)"
+ids_watch=$((ids - ids_high))
+[ "$ids_watch" -ge 0 ] 2>/dev/null || ids_watch=0
 vpn="$(/usr/local/sbin/pfSsh.php playback gatewaystatus 2>/dev/null | tr '\n' ' ' | sed 's/"/\\"/g' | cut -c1-800)"
 speed="$(cat /tmp/socx-speedtest-cache.env 2>/dev/null | tr '\n' ';' | sed 's/"/\\"/g' | cut -c1-800)"
 unknown="$(tail -20 /var/db/socx_unknown_services.log 2>/dev/null | sed 's/"/\\"/g' | awk '{printf "%s\\n",$0}' | tr '\n' ';' | cut -c1-800)"
@@ -18,7 +22,9 @@ cat > "$OUT" <<EOF
   "summary": {
     "firewall_blocks_sampled": $fw,
     "dnsbl_lines_sampled": $dns,
-    "ids_alert_lines_sampled": $ids
+    "ids_alert_lines_sampled": $ids,
+    "ids_high_sampled": $ids_high,
+    "ids_watch_sampled": $ids_watch
   },
   "vpn_gateway_status": "$vpn",
   "speedtest_cache": "$speed",
@@ -31,7 +37,20 @@ echo "$OUT"
 
 if [ -n "$POST_URL" ]; then
     if command -v curl >/dev/null 2>&1; then
-        curl -fsS -X POST -H 'Content-Type: application/json' --data-binary "@$OUT" "$POST_URL" && echo
+        resp="$(curl -fsS -X POST -H 'Content-Type: application/json' --data-binary "@$OUT" "$POST_URL")"
+        printf '%s\n' "$resp"
+        severity="$(printf '%s' "$resp" | sed -n 's/.*"severity"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+        confidence="$(printf '%s' "$resp" | sed -n 's/.*"confidence"[[:space:]]*:[[:space:]]*\([0-9.][0-9.]*\).*/\1/p' | head -1)"
+        reason="$(printf '%s' "$resp" | sed -n 's/.*"reasons"[[:space:]]*:[[:space:]]*\["\([^"]*\)".*/\1/p' | head -1 | sed 's/[;&|`$<>]//g')"
+        next="$(printf '%s' "$resp" | sed -n 's/.*"recommended_next_step"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 | sed 's/[;&|`$<>]//g')"
+        {
+            echo "updated=$(date +%s)"
+            echo "status=ok"
+            echo "severity=${severity:-UNKNOWN}"
+            echo "confidence=${confidence:-}"
+            echo "reason=${reason:-SOCX analyzed}"
+            echo "next=${next:-}"
+        } > "$ANALYSIS_CACHE"
     else
         echo "curl not installed; set up a local collector or copy $OUT" >&2
         exit 1

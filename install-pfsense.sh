@@ -20,6 +20,7 @@ install -m 0755 "$ROOT/scripts/socx-report" /usr/local/bin/socx-report
 install -m 0755 "$ROOT/scripts/socx-report-cron" /usr/local/bin/socx-report-cron
 install -m 0755 "$ROOT/scripts/socx-hosts-audit" /usr/local/bin/socx-hosts-audit
 install -m 0755 "$ROOT/scripts/socx-explain" /usr/local/bin/socx-explain
+install -m 0755 "$ROOT/scripts/socx-doctor" /usr/local/bin/socx-doctor
 install -m 0755 "$ROOT/scripts/socx-miranda-bridge" /usr/local/bin/socx-miranda-bridge
 install -m 0755 "$ROOT/scripts/socx-miranda-cron" /usr/local/bin/socx-miranda-cron
 install -m 0755 "$ROOT/scripts/socx-iftop-color" /usr/local/sbin/socx-iftop-color

@@ -104,6 +104,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-report-cron` - installs/removes a daily SOCX report cron entry with report retention cleanup.
 - `scripts/socx-hosts-audit` - builds a known/unknown LAN device list from host config, ARP, DHCP leases, and PF states.
 - `scripts/socx-explain` - explains short labels such as `tls`, `dnsbl`, `nut`, `sysl`, `game`, and `unk`.
+- `scripts/socx-doctor` - live health check for wall, logs, VPN, Speedtest, UPS, reports, MIRANDA ingest, vnstatd, and unknown-service noise.
 - `scripts/socx-miranda-bridge` - exports a compact JSON summary for MIRANDA or another local-AI/SOC collector.
 - `scripts/iftopx`, `scripts/tcpdumpx`, `scripts/socx` - convenience launchers.
 - `scripts/socweb` - browser dashboard launcher.
@@ -319,6 +320,7 @@ socx-report daily
 socx-report weekly
 socx-report-cron install
 socx-report-cron status
+socx-doctor
 ```
 
 Reports are written to `/root/socx-reports/` and include firewall blocks, DNSBL samples, IDS samples, VPN/gateway status, Speedtest cache, UPS cache, top PF states, Service Watchdog data, unknown ports, and a host audit.
@@ -332,7 +334,9 @@ socx-miranda-cron install
 socx-miranda-cron status
 ```
 
-By default, this writes `/tmp/socx-miranda-export.json`. It only posts when `SOCX_MIRANDA_POST_URL` is set, so it is safe to use as a local export even before MIRANDA has an ingest endpoint. If MIRANDA is running on your LAN workstation, `socx-miranda-cron install` posts a compact SOCX summary to `/api/socx/ingest` every five minutes.
+By default, this writes `/tmp/socx-miranda-export.json`. It only posts when `SOCX_MIRANDA_POST_URL` is set, so it is safe to use as a local export even before MIRANDA has an ingest endpoint. If MIRANDA is running on your LAN workstation, `socx-miranda-cron install` posts a compact SOCX summary to `/api/socx/ingest` every five minutes. Successful posts also write `/tmp/socx-miranda-analysis.env`, which the wall rotates into the NETWORK card as an `AI SOC` insight line.
+
+SOCX separates routine Suricata stream chatter from high-signal IDS/IPS alerts. Routine TCP stream notices become `IDS INFO`/watch signals; malware, C2, exploit, IPS block/drop, priority-1, and scan-style alerts remain high-severity.
 
 Alert mode:
 
