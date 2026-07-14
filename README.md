@@ -437,6 +437,8 @@ The dashboard style is intentionally a restrained LCARS/cyberpunk hybrid: warm L
 
 The Pi dashboard also exposes a lightweight Network Digital Twin. The pfSense bridge samples current `pfctl` state rows and posts them to `/api/socx/network` separately from the slower LLM analysis, so the graph can refresh without waiting for all three roles. The read-only Command Center accepts `network` or `show network`, and the visual core shows the current node/link count. If no flow rows are available it explicitly shows `waiting for pfSense flow telemetry` instead of inventing paths.
 
+Flow snapshots are retained in memory at `/api/socx/network/history` for replay and comparison. Additional read-only commands include `explain host <host>`, `trace flow`, `show anomalies`, and `compare normal`. Response proposals such as `draft block <host>` or `draft quarantine <host>` return `DRAFT ONLY` objects with `approval_required: true`; they never call the pfSense configuration API.
+
 If SOCX shows the Pi endpoint as reachable but `roles 0/3`, the Pi receiver is running but the local model backend is not. On the Pi, check:
 
 ```sh

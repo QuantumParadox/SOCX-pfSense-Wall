@@ -57,6 +57,8 @@ EVENTS: list[dict[str, Any]] = []
 MAX_EVENTS = 80
 HISTORY: list[dict[str, Any]] = []
 MAX_HISTORY = 48
+NETWORK_HISTORY: list[dict[str, Any]] = []
+MAX_NETWORK_HISTORY = 120
 STATE_DIR = Path(os.getenv("SOCX_PI_STATE_DIR", "/tmp/socx-pi-state"))
 HISTORY_FILE = STATE_DIR / "history.json"
 EVIDENCE_DIR = STATE_DIR / "evidence"
@@ -163,6 +165,33 @@ def command_result(command: str) -> dict[str, Any]:
             f"nodes: {len(graph['nodes'])} | links: {len(graph['links'])} | source: {graph['source']}",
             *[f"{link['source']} -> {link['target']} | {link['label']}" for link in graph['links'][:6]],
         ]}
+    if normalized.startswith("explain host"):
+        target = command[len("explain host"):].strip() or "selected host"
+        graph = build_network(LATEST_ANALYSIS.get("network_payload") or {})
+        hits = [f"{n.get('label')} ({n.get('address', 'no address')})" for n in graph["nodes"] if target.lower() in str(n).lower()]
+        return {"command": command, "title": "HOST EXPLANATION", "lines": [
+            f"target: {target}", f"identity matches: {', '.join(hits) if hits else 'none in current flow sample'}",
+            f"current links: {len(graph['links'])}; use preserve evidence before response changes.",
+        ]}
+    if normalized in {"trace flow", "show anomalies", "compare normal"}:
+        graph = build_network(LATEST_ANALYSIS.get("network_payload") or {})
+        if normalized == "trace flow":
+            lines = [f"{link['source']} -> {link['target']} [{link['label']}]" for link in graph["links"][:8]] or ["no live flow rows"]
+            return {"command": command, "title": "FLOW TRACE", "lines": lines}
+        if normalized == "show anomalies":
+            return {"command": command, "title": "ANOMALY WATCH", "lines": [
+                f"autopilot: {AUTONOMY_STATE.get('mode', 'observe').upper()} score {AUTONOMY_STATE.get('score', 0)}/100",
+                str(AUTONOMY_STATE.get("summary", "no anomaly summary")),
+            ]}
+        return {"command": command, "title": "BASELINE COMPARISON", "lines": [
+            f"network snapshots retained: {len(NETWORK_HISTORY)}",
+            "Baseline comparison becomes meaningful after several snapshots.",
+        ]}
+    if normalized.startswith("draft "):
+        parts = normalized.split(maxsplit=2)
+        kind = parts[1] if len(parts) > 1 else "block"
+        target = parts[2] if len(parts) > 2 else "selected host"
+        return {"command": command, "title": "RESPONSE DRAFT", "lines": [json.dumps(response_draft(kind, target), separators=(",", ":"))]}
     if normalized in {"thermal", "show thermal"}:
         sysm = system_metrics()
         return {"command": command, "title": "PI THERMAL", "lines": [
@@ -179,10 +208,11 @@ def command_result(command: str) -> dict[str, Any]:
         return {"command": command, "title": "EVIDENCE VAULT", "lines": [json.dumps(saved, separators=(",", ":"))]}
     if normalized in {"help", "?"}:
         return {"command": command, "title": "COMMANDS", "lines": [
-            "status | vpn | network | top talkers | thermal | models | preserve evidence",
+            "status | vpn | network | top talkers | thermal | models | explain host | trace flow",
+            "show anomalies | compare normal | draft block <host> | preserve evidence",
             "All commands are read-only except local evidence preservation.",
         ]}
-    return {"command": command, "title": "UNKNOWN COMMAND", "lines": ["Try: status, vpn, network, top talkers, thermal, models, preserve evidence"]}
+    return {"command": command, "title": "UNKNOWN COMMAND", "lines": ["Try: status, vpn, network, top talkers, thermal, models, explain host, draft block <host>"]}
 
 
 def build_network(payload: dict[str, Any]) -> dict[str, Any]:
@@ -203,16 +233,37 @@ def build_network(payload: dict[str, Any]) -> dict[str, Any]:
         source = str(row.get("src") or row.get("source") or "LAN").strip()
         target = str(row.get("dst") or row.get("target") or "WAN").strip()
         label = str(row.get("service") or row.get("proto") or "flow").strip()
+        source_name = str(row.get("src_name") or row.get("hostname") or source).strip()
+        target_name = str(row.get("dst_name") or row.get("peer_name") or target).strip()
         source_id = "lan-" + source.replace(" ", "-")[:24].lower()
         target_id = "wan-" + target.replace(" ", "-")[:24].lower()
-        nodes.setdefault(source_id, {"id": source_id, "label": source, "kind": "host", "status": "active"})
-        nodes.setdefault(target_id, {"id": target_id, "label": target, "kind": "peer", "status": "active"})
+        nodes.setdefault(source_id, {"id": source_id, "label": source_name, "address": source, "kind": "host", "status": "active"})
+        nodes.setdefault(target_id, {"id": target_id, "label": target_name, "address": target, "kind": "peer", "status": "active"})
         links.append({"id": f"flow-{idx}", "source": source_id, "target": target_id, "label": label[:18], "state": "live"})
     return {
         "nodes": list(nodes.values()),
         "links": links,
         "source": "pfSense live flow rows" if links else "waiting for pfSense flow telemetry",
         "updated_iso": now_iso(),
+    }
+
+
+def response_draft(kind: str, target: str = "") -> dict[str, Any]:
+    target = target.strip()[:80] or "selected host"
+    actions = {
+        "block": f"Create a temporary pfSense block alias entry for {target}.",
+        "quarantine": f"Create a restricted quarantine alias/rule for {target}.",
+        "allow": f"Review and draft a narrow allow rule for {target}.",
+    }
+    action = kind if kind in actions else "block"
+    return {
+        "type": action,
+        "target": target,
+        "approval_required": True,
+        "applied": False,
+        "status": "DRAFT ONLY",
+        "proposal": actions[action],
+        "guardrails": ["No pfSense API was called.", "Operator approval is required.", "Preserve evidence before applying changes."],
     }
 
 
@@ -591,6 +642,7 @@ async def latest() -> JSONResponse:
     data["autonomy"] = AUTONOMY_STATE
     data["experiment"] = EXPERIMENT_STATE
     data["network"] = build_network(data.get("network_payload") or {})
+    data["network_history"] = NETWORK_HISTORY[-30:]
     data["history"] = HISTORY[-18:]
     return JSONResponse(data)
 
@@ -610,8 +662,21 @@ async def network_ingest(request: Request) -> JSONResponse:
     payload = await request.json()
     LATEST_ANALYSIS["network_payload"] = payload
     graph = build_network(payload)
+    NETWORK_HISTORY.append({"ts": time.time(), "iso": graph["updated_iso"], "nodes": len(graph["nodes"]), "links": len(graph["links"]), "graph": graph})
+    del NETWORK_HISTORY[:-MAX_NETWORK_HISTORY]
     event("FLOW", f"network twin refreshed nodes {len(graph['nodes'])} links {len(graph['links'])}", "INFO")
     return JSONResponse(graph)
+
+
+@app.get("/api/socx/network/history")
+async def network_history() -> JSONResponse:
+    return JSONResponse({"history": NETWORK_HISTORY[-60:]})
+
+
+@app.post("/api/socx/draft")
+async def draft(request: Request) -> JSONResponse:
+    payload = await request.json()
+    return JSONResponse(response_draft(str(payload.get("kind") or "block"), str(payload.get("target") or "selected host")))
 
 
 @app.post("/api/socx/experiment")
@@ -662,6 +727,7 @@ async def stream() -> StreamingResponse:
             data["autonomy"] = AUTONOMY_STATE
             data["experiment"] = EXPERIMENT_STATE
             data["network"] = build_network(data.get("network_payload") or {})
+            data["network_history"] = NETWORK_HISTORY[-30:]
             data["history"] = HISTORY[-18:]
             yield f"data: {json.dumps(data, separators=(',', ':'))}\n\n"
             await asyncio.sleep(1)
@@ -813,7 +879,7 @@ function render(d){
   const a=d.autonomy||{}; const ex=a.experiments||[]; $('autopilot').innerHTML=`<div class="autopilot"><div class="autopilot-title"><span>${esc((a.mode||'observe').toUpperCase())}</span><span>${a.score??0}/100</span></div><div class="plain">${esc(a.summary||'waiting for SOCX evidence')}</div><canvas id="trend" class="trend"></canvas><div class="experiment-grid">${ex.map(x=>`<div class="experiment-card"><b>${esc(x.name)}</b><span class="${x.status==='pass'||x.status==='stable'?'ok':x.status==='cooldown'?'bad':'warn'}">${esc(x.status)}</span> ${esc(x.detail)}</div>`).join('')}</div><div class="plain muted" style="margin-top:8px">${esc((a.recommendations||[]).join(' '))}</div></div>`; drawTrend(d.history||[]);
   const lab=d.experiment||{}; $('lab-progress').textContent=lab.active?((lab.progress||0)+'% '+String(lab.kind||'RUN').toUpperCase()):String(lab.status||'READY').toUpperCase(); $('lab-progress').className=lab.active?'warn':lab.status==='complete'?'ok':'muted'; $('lab-status').textContent=lab.result||'All experiments are bounded and read-only.'; $('lab-history').textContent=(lab.history||[]).slice(-2).map(x=>x.result).join(' | ');
   const p=d.payload_summary||{}; const cards=[['Firewall blocks',p.firewall_blocks_sampled,'blocked samples'],['DNSBL hits',p.dnsbl_lines_sampled,'DNS blocks'],['IDS watch',p.ids_watch_sampled,'routine alerts'],['High IDS',p.ids_high_sampled,'urgent alerts'],['IDS lines',p.ids_alert_lines_sampled,'sample size']]; $('payload').innerHTML=cards.map(([k,v,s])=>`<div class="summary-card"><span>${esc(k)}</span><b>${fmt(v)}</b><small class="muted">${esc(s)}</small></div>`).join('');
-  $('vizFw').textContent=fmt(p.firewall_blocks_sampled); $('vizDns').textContent=fmt(p.dnsbl_lines_sampled); $('vizIds').textContent=fmt(p.ids_watch_sampled); $('vizAuto').textContent=(a.mode||'observe').toUpperCase(); const twin=d.network||{}; $('twin-status').textContent='TWIN '+(twin.links||[]).length+' LINKS | '+(twin.nodes||[]).length+' NODES'; $('twin-status').style.color=(twin.links||[]).length?'var(--green)':'var(--lcars)';
+  $('vizFw').textContent=fmt(p.firewall_blocks_sampled); $('vizDns').textContent=fmt(p.dnsbl_lines_sampled); $('vizIds').textContent=fmt(p.ids_watch_sampled); $('vizAuto').textContent=(a.mode||'observe').toUpperCase(); const twin=d.network||{}; $('twin-status').textContent='TWIN '+(twin.links||[]).length+' LINKS | '+(twin.nodes||[]).length+' NODES | '+(d.network_history||[]).length+' SNAP'; $('twin-status').style.color=(twin.links||[]).length?'var(--green)':'var(--lcars)';
 }
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function drawTrend(hist){const cv=$('trend'); if(!cv)return; const g=cv.getContext('2d'),r=cv.getBoundingClientRect(),dpr=devicePixelRatio||1; cv.width=Math.max(1,r.width*dpr); cv.height=Math.max(1,r.height*dpr); g.clearRect(0,0,cv.width,cv.height); const pts=(hist||[]).slice(-18); g.strokeStyle='rgba(73,255,244,.25)'; g.beginPath(); g.moveTo(0,cv.height-1); g.lineTo(cv.width,cv.height-1); g.stroke(); if(!pts.length)return; g.strokeStyle='#ff56f4'; g.lineWidth=2*dpr; g.beginPath(); pts.forEach((p,i)=>{const x=pts.length===1?0:i*(cv.width/(pts.length-1)); const y=cv.height-(Math.min(100,p.score||0)/100)*cv.height; if(i===0)g.moveTo(x,y); else g.lineTo(x,y)}); g.stroke();}
