@@ -403,6 +403,14 @@ SOCX_PI_LLM_ACTION_URL=http://127.0.0.1:11434/api/generate
 
 When the Pi answers, SOCX writes `/tmp/socx-pi-llm-analysis.env` and rotates wall events such as `PI 3LLM analysis roles 3/3 | routine IDS watch lines`. If the Pi is offline, pfSense keeps running normally and shows the Pi layer as waiting or unreachable instead of blocking the wall.
 
+The Pi service also includes a real-time browser dashboard:
+
+```text
+http://<pi-ip>:8095/dashboard
+```
+
+It shows the latest SOCX verdict, visible role summaries for `triage`, `evidence`, and `action`, Ollama health, model names, live events, pfSense payload summary, and an animated SOCX AI/network visualization. The dashboard intentionally shows visible role summaries and model status, not hidden chain-of-thought. If the model backend is offline, it will show `OLLAMA OFF` and `roles 0/3`.
+
 If SOCX shows the Pi endpoint as reachable but `roles 0/3`, the Pi receiver is running but the local model backend is not. On the Pi, check:
 
 ```sh

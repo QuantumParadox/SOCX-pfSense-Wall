@@ -59,6 +59,8 @@ sleep 2
 systemctl --no-pager status socx-pi-llm || true
 curl -fsS http://127.0.0.1:8095/health || true
 echo
+pi_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+echo "SOCX Pi dashboard: http://${pi_ip:-127.0.0.1}:8095/dashboard"
 if command -v ollama >/dev/null 2>&1 && curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
     echo "Ollama is reachable on 127.0.0.1:11434; SOCX model roles can run."
 else
