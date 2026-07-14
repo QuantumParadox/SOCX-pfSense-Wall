@@ -43,8 +43,12 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=$APP_DIR
 Environment=SOCX_PI_LLM_TRIAGE_MODEL=${SOCX_PI_LLM_TRIAGE_MODEL:-llama3.2:3b}
-Environment=SOCX_PI_LLM_EVIDENCE_MODEL=${SOCX_PI_LLM_EVIDENCE_MODEL:-qwen2.5:3b}
-Environment=SOCX_PI_LLM_ACTION_MODEL=${SOCX_PI_LLM_ACTION_MODEL:-phi3:mini}
+Environment=SOCX_PI_LLM_EVIDENCE_MODEL=${SOCX_PI_LLM_EVIDENCE_MODEL:-llama3.2:3b}
+Environment=SOCX_PI_LLM_ACTION_MODEL=${SOCX_PI_LLM_ACTION_MODEL:-llama3.2:3b}
+Environment=SOCX_PI_LLM_TIMEOUT=${SOCX_PI_LLM_TIMEOUT:-75}
+Environment=SOCX_PI_LLM_CONCURRENCY=${SOCX_PI_LLM_CONCURRENCY:-1}
+Environment=SOCX_PI_LLM_NUM_PREDICT=${SOCX_PI_LLM_NUM_PREDICT:-96}
+Environment=SOCX_PI_LLM_NUM_CTX=${SOCX_PI_LLM_NUM_CTX:-2048}
 ExecStart=$APP_DIR/.venv/bin/python -m uvicorn socx_pi_llm_orchestrator:app --host 0.0.0.0 --port 8095
 Restart=on-failure
 RestartSec=5

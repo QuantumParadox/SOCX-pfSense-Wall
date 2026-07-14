@@ -5,7 +5,7 @@ OUT="${SOCX_PI_LLM_EXPORT:-/tmp/socx-pi-llm-export.json}"
 DISCOVERY_CACHE="${SOCX_PI_DISCOVERY_CACHE:-/tmp/socx-pi-discovery.env}"
 POST_URL="${SOCX_PI_LLM_POST_URL:-}"
 ANALYSIS_CACHE="${SOCX_PI_LLM_ANALYSIS_CACHE:-/tmp/socx-pi-llm-analysis.env}"
-TIMEOUT="${SOCX_PI_LLM_TIMEOUT:-30}"
+TIMEOUT="${SOCX_PI_LLM_TIMEOUT:-300}"
 
 discover_pi_url() {
     if command -v socx-pi-discover >/dev/null 2>&1; then

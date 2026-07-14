@@ -131,13 +131,25 @@ def build_prompt(role: str, payload: dict[str, Any]) -> str:
     }
     return (
         f"{instructions[role]}\n"
-        "Return one short JSON object with severity, confidence, reasons, recommended_next_step.\n"
+        "Return only one compact JSON object under 80 words with severity, confidence, reasons, recommended_next_step. "
+        "Keep reasons to two short strings. Do not include markdown.\n"
         f"SOCX compact evidence: {compact_payload(payload)}"
     )
 
 
 def call_ollama_generate(url: str, model: str, prompt: str, timeout: float) -> dict[str, Any]:
-    body = json.dumps({"model": model, "prompt": prompt, "stream": False}).encode()
+    body_data = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "format": "json",
+        "options": {
+            "temperature": float(os.getenv("SOCX_PI_LLM_TEMPERATURE", "0.2")),
+            "num_predict": int(os.getenv("SOCX_PI_LLM_NUM_PREDICT", "96")),
+            "num_ctx": int(os.getenv("SOCX_PI_LLM_NUM_CTX", "2048")),
+        },
+    }
+    body = json.dumps(body_data).encode()
     req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         raw = resp.read().decode("utf-8", "replace")
@@ -149,14 +161,35 @@ def call_ollama_generate(url: str, model: str, prompt: str, timeout: float) -> d
 async def run_role(role: str, payload: dict[str, Any]) -> dict[str, Any]:
     url = role_url(role)
     model = DEFAULT_MODELS[role]
-    timeout = float(os.getenv("SOCX_PI_LLM_TIMEOUT", "18"))
+    timeout = float(os.getenv("SOCX_PI_LLM_TIMEOUT", "75"))
     prompt = build_prompt(role, payload)
+    event("ROLE", f"{role} thinking with {model}", "INFO")
     try:
         result = await asyncio.to_thread(call_ollama_generate, url, model, prompt, timeout)
         result.update({"role": role, "summary": summarize_role_text(result.get("text", "")), "url": url})
+        event("ROLE", f"{role} complete with {model}", "INFO")
         return result
     except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError) as exc:
-        return {"ok": False, "role": role, "model": model, "url": url, "summary": "offline or timed out", "error": str(exc)[:220]}
+        error = str(exc)[:220]
+        event("ROLE", f"{role} failed with {model}: {error}", "WARN")
+        return {"ok": False, "role": role, "model": model, "url": url, "summary": "offline or timed out", "error": error}
+
+
+async def run_roles(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    concurrency = max(1, int(os.getenv("SOCX_PI_LLM_CONCURRENCY", "1")))
+    if concurrency <= 1:
+        results: dict[str, dict[str, Any]] = {}
+        for role in DEFAULT_ROLES:
+            results[role] = await run_role(role, payload)
+        return results
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def guarded(role: str) -> tuple[str, dict[str, Any]]:
+        async with semaphore:
+            return role, await run_role(role, payload)
+
+    result_pairs = await asyncio.gather(*(guarded(role) for role in DEFAULT_ROLES))
+    return dict(result_pairs)
 
 
 def heuristic_verdict(payload: dict[str, Any], role_results: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -244,8 +277,7 @@ async def triage(request: Request) -> dict[str, Any]:
     payload = await request.json()
     started = time.time()
     event("SOCX", "pfSense evidence received; running triage/evidence/action roles", "INFO")
-    results_list = await asyncio.gather(*(run_role(role, payload) for role in DEFAULT_ROLES))
-    role_results = dict(zip(DEFAULT_ROLES, results_list))
+    role_results = await run_roles(payload)
     verdict = heuristic_verdict(payload, role_results)
     updated = time.time()
     verdict.update(
