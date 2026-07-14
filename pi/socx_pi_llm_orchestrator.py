@@ -8,8 +8,10 @@ fans it out to three small model roles and returns a tiny wall-safe verdict.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
+from pathlib import Path
 import time
 import urllib.error
 import urllib.request
@@ -54,6 +56,9 @@ EVENTS: list[dict[str, Any]] = []
 MAX_EVENTS = 80
 HISTORY: list[dict[str, Any]] = []
 MAX_HISTORY = 48
+STATE_DIR = Path(os.getenv("SOCX_PI_STATE_DIR", "/tmp/socx-pi-state"))
+HISTORY_FILE = STATE_DIR / "history.json"
+EVIDENCE_DIR = STATE_DIR / "evidence"
 AUTONOMY_STATE: dict[str, Any] = {
     "mode": "observe",
     "score": 0,
@@ -76,6 +81,26 @@ EXPERIMENT_STATE: dict[str, Any] = {
 EXPERIMENT_TASK: asyncio.Task[Any] | None = None
 
 
+def load_history() -> None:
+    try:
+        data = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            HISTORY.extend(data[-MAX_HISTORY:])
+    except (OSError, ValueError, TypeError):
+        pass
+
+
+def save_history() -> None:
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        HISTORY_FILE.write_text(json.dumps(HISTORY[-MAX_HISTORY:], separators=(",", ":")), encoding="utf-8")
+    except OSError:
+        event("STATE", "history persistence unavailable", "WARN")
+
+
+load_history()
+
+
 def role_url(role: str) -> str:
     return os.getenv(f"SOCX_PI_LLM_{role.upper()}_URL", DEFAULT_ROLES[role])
 
@@ -87,6 +112,70 @@ def now_iso() -> str:
 def event(kind: str, message: str, severity: str = "INFO") -> None:
     EVENTS.append({"ts": time.time(), "iso": now_iso(), "kind": kind, "severity": severity, "message": message[:300]})
     del EVENTS[:-MAX_EVENTS]
+
+
+def preserve_evidence(reason: str = "operator request") -> dict[str, Any]:
+    bundle = {
+        "created_iso": now_iso(),
+        "reason": reason[:200],
+        "latest_analysis": LATEST_ANALYSIS,
+        "events": EVENTS[-40:],
+        "autonomy": AUTONOMY_STATE,
+        "experiment": EXPERIMENT_STATE,
+        "system": system_metrics(),
+    }
+    raw = json.dumps(bundle, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    digest = hashlib.sha256(raw).hexdigest()
+    try:
+        EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
+        path = EVIDENCE_DIR / f"socx-{int(time.time())}-{digest[:12]}.json"
+        path.write_bytes(raw)
+        event("EVIDENCE", f"bundle preserved {path.name} sha256 {digest[:12]}", "INFO")
+        return {"ok": True, "file": str(path), "sha256": digest, "bytes": len(raw)}
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)[:220], "sha256": digest}
+
+
+def command_result(command: str) -> dict[str, Any]:
+    normalized = " ".join(command.lower().strip().split())
+    summary = LATEST_ANALYSIS.get("payload_summary") if isinstance(LATEST_ANALYSIS.get("payload_summary"), dict) else {}
+    if normalized in {"status", "show status"}:
+        return {"command": command, "title": "SYSTEM STATUS", "lines": [
+            f"service: {LATEST_ANALYSIS.get('status', 'waiting')}",
+            f"roles: {LATEST_ANALYSIS.get('roles_online', '0/3')}",
+            f"severity: {LATEST_ANALYSIS.get('severity', 'INFO')}",
+            f"autopilot: {AUTONOMY_STATE.get('mode', 'observe').upper()} (read-only)",
+            f"temperature: {system_metrics().get('temp_c', '--')} C",
+        ]}
+    if normalized in {"vpn", "show vpn"}:
+        raw = str(LATEST_ANALYSIS.get("vpn_gateway_status") or "not present in latest evidence")
+        return {"command": command, "title": "VPN HEALTH", "lines": [raw[:700]]}
+    if normalized in {"top talkers", "show top talkers", "flows"}:
+        return {"command": command, "title": "TOP TALKERS", "lines": [
+            f"firewall blocks sampled: {summary.get('firewall_blocks_sampled', 0)}",
+            f"DNSBL hits sampled: {summary.get('dnsbl_lines_sampled', 0)}",
+            "Detailed flow rows remain on the pfSense SOCX wall.",
+        ]}
+    if normalized in {"thermal", "show thermal"}:
+        sysm = system_metrics()
+        return {"command": command, "title": "PI THERMAL", "lines": [
+            f"temperature: {sysm.get('temp_c', '--')} C",
+            f"load 1m: {(sysm.get('load') or {}).get('one', '--')}",
+            f"memory used: {(sysm.get('memory') or {}).get('used_pct', '--')}%",
+        ]}
+    if normalized in {"models", "show models"}:
+        return {"command": command, "title": "LOCAL MODELS", "lines": [
+            f"{role}: {LATEST_ANALYSIS.get('models', {}).get(role, DEFAULT_MODELS[role])}" for role in DEFAULT_ROLES
+        ]}
+    if normalized in {"preserve evidence", "capture evidence"}:
+        saved = preserve_evidence("operator command")
+        return {"command": command, "title": "EVIDENCE VAULT", "lines": [json.dumps(saved, separators=(",", ":"))]}
+    if normalized in {"help", "?"}:
+        return {"command": command, "title": "COMMANDS", "lines": [
+            "status | vpn | top talkers | thermal | models | preserve evidence",
+            "All commands are read-only except local evidence preservation.",
+        ]}
+    return {"command": command, "title": "UNKNOWN COMMAND", "lines": ["Try: status, vpn, top talkers, thermal, models, preserve evidence"]}
 
 
 def summarize_role_text(text: str) -> str:
@@ -305,6 +394,7 @@ def autonomy_cycle(verdict: dict[str, Any]) -> dict[str, Any]:
         }
     )
     del HISTORY[:-MAX_HISTORY]
+    save_history()
     event("AUTO", state["summary"], "WARN" if mode in {"watch", "investigate", "cooldown"} else "INFO")
     return state
 
@@ -492,6 +582,20 @@ async def experiment(request: Request) -> JSONResponse:
     return JSONResponse({"accepted": True, "experiment": EXPERIMENT_STATE})
 
 
+@app.post("/api/socx/command")
+async def command(request: Request) -> JSONResponse:
+    payload = await request.json()
+    text = str(payload.get("command") or "help")[:120]
+    result = command_result(text)
+    return JSONResponse(result)
+
+
+@app.post("/api/socx/evidence")
+async def evidence(request: Request) -> JSONResponse:
+    payload = await request.json()
+    return JSONResponse(preserve_evidence(str(payload.get("reason") or "operator request")))
+
+
 @app.get("/api/socx/stream")
 async def stream() -> StreamingResponse:
     async def gen():
@@ -560,6 +664,7 @@ h2{margin:0 0 8px;color:var(--cyan);font-size:15px;letter-spacing:.08em}.metric{
 .feed{display:grid;grid-template-columns:1fr 1fr;gap:10px;min-height:0}.events{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:14px;line-height:1.45;overflow:hidden}.event{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.json{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;color:#d8fbff;overflow:hidden;white-space:pre-wrap}
 .bar{height:9px;background:#ffffff16;margin-top:6px;overflow:hidden}.bar span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--lcars),var(--cyan),var(--green))}
 .lab{border:1px solid #ff9f4355;background:#1b1018;padding:9px 10px;margin-top:10px}.lab-title{display:flex;justify-content:space-between;color:var(--lcars);font-weight:900;letter-spacing:.06em}.lab-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}.lab button{border:1px solid #49fff466;background:#071c21;color:var(--cyan);padding:7px 5px;font:700 11px ui-monospace,Consolas,monospace;cursor:pointer}.lab button:hover{background:#49fff422;color:#fff}.lab button.stop{color:var(--red);border-color:#ff5e7866}.lab-status{margin-top:8px;font:12px ui-monospace,Consolas,monospace;color:var(--ink);white-space:normal}.lab-history{margin-top:6px;color:var(--muted);font:11px ui-monospace,Consolas,monospace}
+.command{border:1px solid #c76dff66;background:#130d1b;padding:9px 10px;margin-top:10px}.command-title{display:flex;justify-content:space-between;color:var(--lcars2);font-weight:900;letter-spacing:.06em}.command-row{display:grid;grid-template-columns:1fr auto;gap:6px;margin-top:7px}.command input{min-width:0;border:1px solid #ffffff22;background:#020609;color:var(--ink);padding:7px;font:12px ui-monospace,Consolas,monospace}.command button{border:1px solid #c76dff88;background:#21102d;color:var(--lcars2);padding:6px 8px;font:700 11px ui-monospace,Consolas,monospace;cursor:pointer}.command-output{margin-top:7px;min-height:42px;white-space:pre-wrap;color:var(--ink);font:12px/1.4 ui-monospace,Consolas,monospace}.command-help{color:var(--muted);font:10px ui-monospace,Consolas,monospace;margin-top:5px}
 .model-grid,.summary-grid,.experiment-grid{display:grid;gap:8px}.model-card,.summary-card,.experiment-card{border:1px solid #ffffff1f;background:#ffffff08;padding:8px 10px}.model-card{display:grid;grid-template-columns:92px 1fr auto;gap:8px;align-items:center}.model-role{font-weight:900;text-transform:uppercase;color:var(--cyan)}.model-name{font-weight:800}.summary-grid{grid-template-columns:1fr 1fr}.summary-card span{display:block;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em}.summary-card b{display:block;color:var(--ink);font-size:20px;margin-top:2px}.plain{font-size:14px;line-height:1.45;color:var(--ink)}.autopilot{border:1px solid #ff56f455;background:#210a2438;padding:9px 10px;margin-top:10px}.autopilot-title{display:flex;justify-content:space-between;gap:10px;font-weight:900;color:var(--mag);letter-spacing:.06em}.experiment-card{font-size:13px}.experiment-card b{display:block;color:var(--ink)}.trend{height:34px;width:100%;margin-top:8px}
 @media(max-width:1100px){.main{grid-template-columns:1fr}.shell{overflow:auto;height:auto}.viz{height:360px}.feed{grid-template-columns:1fr}body{overflow:auto}}
 </style>
@@ -596,6 +701,12 @@ h2{margin:0 0 8px;color:var(--cyan);font-size:15px;letter-spacing:.08em}.metric{
     <section class="panel">
       <h2>Recommended Next Step</h2>
       <div id="next" class="role-text">waiting for pfSense evidence</div>
+      <div class="command">
+        <div class="command-title"><span>COMMAND CENTER</span><span class="muted">READ-ONLY</span></div>
+        <div class="command-row"><input id="command-input" value="status" aria-label="SOCX command"><button id="command-run">RUN</button></div>
+        <div class="command-output" id="command-output">Awaiting operator command.</div>
+        <div class="command-help">status | vpn | top talkers | thermal | models | preserve evidence</div>
+      </div>
       <h2 style="margin-top:18px">Model Health</h2>
       <div id="models" class="model-grid"></div>
       <h2 style="margin-top:18px">Latest Reasons</h2>
@@ -652,6 +763,7 @@ function drawTrend(hist){const cv=$('trend'); if(!cv)return; const g=cv.getConte
 async function poll(){try{render(await (await fetch('/api/socx/latest',{cache:'no-store'})).json())}catch(e){}}
 if(window.EventSource){const es=new EventSource('/api/socx/stream');es.onmessage=e=>{try{render(JSON.parse(e.data))}catch(_){}};es.onerror=poll}else setInterval(poll,1000); poll();
 document.querySelectorAll('[data-experiment]').forEach(button=>button.addEventListener('click',async()=>{try{await fetch('/api/socx/experiment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:button.dataset.experiment,action:'start',duration:30})})}catch(_){}})); $('lab-stop').addEventListener('click',async()=>{try{await fetch('/api/socx/experiment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'stop'})})}catch(_){}});
+async function runCommand(){const input=$('command-input'),output=$('command-output'); const command=input.value.trim()||'help'; output.textContent='Querying local SOCX telemetry...'; try{const r=await fetch('/api/socx/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command})}); const d=await r.json(); output.textContent=(d.title||'SOCX')+'\n'+(d.lines||[]).join('\n')}catch(e){output.textContent='Command service unavailable'}} $('command-run').addEventListener('click',runCommand); $('command-input').addEventListener('keydown',e=>{if(e.key==='Enter')runCommand()});
 const c=$('space'),ctx=c.getContext('2d');let t=0;
 function resize(){c.width=c.clientWidth*devicePixelRatio;c.height=c.clientHeight*devicePixelRatio}addEventListener('resize',resize);resize();
 function draw(){t+=0.014;ctx.clearRect(0,0,c.width,c.height);const w=c.width,h=c.height,cx=w/2,cy=h/2;const roles=['triage','evidence','action'];const online=(state.roles_online||'0/3').split('/')[0]*1;const p=state.payload_summary||{};const auto=state.autonomy||{};const fw=Math.min(1,(p.firewall_blocks_sampled||0)/2000),dns=Math.min(1,(p.dnsbl_lines_sampled||0)/2000),ids=Math.min(1,(p.ids_watch_sampled||0)/300),ascore=Math.min(1,(auto.score||0)/100);const energy=.45+fw*.22+dns*.18+ids*.12+ascore*.2;
