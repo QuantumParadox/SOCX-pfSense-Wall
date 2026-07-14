@@ -27,8 +27,8 @@ DEFAULT_ROLES = {
 }
 DEFAULT_MODELS = {
     "triage": os.getenv("SOCX_PI_LLM_TRIAGE_MODEL", "llama3.2:3b"),
-    "evidence": os.getenv("SOCX_PI_LLM_EVIDENCE_MODEL", "qwen2.5:3b"),
-    "action": os.getenv("SOCX_PI_LLM_ACTION_MODEL", "phi3:mini"),
+    "evidence": os.getenv("SOCX_PI_LLM_EVIDENCE_MODEL", "llama3.2:3b"),
+    "action": os.getenv("SOCX_PI_LLM_ACTION_MODEL", "llama3.2:3b"),
 }
 
 app = FastAPI(title=APP_NAME)
@@ -63,6 +63,17 @@ AUTONOMY_STATE: dict[str, Any] = {
     "experiments": [],
     "recommendations": ["Keep SOCX collecting evidence."],
 }
+EXPERIMENT_STATE: dict[str, Any] = {
+    "active": False,
+    "kind": None,
+    "started_iso": None,
+    "finished_iso": None,
+    "progress": 0,
+    "status": "ready",
+    "result": "No experiment running. All actions are read-only.",
+    "history": [],
+}
+EXPERIMENT_TASK: asyncio.Task[Any] | None = None
 
 
 def role_url(role: str) -> str:
@@ -120,6 +131,62 @@ async def check_ollama_tags(timeout: float = 2.0) -> dict[str, Any]:
         return await asyncio.to_thread(call)
     except Exception as exc:  # health endpoint should never crash the dashboard
         return {"ok": False, "error": str(exc)[:220]}
+
+
+async def run_experiment(kind: str, duration: int = 30) -> None:
+    """Run a bounded, read-only Pi lab experiment.
+
+    The experiment runner deliberately never calls pfSense configuration APIs,
+    changes firewall policy, or generates unbounded model traffic.
+    """
+    global EXPERIMENT_TASK
+    duration = max(5, min(120, int(duration)))
+    names = {
+        "thermal_watch": "Thermal watch",
+        "stress_llm": "LLM latency pulse",
+        "model_inventory": "Model inventory",
+    }
+    label = names.get(kind, "Telemetry probe")
+    EXPERIMENT_STATE.update({
+        "active": True,
+        "kind": kind,
+        "started_iso": now_iso(),
+        "finished_iso": None,
+        "progress": 0,
+        "status": "running",
+        "result": f"{label} started; read-only telemetry only.",
+    })
+    event("LAB", f"{label} started for {duration}s", "INFO")
+    started = time.time()
+    samples: list[dict[str, Any]] = []
+    while time.time() - started < duration:
+        sysm = system_metrics()
+        samples.append({"ts": time.time(), **sysm})
+        EXPERIMENT_STATE["progress"] = min(99, round((time.time() - started) / duration * 100))
+        await asyncio.sleep(1)
+    ollama = await check_ollama_tags() if kind in {"stress_llm", "model_inventory"} else {}
+    temps = [float(s.get("temp_c")) for s in samples if s.get("temp_c") is not None]
+    loads = [float((s.get("load") or {}).get("one") or 0) for s in samples]
+    result = (
+        f"{label} complete | {len(samples)} samples | "
+        f"temp {min(temps):.1f}-{max(temps):.1f}C | load peak {max(loads, default=0):.2f}"
+    )
+    if kind == "model_inventory":
+        result += f" | Ollama {'online' if ollama.get('ok') else 'offline'} ({ollama.get('model_count', 0)} models)"
+    elif kind == "stress_llm":
+        result += " | use SOCX triage for the full three-role benchmark"
+    entry = {"kind": kind, "label": label, "finished_iso": now_iso(), "result": result}
+    EXPERIMENT_STATE.update({
+        "active": False,
+        "finished_iso": entry["finished_iso"],
+        "progress": 100,
+        "status": "complete",
+        "result": result,
+    })
+    EXPERIMENT_STATE["history"].append(entry)
+    del EXPERIMENT_STATE["history"][:-8]
+    event("LAB", result, "INFO")
+    EXPERIMENT_TASK = None
 
 
 def system_metrics() -> dict[str, Any]:
@@ -393,13 +460,36 @@ async def latest() -> JSONResponse:
     data["ollama"] = await check_ollama_tags()
     data["system"] = system_metrics()
     data["autonomy"] = AUTONOMY_STATE
+    data["experiment"] = EXPERIMENT_STATE
     data["history"] = HISTORY[-18:]
     return JSONResponse(data)
 
 
 @app.get("/api/socx/autonomy")
 async def autonomy() -> JSONResponse:
-    return JSONResponse({"autonomy": AUTONOMY_STATE, "history": HISTORY[-24:], "system": system_metrics()})
+    return JSONResponse({"autonomy": AUTONOMY_STATE, "history": HISTORY[-24:], "system": system_metrics(), "experiment": EXPERIMENT_STATE})
+
+
+@app.post("/api/socx/experiment")
+async def experiment(request: Request) -> JSONResponse:
+    global EXPERIMENT_TASK
+    payload = await request.json()
+    action = str(payload.get("action") or "start").lower()
+    kind = str(payload.get("kind") or "thermal_watch").lower()
+    if action == "stop":
+        if EXPERIMENT_TASK and not EXPERIMENT_TASK.done():
+            EXPERIMENT_TASK.cancel()
+        EXPERIMENT_TASK = None
+        EXPERIMENT_STATE.update({"active": False, "status": "stopped", "progress": 0, "result": "Experiment stopped by operator."})
+        event("LAB", "Experiment stopped by operator", "WARN")
+        return JSONResponse(EXPERIMENT_STATE)
+    if kind not in {"thermal_watch", "stress_llm", "model_inventory"}:
+        return JSONResponse({"error": "unsupported experiment"}, status_code=400)
+    if EXPERIMENT_TASK and not EXPERIMENT_TASK.done():
+        return JSONResponse({"error": "an experiment is already running", "experiment": EXPERIMENT_STATE}, status_code=409)
+    duration = max(5, min(120, int(payload.get("duration", 30))))
+    EXPERIMENT_TASK = asyncio.create_task(run_experiment(kind, duration))
+    return JSONResponse({"accepted": True, "experiment": EXPERIMENT_STATE})
 
 
 @app.get("/api/socx/stream")
@@ -412,6 +502,7 @@ async def stream() -> StreamingResponse:
             data["ollama"] = await check_ollama_tags()
             data["system"] = system_metrics()
             data["autonomy"] = AUTONOMY_STATE
+            data["experiment"] = EXPERIMENT_STATE
             data["history"] = HISTORY[-18:]
             yield f"data: {json.dumps(data, separators=(',', ':'))}\n\n"
             await asyncio.sleep(1)
@@ -454,11 +545,11 @@ DASHBOARD_HTML = r"""<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>SOCX Pi 3-LLM Dashboard</title>
 <style>
-:root{color-scheme:dark;--bg:#05070a;--panel:#091116;--ink:#e8fbff;--muted:#88a3aa;--cyan:#49fff4;--green:#66ff7c;--yellow:#ffe35b;--red:#ff5e78;--mag:#ff56f4;--blue:#6687ff}
+:root{color-scheme:dark;--bg:#05070a;--panel:#091116;--ink:#e8fbff;--muted:#88a3aa;--cyan:#49fff4;--green:#66ff7c;--yellow:#ffe35b;--red:#ff5e78;--mag:#ff56f4;--blue:#6687ff;--lcars:#ff9f43;--lcars2:#c76dff}
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 50% -10%,#15313a 0,#05070a 48%,#020304 100%);color:var(--ink);font-family:Inter,system-ui,Segoe UI,Arial,sans-serif;overflow:hidden}
 .shell{height:100vh;display:grid;grid-template-rows:54px 1fr 146px;gap:10px;padding:12px}
 .top{display:grid;grid-template-columns:1fr auto;align-items:center;border:1px solid #1cfff355;background:linear-gradient(90deg,#071215,#0b1218);box-shadow:0 0 22px #1cfff322;padding:8px 12px}
-.brand{font-weight:800;letter-spacing:.08em;color:var(--cyan);font-size:18px}.status{display:flex;gap:14px;align-items:center;font-weight:800}.pill{padding:3px 8px;border:1px solid #ffffff22;background:#ffffff08}.ok{color:var(--green)}.warn{color:var(--yellow)}.bad{color:var(--red)}.mag{color:var(--mag)}.muted{color:var(--muted)}
+.brand{font-weight:800;letter-spacing:.08em;color:var(--cyan);font-size:18px}.brand:before{content:'◖ ';color:var(--lcars)}.status{display:flex;gap:14px;align-items:center;font-weight:800}.pill{padding:3px 8px;border:1px solid #ffffff22;background:#ffffff08}.ok{color:var(--green)}.warn{color:var(--yellow)}.bad{color:var(--red)}.mag{color:var(--mag)}.muted{color:var(--muted)}
 .main{display:grid;grid-template-columns:minmax(360px,1.1fr) minmax(420px,1.4fr) minmax(360px,1.1fr);gap:10px;min-height:0}
 .panel{border:1px solid #1cfff355;background:linear-gradient(180deg,#071116dd,#05090ddd);box-shadow:inset 0 0 22px #1cfff310,0 0 18px #1cfff314;min-height:0;padding:12px;overflow:auto}
 h2{margin:0 0 8px;color:var(--cyan);font-size:15px;letter-spacing:.08em}.metric{display:grid;grid-template-columns:140px 1fr;gap:8px;margin:6px 0;color:var(--muted)}.metric b{color:var(--ink)}
@@ -467,7 +558,8 @@ h2{margin:0 0 8px;color:var(--cyan);font-size:15px;letter-spacing:.08em}.metric{
 .vizhud{position:absolute;left:12px;right:12px;bottom:12px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px;pointer-events:none}.vizstat{border:1px solid #ffffff22;background:#02080caa;padding:7px 8px;font:700 12px ui-monospace,Consolas,monospace;color:var(--muted)}.vizstat b{display:block;color:var(--ink);font-size:16px;margin-top:2px}
 @keyframes pulse{50%{transform:scale(1.045);box-shadow:0 0 54px #49fff488,inset 0 0 34px #49fff433}}
 .feed{display:grid;grid-template-columns:1fr 1fr;gap:10px;min-height:0}.events{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:14px;line-height:1.45;overflow:hidden}.event{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.json{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;color:#d8fbff;overflow:hidden;white-space:pre-wrap}
-.bar{height:9px;background:#ffffff16;margin-top:6px;overflow:hidden}.bar span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--green))}
+.bar{height:9px;background:#ffffff16;margin-top:6px;overflow:hidden}.bar span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--lcars),var(--cyan),var(--green))}
+.lab{border:1px solid #ff9f4355;background:#1b1018;padding:9px 10px;margin-top:10px}.lab-title{display:flex;justify-content:space-between;color:var(--lcars);font-weight:900;letter-spacing:.06em}.lab-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}.lab button{border:1px solid #49fff466;background:#071c21;color:var(--cyan);padding:7px 5px;font:700 11px ui-monospace,Consolas,monospace;cursor:pointer}.lab button:hover{background:#49fff422;color:#fff}.lab button.stop{color:var(--red);border-color:#ff5e7866}.lab-status{margin-top:8px;font:12px ui-monospace,Consolas,monospace;color:var(--ink);white-space:normal}.lab-history{margin-top:6px;color:var(--muted);font:11px ui-monospace,Consolas,monospace}
 .model-grid,.summary-grid,.experiment-grid{display:grid;gap:8px}.model-card,.summary-card,.experiment-card{border:1px solid #ffffff1f;background:#ffffff08;padding:8px 10px}.model-card{display:grid;grid-template-columns:92px 1fr auto;gap:8px;align-items:center}.model-role{font-weight:900;text-transform:uppercase;color:var(--cyan)}.model-name{font-weight:800}.summary-grid{grid-template-columns:1fr 1fr}.summary-card span{display:block;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em}.summary-card b{display:block;color:var(--ink);font-size:20px;margin-top:2px}.plain{font-size:14px;line-height:1.45;color:var(--ink)}.autopilot{border:1px solid #ff56f455;background:#210a2438;padding:9px 10px;margin-top:10px}.autopilot-title{display:flex;justify-content:space-between;gap:10px;font-weight:900;color:var(--mag);letter-spacing:.06em}.experiment-card{font-size:13px}.experiment-card b{display:block;color:var(--ink)}.trend{height:34px;width:100%;margin-top:8px}
 @media(max-width:1100px){.main{grid-template-columns:1fr}.shell{overflow:auto;height:auto}.viz{height:360px}.feed{grid-template-columns:1fr}body{overflow:auto}}
 </style>
@@ -510,6 +602,18 @@ h2{margin:0 0 8px;color:var(--cyan);font-size:15px;letter-spacing:.08em}.metric{
       <div id="reasons" class="events"></div>
       <h2 style="margin-top:18px">Autopilot</h2>
       <div id="autopilot"></div>
+      <h2 style="margin-top:18px">Experiment Lab</h2>
+      <div class="lab">
+        <div class="lab-title"><span>AI HAT TEST RANGE</span><span id="lab-progress">READY</span></div>
+        <div class="lab-actions">
+          <button data-experiment="thermal_watch">THERMAL</button>
+          <button data-experiment="stress_llm">LLM PULSE</button>
+          <button data-experiment="model_inventory">MODELS</button>
+        </div>
+        <button class="stop" id="lab-stop" style="width:100%;margin-top:6px">STOP TEST</button>
+        <div class="lab-status" id="lab-status">All experiments are bounded and read-only.</div>
+        <div class="lab-history" id="lab-history"></div>
+      </div>
     </section>
   </main>
   <footer class="feed">
@@ -539,6 +643,7 @@ function render(d){
   $('reasons').innerHTML=(d.reasons||[]).map(r=>`<div class="event">${esc(r)}</div>`).join('');
   $('events').innerHTML=(d.events||[]).slice(-8).reverse().map(e=>`<div class="event"><span class="${cls(e.severity)}">[${esc(e.kind)}]</span> ${esc(e.message)}</div>`).join('');
   const a=d.autonomy||{}; const ex=a.experiments||[]; $('autopilot').innerHTML=`<div class="autopilot"><div class="autopilot-title"><span>${esc((a.mode||'observe').toUpperCase())}</span><span>${a.score??0}/100</span></div><div class="plain">${esc(a.summary||'waiting for SOCX evidence')}</div><canvas id="trend" class="trend"></canvas><div class="experiment-grid">${ex.map(x=>`<div class="experiment-card"><b>${esc(x.name)}</b><span class="${x.status==='pass'||x.status==='stable'?'ok':x.status==='cooldown'?'bad':'warn'}">${esc(x.status)}</span> ${esc(x.detail)}</div>`).join('')}</div><div class="plain muted" style="margin-top:8px">${esc((a.recommendations||[]).join(' '))}</div></div>`; drawTrend(d.history||[]);
+  const lab=d.experiment||{}; $('lab-progress').textContent=lab.active?((lab.progress||0)+'% '+String(lab.kind||'RUN').toUpperCase()):String(lab.status||'READY').toUpperCase(); $('lab-progress').className=lab.active?'warn':lab.status==='complete'?'ok':'muted'; $('lab-status').textContent=lab.result||'All experiments are bounded and read-only.'; $('lab-history').textContent=(lab.history||[]).slice(-2).map(x=>x.result).join(' | ');
   const p=d.payload_summary||{}; const cards=[['Firewall blocks',p.firewall_blocks_sampled,'blocked samples'],['DNSBL hits',p.dnsbl_lines_sampled,'DNS blocks'],['IDS watch',p.ids_watch_sampled,'routine alerts'],['High IDS',p.ids_high_sampled,'urgent alerts'],['IDS lines',p.ids_alert_lines_sampled,'sample size']]; $('payload').innerHTML=cards.map(([k,v,s])=>`<div class="summary-card"><span>${esc(k)}</span><b>${fmt(v)}</b><small class="muted">${esc(s)}</small></div>`).join('');
   $('vizFw').textContent=fmt(p.firewall_blocks_sampled); $('vizDns').textContent=fmt(p.dnsbl_lines_sampled); $('vizIds').textContent=fmt(p.ids_watch_sampled); $('vizAuto').textContent=(a.mode||'observe').toUpperCase();
 }
@@ -546,6 +651,7 @@ function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&l
 function drawTrend(hist){const cv=$('trend'); if(!cv)return; const g=cv.getContext('2d'),r=cv.getBoundingClientRect(),dpr=devicePixelRatio||1; cv.width=Math.max(1,r.width*dpr); cv.height=Math.max(1,r.height*dpr); g.clearRect(0,0,cv.width,cv.height); const pts=(hist||[]).slice(-18); g.strokeStyle='rgba(73,255,244,.25)'; g.beginPath(); g.moveTo(0,cv.height-1); g.lineTo(cv.width,cv.height-1); g.stroke(); if(!pts.length)return; g.strokeStyle='#ff56f4'; g.lineWidth=2*dpr; g.beginPath(); pts.forEach((p,i)=>{const x=pts.length===1?0:i*(cv.width/(pts.length-1)); const y=cv.height-(Math.min(100,p.score||0)/100)*cv.height; if(i===0)g.moveTo(x,y); else g.lineTo(x,y)}); g.stroke();}
 async function poll(){try{render(await (await fetch('/api/socx/latest',{cache:'no-store'})).json())}catch(e){}}
 if(window.EventSource){const es=new EventSource('/api/socx/stream');es.onmessage=e=>{try{render(JSON.parse(e.data))}catch(_){}};es.onerror=poll}else setInterval(poll,1000); poll();
+document.querySelectorAll('[data-experiment]').forEach(button=>button.addEventListener('click',async()=>{try{await fetch('/api/socx/experiment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:button.dataset.experiment,action:'start',duration:30})})}catch(_){}})); $('lab-stop').addEventListener('click',async()=>{try{await fetch('/api/socx/experiment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'stop'})})}catch(_){}});
 const c=$('space'),ctx=c.getContext('2d');let t=0;
 function resize(){c.width=c.clientWidth*devicePixelRatio;c.height=c.clientHeight*devicePixelRatio}addEventListener('resize',resize);resize();
 function draw(){t+=0.014;ctx.clearRect(0,0,c.width,c.height);const w=c.width,h=c.height,cx=w/2,cy=h/2;const roles=['triage','evidence','action'];const online=(state.roles_online||'0/3').split('/')[0]*1;const p=state.payload_summary||{};const auto=state.autonomy||{};const fw=Math.min(1,(p.firewall_blocks_sampled||0)/2000),dns=Math.min(1,(p.dnsbl_lines_sampled||0)/2000),ids=Math.min(1,(p.ids_watch_sampled||0)/300),ascore=Math.min(1,(auto.score||0)/100);const energy=.45+fw*.22+dns*.18+ids*.12+ascore*.2;

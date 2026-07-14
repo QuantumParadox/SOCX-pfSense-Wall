@@ -426,6 +426,15 @@ curl http://<pi-ip>:8095/api/socx/autonomy
 curl http://<pi-ip>:8095/api/socx/latest
 ```
 
+The Pi dashboard also includes an `Experiment Lab` for safe AI HAT testing. `THERMAL` samples Pi temperature/load, `LLM PULSE` records a bounded latency/telemetry window, and `MODELS` inventories the local Ollama roster. Tests are limited to 5-120 seconds, are read-only, and never change pfSense policy. The control endpoint is:
+
+```text
+POST /api/socx/experiment
+{"kind":"thermal_watch","action":"start","duration":30}
+```
+
+The dashboard style is intentionally a restrained LCARS/cyberpunk hybrid: warm LCARS orange marks the lab controls, cyan identifies neutral system data, green identifies healthy services, yellow marks watch conditions, red marks failure, and magenta marks AI/threat context. The Pi remains an analysis and experiment plane; pfSense remains the authoritative enforcement plane.
+
 If SOCX shows the Pi endpoint as reachable but `roles 0/3`, the Pi receiver is running but the local model backend is not. On the Pi, check:
 
 ```sh
