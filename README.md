@@ -422,6 +422,12 @@ ollama pull phi3:mini
 sudo systemctl restart socx-pi-llm
 ```
 
+The pfSense bridge waits up to 30 seconds by default because the Pi may need a few seconds to cold-check local model roles. Override only if your Pi is much faster or slower:
+
+```sh
+SOCX_PI_LLM_TIMEOUT=45 socx pi-llm
+```
+
 Ask SOCX for the current AI explanation:
 
 ```sh
