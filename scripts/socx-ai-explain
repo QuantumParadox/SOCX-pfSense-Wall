@@ -1,0 +1,81 @@
+#!/bin/sh
+set -u
+
+PI_CACHE="${SOCX_PI_LLM_ANALYSIS_CACHE:-/tmp/socx-pi-llm-analysis.env}"
+PI_DISCOVERY="${SOCX_PI_DISCOVERY_CACHE:-/tmp/socx-pi-discovery.env}"
+MIRANDA_CACHE="${SOCX_MIRANDA_ANALYSIS_CACHE:-/tmp/socx-miranda-analysis.env}"
+MODE="${1:-refresh}"
+
+age_file() {
+    file="$1"
+    [ -f "$file" ] || { echo ""; return; }
+    now="$(date +%s)"
+    mod="$(stat -f %m "$file" 2>/dev/null || stat -c %Y "$file" 2>/dev/null || echo 0)"
+    [ "$mod" -gt 0 ] 2>/dev/null || { echo ""; return; }
+    echo $((now - mod))
+}
+
+env_get() {
+    key="$1"
+    file="$2"
+    sed -n "s/^$key=//p" "$file" 2>/dev/null | tail -1
+}
+
+print_cache() {
+    label="$1"
+    file="$2"
+    if [ ! -f "$file" ]; then
+        echo "$label: no cache yet"
+        return
+    fi
+    status="$(env_get status "$file")"
+    severity="$(env_get severity "$file")"
+    confidence="$(env_get confidence "$file")"
+    roles="$(env_get roles "$file")"
+    reason="$(env_get reason "$file")"
+    next="$(env_get next "$file")"
+    age="$(age_file "$file")"
+    echo "$label: ${status:-unknown} ${severity:-UNKNOWN}${confidence:+ conf=$confidence}${roles:+ roles=$roles} age=${age:-?}s"
+    [ -n "$reason" ] && echo "  why: $reason"
+    [ -n "$next" ] && echo "  next: $next"
+}
+
+case "$MODE" in
+    refresh|now|"")
+        command -v socx-pi-discover >/dev/null 2>&1 && socx-pi-discover >/tmp/socx-pi-discover.out 2>/tmp/socx-pi-discover.err || true
+        command -v socx-pi-llm-bridge >/dev/null 2>&1 && socx-pi-llm-bridge >/tmp/socx-pi-llm-bridge.out 2>/tmp/socx-pi-llm-bridge.err || true
+        ;;
+    cache|status)
+        ;;
+    *)
+        echo "Usage: socx-ai-explain [refresh|cache]" >&2
+        exit 2
+        ;;
+esac
+
+echo "SOCX AI explain"
+echo "generated $(date)"
+echo
+
+if [ -f "$PI_DISCOVERY" ]; then
+    dip="$(env_get ip "$PI_DISCOVERY")"
+    dstatus="$(env_get status "$PI_DISCOVERY")"
+    dsource="$(env_get source "$PI_DISCOVERY")"
+    dservice="$(env_get service "$PI_DISCOVERY")"
+    durl="$(env_get pi_llm_url "$PI_DISCOVERY")"
+    dage="$(age_file "$PI_DISCOVERY")"
+    echo "Pi discovery: ${dstatus:-unknown} ip=${dip:-?} source=${dsource:-?} service=${dservice:-?} age=${dage:-?}s"
+    [ -n "$durl" ] && echo "  endpoint: $durl"
+else
+    echo "Pi discovery: no cache yet"
+fi
+
+print_cache "Pi 3-LLM" "$PI_CACHE"
+print_cache "MIRANDA" "$MIRANDA_CACHE"
+
+echo
+if [ -f "$PI_CACHE" ] && [ "$(env_get status "$PI_CACHE")" = "ok" ]; then
+    echo "plain English: Pi 3-LLM SOCX analysis is online. Use the reason/next lines above for the current summary."
+else
+    echo "plain English: SOCX can find a Pi candidate, but the Pi 3-LLM service is not answering yet. Start the Pi service on port 8095, then rerun: socx explain-now"
+fi

@@ -108,6 +108,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-miranda-bridge` - exports a compact JSON summary for MIRANDA or another local-AI/SOC collector.
 - `scripts/socx-pi-llm-bridge` - posts the compact SOCX summary to a Raspberry Pi 5 AI HAT+ 3-LLM orchestration endpoint and caches the verdict.
 - `scripts/socx-pi-llm-cron` - installs/removes the scheduled Pi 3-LLM export.
+- `scripts/socx-ai-explain` - operator command that refreshes Pi/MIRANDA analysis and prints a plain-English summary.
 - `pi/socx_pi_llm_orchestrator.py` - optional Raspberry Pi FastAPI receiver that fans SOCX evidence to three local model roles.
 - `scripts/iftopx`, `scripts/tcpdumpx`, `scripts/socx` - convenience launchers.
 - `scripts/socweb` - browser dashboard launcher.
@@ -349,6 +350,7 @@ socx-miranda-cron install
 socx-miranda-cron status
 socx pi-llm
 socx pi-discover
+socx explain-now
 SOCX_PI_LLM_POST_URL=http://192.168.1.180:8095/api/socx/triage socx pi-llm
 socx-pi-llm-cron install
 socx-doctor pi-llm
@@ -369,6 +371,14 @@ SOCX_PI_DISCOVERY_CACHE=/tmp/socx-pi-discovery.env
 ```
 
 On the Pi:
+
+```sh
+git clone https://github.com/QuantumParadox/SOCX-pfSense-Wall.git
+cd SOCX-pfSense-Wall
+sudo sh pi/install_socx_pi_llm.sh
+```
+
+Manual Pi install:
 
 ```sh
 sudo mkdir -p /opt/socx-pi-llm
@@ -392,6 +402,15 @@ SOCX_PI_LLM_ACTION_URL=http://127.0.0.1:11434/api/generate
 ```
 
 When the Pi answers, SOCX writes `/tmp/socx-pi-llm-analysis.env` and rotates wall events such as `PI 3LLM analysis roles 3/3 | routine IDS watch lines`. If the Pi is offline, pfSense keeps running normally and shows the Pi layer as waiting or unreachable instead of blocking the wall.
+
+Ask SOCX for the current AI explanation:
+
+```sh
+socx explain-now
+socx-ai-explain cache
+```
+
+This refreshes Pi discovery and the Pi bridge, then prints the latest Pi 3-LLM and MIRANDA summaries. If the Pi service is not listening yet, it explains exactly which IP was found and which endpoint is missing.
 
 SOCX separates routine Suricata stream chatter from high-signal IDS/IPS alerts. Routine TCP stream notices become `IDS INFO`/watch signals; malware, C2, exploit, IPS block/drop, priority-1, and scan-style alerts remain high-severity.
 

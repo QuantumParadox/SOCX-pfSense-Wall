@@ -26,6 +26,10 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-pi-discover "$@"
         ;;
+    explain-now|ai-explain|explain-ai)
+        shift
+        exec /usr/local/bin/socx-ai-explain "$@"
+        ;;
     pi-llm-cron|llm-cron)
         shift
         exec /usr/local/bin/socx-pi-llm-cron "$@"

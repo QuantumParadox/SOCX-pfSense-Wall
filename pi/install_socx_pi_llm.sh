@@ -1,0 +1,58 @@
+#!/bin/sh
+set -eu
+
+APP_DIR="${SOCX_PI_APP_DIR:-/opt/socx-pi-llm}"
+SERVICE_FILE="/etc/systemd/system/socx-pi-llm.service"
+SRC_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Run with sudo: sudo sh pi/install_socx_pi_llm.sh" >&2
+    exit 1
+fi
+
+install -d -m 0755 "$APP_DIR"
+install -m 0755 "$SRC_DIR/socx_pi_llm_orchestrator.py" "$APP_DIR/socx_pi_llm_orchestrator.py"
+install -m 0644 "$SRC_DIR/requirements.txt" "$APP_DIR/requirements.txt"
+
+if command -v apt-get >/dev/null 2>&1; then
+    apt-get update
+    apt-get install -y python3 python3-venv python3-pip curl
+fi
+
+python3 -m venv "$APP_DIR/.venv"
+"$APP_DIR/.venv/bin/python" -m pip install --upgrade pip
+"$APP_DIR/.venv/bin/python" -m pip install -r "$APP_DIR/requirements.txt"
+
+if ! command -v ollama >/dev/null 2>&1; then
+    echo "Ollama is not installed. Install it from https://ollama.com/download/linux if you want local model roles."
+else
+    ollama pull "${SOCX_PI_LLM_TRIAGE_MODEL:-llama3.2:3b}" || true
+    ollama pull "${SOCX_PI_LLM_EVIDENCE_MODEL:-qwen2.5:3b}" || true
+    ollama pull "${SOCX_PI_LLM_ACTION_MODEL:-phi3:mini}" || true
+fi
+
+cat > "$SERVICE_FILE" <<EOF
+[Unit]
+Description=SOCX Raspberry Pi 3-LLM Orchestrator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=$APP_DIR
+Environment=SOCX_PI_LLM_TRIAGE_MODEL=${SOCX_PI_LLM_TRIAGE_MODEL:-llama3.2:3b}
+Environment=SOCX_PI_LLM_EVIDENCE_MODEL=${SOCX_PI_LLM_EVIDENCE_MODEL:-qwen2.5:3b}
+Environment=SOCX_PI_LLM_ACTION_MODEL=${SOCX_PI_LLM_ACTION_MODEL:-phi3:mini}
+ExecStart=$APP_DIR/.venv/bin/python -m uvicorn socx_pi_llm_orchestrator:app --host 0.0.0.0 --port 8095
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now socx-pi-llm
+sleep 2
+systemctl --no-pager status socx-pi-llm || true
+curl -fsS http://127.0.0.1:8095/health || true
