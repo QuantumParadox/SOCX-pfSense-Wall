@@ -224,12 +224,15 @@ run_once() {
 $parsed
 EOF
     if [ "$tool" = speedtest-go ] && awk -v d="$down" -v u="$up" 'BEGIN { exit !((d + 0) < 0 || (u + 0) < 0) }'; then
-        if [ -x "$OOKLA_SPEEDTEST" ]; then
+        parsed=$(run_speedtest_go auto) && mode=auto || parsed=''
+        if [ -z "$parsed" ] && [ -x "$OOKLA_SPEEDTEST" ]; then
             parsed=$(run_ookla_speedtest "$mode" "$OOKLA_SPEEDTEST") || parsed=''
-        elif command -v speedtest >/dev/null 2>&1 && speedtest --help 2>&1 | grep -q -- '--format'; then
+        fi
+        if [ -z "$parsed" ] && command -v speedtest >/dev/null 2>&1 && speedtest --help 2>&1 | grep -q -- '--format'; then
             parsed=$(run_ookla_speedtest "$mode" speedtest) || parsed=''
-        else
-            parsed=''
+        fi
+        if [ -z "$parsed" ] && command -v speedtest-cli >/dev/null 2>&1; then
+            parsed=$(run_python_speedtest auto speedtest-cli) && mode=auto || parsed=''
         fi
         if [ -n "$parsed" ]; then
             IFS='|' read -r status tool_name down up ping jitter sid sname sloc isp ip url <<EOF
@@ -249,6 +252,10 @@ EOF
     up=$(printf '%s' "$up" | awk '{ printf "%.0f", $1 + 0 }')
     ping=$(printf '%s' "$ping" | awk '{ if ($1 == "") print ""; else printf "%.0f", $1 + 0 }')
     jitter=$(printf '%s' "$jitter" | awk '{ if ($1 == "") print ""; else printf "%.0f", $1 + 0 }')
+    if awk -v d="$down" -v u="$up" 'BEGIN { exit !(d <= 0 || u <= 0) }'; then
+        write_cache error "invalid speedtest result" "$mode" "$tool_name" "" "" "$ping" "$jitter" "$sid" "$sname" "$sloc" "$isp" "$ip" "$url"
+        return 1
+    fi
     write_cache ok "$message" "$mode" "$tool_name" "$down" "$up" "$ping" "$jitter" "$sid" "$sname" "$sloc" "$isp" "$ip" "$url"
 }
 
