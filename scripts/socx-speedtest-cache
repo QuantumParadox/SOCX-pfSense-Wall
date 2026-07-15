@@ -293,9 +293,37 @@ with_lock() {
     fi
 }
 
+import_result() {
+    down=${1:-${SOCX_SPEEDTEST_IMPORT_DOWN:-}}
+    up=${2:-${SOCX_SPEEDTEST_IMPORT_UP:-}}
+    ping=${3:-${SOCX_SPEEDTEST_IMPORT_PING:-}}
+    jitter=${4:-${SOCX_SPEEDTEST_IMPORT_JITTER:-}}
+    sid=${5:-${SOCX_SPEEDTEST_IMPORT_SERVER_ID:-}}
+    sname=${6:-${SOCX_SPEEDTEST_IMPORT_SERVER_NAME:-}}
+    sloc=${7:-${SOCX_SPEEDTEST_IMPORT_SERVER_LOCATION:-}}
+    isp=${8:-${SOCX_SPEEDTEST_IMPORT_ISP:-}}
+    ip=${9:-${SOCX_SPEEDTEST_IMPORT_IP:-}}
+    url=${10:-${SOCX_SPEEDTEST_IMPORT_URL:-}}
+    down=$(printf '%s' "$down" | awk '{ printf "%.0f", $1 + 0 }')
+    up=$(printf '%s' "$up" | awk '{ printf "%.0f", $1 + 0 }')
+    ping=$(printf '%s' "$ping" | awk '{ if ($1 == "") print ""; else printf "%.0f", $1 + 0 }')
+    jitter=$(printf '%s' "$jitter" | awk '{ if ($1 == "") print ""; else printf "%.0f", $1 + 0 }')
+    if awk -v d="$down" -v u="$up" 'BEGIN { exit !(d <= 0 || u <= 0) }'; then
+        echo "import requires positive download and upload Mbps" >&2
+        return 2
+    fi
+    [ -n "$sname" ] || sname="Speedtest.net"
+    [ -n "$sloc" ] || sloc="client result"
+    write_cache ok "imported client Speedtest result" "client" "speedtest-net" "$down" "$up" "$ping" "$jitter" "$sid" "$sname" "$sloc" "$isp" "$ip" "$url"
+}
+
 case "${1:-loop}" in
 once)
     with_lock
+    ;;
+import)
+    shift
+    import_result "$@"
     ;;
 loop)
     while :; do
@@ -313,7 +341,7 @@ loop)
     done
     ;;
 *)
-    echo "Usage: socx-speedtest-cache [once|loop]" >&2
+    echo "Usage: socx-speedtest-cache [once|loop|import down up ping jitter server_id server_name server_location isp ip url]" >&2
     exit 2
     ;;
 esac
