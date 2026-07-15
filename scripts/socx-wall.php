@@ -1774,8 +1774,9 @@ function header_speedtest_texts($speedtest): array
         }
         $ping = (string)($speedtest['ping_ms'] ?? '');
         $next = speedtest_countdown_text($speedtest);
-        $full = sprintf('SPD:%s↓/%s↑', $down, $up);
-        $compact = sprintf('SPD:%s/%s', $down, $up);
+        $source = speedtest_source_label($speedtest);
+        $full = sprintf('SPD %s:%s↓/%s↑', $source, $down, $up);
+        $compact = sprintf('SPD %s:%s/%s', speedtest_source_tiny($speedtest), $down, $up);
         if ($ping !== '') {
             $full .= ' ' . $ping . 'ms';
             $compact .= ' ' . $ping . 'ms';
@@ -1786,7 +1787,7 @@ function header_speedtest_texts($speedtest): array
                 $full = $fullNext;
             }
         }
-        return ['full' => $full, 'compact' => $compact, 'tiny' => sprintf('SPD:%s/%s', $down, $up)];
+        return ['full' => $full, 'compact' => $compact, 'tiny' => sprintf('SPD %s:%s/%s', speedtest_source_tiny($speedtest), $down, $up)];
     }
     $label = match ($status) {
         'disabled', 'off' => 'SPD:OFF',
@@ -1796,6 +1797,58 @@ function header_speedtest_texts($speedtest): array
         default => 'SPD:WAIT',
     };
     return ['full' => $label, 'compact' => $label, 'tiny' => $label];
+}
+
+function speedtest_source_label(array $speedtest): string
+{
+    $mode = strtolower((string)($speedtest['mode'] ?? ''));
+    $tool = strtolower((string)($speedtest['tool'] ?? ''));
+    if ($mode === 'client' || str_contains($tool, 'speedtest-net')) {
+        return 'CLIENT';
+    }
+    if ($mode === 'router' || in_array($tool, ['ookla', 'speedtest-go', 'speedtest-cli'], true)) {
+        return 'ROUTER';
+    }
+    return 'AUTO';
+}
+
+function speedtest_source_tiny(array $speedtest): string
+{
+    return match (speedtest_source_label($speedtest)) {
+        'CLIENT' => 'C',
+        'ROUTER' => 'R',
+        default => 'A',
+    };
+}
+
+function speedtest_baseline(): array
+{
+    $down = getenv('SOCX_SPEEDTEST_BASELINE_DOWN_MBPS');
+    $up = getenv('SOCX_SPEEDTEST_BASELINE_UP_MBPS');
+    return [
+        'down' => is_numeric($down) ? (float)$down : 2000.0,
+        'up' => is_numeric($up) ? (float)$up : 2000.0,
+    ];
+}
+
+function speedtest_baseline_text(array $speedtest): string
+{
+    if (strtolower((string)($speedtest['status'] ?? '')) !== 'ok') {
+        return 'BASE 2G/2G';
+    }
+    $baseline = speedtest_baseline();
+    $down = (float)($speedtest['download_mbps'] ?? 0);
+    $up = (float)($speedtest['upload_mbps'] ?? 0);
+    if ($down <= 0 || $up <= 0) {
+        return 'BASE 2G/2G';
+    }
+    $downPct = $baseline['down'] > 0 ? (($down / $baseline['down']) - 1.0) * 100.0 : 0.0;
+    $upPct = $baseline['up'] > 0 ? (($up / $baseline['up']) - 1.0) * 100.0 : 0.0;
+    return sprintf('BASE 2G/2G %s%d%%/%s%d%%',
+        $downPct >= 0 ? '+' : '',
+        (int)round($downPct),
+        $upPct >= 0 ? '+' : '',
+        (int)round($upPct));
 }
 
 function header_data_text(array $f): string
@@ -2181,6 +2234,8 @@ function modern_speedtest_rows(array $f, array $p): array
         $server = $server !== '' ? $server : 'auto server';
         $fresh = !empty($speedtest['fresh']);
         $health = $fresh ? 'stable' : 'stale';
+        $source = speedtest_source_label($speedtest);
+        $baseline = speedtest_baseline_text($speedtest);
         $nextValue = speedtest_countdown_value_text($speedtest);
         $healthNext = trim($health . ' ' . $nextValue);
         if (cell_len($healthNext) > $w && $fresh) {
@@ -2192,18 +2247,18 @@ function modern_speedtest_rows(array $f, array $p): array
 
         if ($w < 22) {
             return [
-                truncate_text(sprintf('D %sM ↓', $down !== '' ? $down : '?'), $w),
-                truncate_text(sprintf('U %sM ↑', $up !== '' ? $up : '?'), $w),
+                truncate_text(sprintf('%s D %sM', $source[0], $down !== '' ? $down : '?'), $w),
+                truncate_text(sprintf('%s U %sM', $source[0], $up !== '' ? $up : '?'), $w),
                 truncate_text(sprintf('LAT %sms', $ping !== '' ? $ping : '?'), $w),
-                truncate_text($healthNext, $w),
+                truncate_text(speedtest_baseline_text($speedtest), $w),
             ];
         }
 
         return [
-            truncate_text(sprintf('DOWN %sM ↓', $down !== '' ? $down : '?'), $w),
-            truncate_text(sprintf('UP   %sM ↑', $up !== '' ? $up : '?'), $w),
+            truncate_text(sprintf('%s DOWN %sM ↓', $source, $down !== '' ? $down : '?'), $w),
+            truncate_text(sprintf('%s UP   %sM ↑', $source, $up !== '' ? $up : '?'), $w),
             truncate_text(sprintf('PING %sms%s %s', $ping !== '' ? $ping : '?', $jitter !== '' ? ' J' . $jitter . 'ms' : '', $health), $w),
-            truncate_text(sprintf('%s  %s', $server, $next !== '' ? $next : 'next ?'), $w),
+            truncate_text($baseline, $w),
         ];
     }
 
@@ -3335,14 +3390,42 @@ function collect_speedtest_metrics(array &$state, float $now): array
         ];
     }
     $cacheFile = getenv('SOCX_SPEEDTEST_CACHE_FILE') ?: '/tmp/socx-speedtest-cache.env';
-    $raw = is_readable($cacheFile) ? parse_env_file($cacheFile) : [];
+    $clientFile = getenv('SOCX_SPEEDTEST_CLIENT_CACHE_FILE') ?: '/tmp/socx-speedtest-client.env';
+    $routerFile = getenv('SOCX_SPEEDTEST_ROUTER_CACHE_FILE') ?: '/tmp/socx-speedtest-router.env';
     $intervalFromEnv = (getenv('SOCX_SPEEDTEST_INTERVAL') !== false && trim((string)getenv('SOCX_SPEEDTEST_INTERVAL')) !== '')
         || (getenv('SOCX_SPEEDTEST_INTERVAL_SECONDS') !== false && trim((string)getenv('SOCX_SPEEDTEST_INTERVAL_SECONDS')) !== '');
-    $interval = $intervalFromEnv
-        ? speedtest_interval_seconds()
-        : (isset($raw['interval_seconds']) && is_numeric($raw['interval_seconds'])
-        ? (float)$raw['interval_seconds']
-        : speedtest_interval_seconds());
+    $activeRaw = is_readable($cacheFile) ? parse_env_file($cacheFile) : [];
+    $clientRaw = is_readable($clientFile) ? parse_env_file($clientFile) : [];
+    $routerRaw = is_readable($routerFile) ? parse_env_file($routerFile) : [];
+    $interval = speedtest_interval_seconds();
+    if (!$intervalFromEnv) {
+        foreach ([$activeRaw, $clientRaw, $routerRaw] as $candidate) {
+            if (isset($candidate['interval_seconds']) && is_numeric($candidate['interval_seconds'])) {
+                $interval = (float)$candidate['interval_seconds'];
+                break;
+            }
+        }
+    }
+    $client = normalize_speedtest_cache($clientRaw, $clientFile, $interval, $now);
+    $router = normalize_speedtest_cache($routerRaw, $routerFile, $interval, $now);
+    $active = normalize_speedtest_cache($activeRaw, $cacheFile, $interval, $now);
+    $selected = $active;
+    if (($client['status'] ?? '') === 'ok' && !empty($client['fresh'])) {
+        $selected = $client;
+    } elseif (($active['status'] ?? '') !== 'ok' && ($router['status'] ?? '') === 'ok') {
+        $selected = $router;
+    }
+    $selected['client'] = $client;
+    $selected['router'] = $router;
+    $selected['baseline'] = speedtest_baseline();
+    $selected['source_label'] = speedtest_source_label($selected);
+    $selected['baseline_text'] = speedtest_baseline_text($selected);
+    $selected['router_under_client'] = speedtest_router_under_client($client, $router);
+    return $selected;
+}
+
+function normalize_speedtest_cache(array $raw, string $cacheFile, float $interval, float $now): array
+{
     $updated = isset($raw['updated']) && is_numeric($raw['updated']) ? (float)$raw['updated'] : 0.0;
     $age = $updated > 0 ? max(0.0, $now - $updated) : null;
     $status = strtolower((string)($raw['status'] ?? ($raw ? 'unknown' : 'waiting')));
@@ -3369,6 +3452,21 @@ function collect_speedtest_metrics(array &$state, float $now): array
         'fresh' => $fresh,
         'cache_file' => $cacheFile,
     ];
+}
+
+function speedtest_router_under_client(array $client, array $router): bool
+{
+    if (strtolower((string)($client['status'] ?? '')) !== 'ok' || strtolower((string)($router['status'] ?? '')) !== 'ok') {
+        return false;
+    }
+    $clientDown = (float)($client['download_mbps'] ?? 0);
+    $clientUp = (float)($client['upload_mbps'] ?? 0);
+    $routerDown = (float)($router['download_mbps'] ?? 0);
+    $routerUp = (float)($router['upload_mbps'] ?? 0);
+    if ($clientDown <= 0 || $clientUp <= 0 || $routerDown <= 0 || $routerUp <= 0) {
+        return false;
+    }
+    return $routerDown < $clientDown * 0.70 || $routerUp < $clientUp * 0.70;
 }
 
 function update_speedtest_history(array &$state, array $speedtest, float $now): void
@@ -3498,7 +3596,7 @@ function speedtest_status_text($speedtest, int $width): string
         }
         $ping = (string)($speedtest['ping_ms'] ?? '');
         $next = speedtest_countdown_text($speedtest);
-        $text = sprintf('SPD %s/%sM', $down, $up);
+        $text = sprintf('SPD %s %s/%sM', speedtest_source_label($speedtest), $down, $up);
         if ($ping !== '' && cell_len($text . ' ' . $ping . 'ms') <= $width) {
             $text .= ' ' . $ping . 'ms';
         }
@@ -3532,6 +3630,15 @@ function speedtest_status_event(array $speedtest): ?array
         return null;
     }
     if ($status === 'ok') {
+        if (!empty($speedtest['router_under_client'])) {
+            $client = is_array($speedtest['client'] ?? null) ? $speedtest['client'] : $speedtest;
+            $router = is_array($speedtest['router'] ?? null) ? $speedtest['router'] : [];
+            return soc_event('SPD', 'WARN', sprintf('Client %s/%s Mbps vs router %s/%s Mbps | router CLI likely tool/server limited',
+                (string)($client['download_mbps'] ?? '?'),
+                (string)($client['upload_mbps'] ?? '?'),
+                (string)($router['download_mbps'] ?? '?'),
+                (string)($router['upload_mbps'] ?? '?')));
+        }
         $server = trim((string)($speedtest['server_name'] ?? '') . ' ' . (string)($speedtest['server_location'] ?? ''));
         $server = $server !== '' ? $server : 'auto server';
         $down = (string)($speedtest['download_mbps'] ?? '?');
@@ -3540,7 +3647,8 @@ function speedtest_status_event(array $speedtest): ?array
         $next = speedtest_countdown_text($speedtest);
         $fresh = !empty($speedtest['fresh']);
         return soc_event('WAN', $fresh ? 'INFO' : 'WARN',
-            sprintf('Speedtest %s %s/%s Mbps ping %sms | next %s',
+            sprintf('Speedtest %s %s %s/%s Mbps ping %sms | next %s',
+                speedtest_source_label($speedtest),
                 truncate_modern_text($server, 36),
                 $down !== '' ? $down : '?',
                 $up !== '' ? $up : '?',
@@ -8453,7 +8561,7 @@ function colorize_line($line, bool $color): string
     $line = color_replace('/(\[FW\]|\[VPN\]|\[WAN\]|\[DHCP\]|\[ARP\]|\[FLOW\]|\[RADAR\]|\[PF\]|\[UPS\]|\[SYS\]|\[DNS\]|\[IFACE\]|\[DEVICE\]|\[PULSE\]|\[SOCX\]|\[DOCTOR\]|\[AI\]|\[LAB\]|\[INTEL\]|\[TTP\]|\[DETECT\]|\[EVID\]|\[CLOUD\]|\[SRC\])/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[DNSBL\]|\[IDS\]|\[IPS\])|\b(DNS BLOCK|DNS SINK|DNSBL HIT|SINKHOLE|DNSBL|Suricata|suricata|Sigma|YARA|CVE|CPE|CWE|CAPEC|CVSS|EPSS|KEV|ATT&CK|D3FEND|OpenAI|Anthropic|Gemini|xAI|Grok|NVIDIA Build|Hugging Face|Ollama|vLLM|MIRANDA|Local LLM|reputation|threat-intel|known-bad|known bad|malware|botnet|C2|abuse:high|abuse high|tor\?)\b/i', $c['purple'] . '$0' . $c['reset'], $line);
     $line = color_replace('/\b(contain|quarantine|preserve|evidence|pcap|pfctl|config\.xml|CloudTrail|AzureActivity|VPC Flow|Windows|Linux|macOS|memory)\b/i', $c['yellow'] . '$0' . $c['reset'], $line);
-    $line = color_replace('/\b(CPU|RAM|ARC|SWAP|PF|LAN|WAN|IN|OUT|VPN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|PACKET RADAR|PFTOP|LIVE STATES|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES|THREAT PULSE|SPEEDTEST|SPD|DOCTOR|PI|Mbps|STATES|SEARCH|TRAFFIC|TCP|UDP|ICMP|DIR|APP|PATH|TYPE|STAT|STATE|LEFT|PRO|SVC|RATE|FLOW|RADAR|AGE|EXP|PROTO|TEMP|HUMID|LOAD)\b/i', $c['cyan'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/\b(CPU|RAM|ARC|SWAP|PF|LAN|WAN|IN|OUT|VPN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|PACKET RADAR|PFTOP|LIVE STATES|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES|THREAT PULSE|SPEEDTEST|SPD|CLIENT|ROUTER|AUTO|BASE|DOCTOR|PI|Mbps|STATES|SEARCH|TRAFFIC|TCP|UDP|ICMP|DIR|APP|PATH|TYPE|STAT|STATE|LEFT|PRO|SVC|RATE|FLOW|RADAR|AGE|EXP|PROTO|TEMP|HUMID|LOAD)\b/i', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/\b(tls|web|dns|dnsblk|ssh|vpn|ntp|smb|sysl|rip|snmp|ssdp|nut|olma|vllm|llm|tgi|grad|jupy|ray|mlfl|trtn|graf|oai|xai|ngc|anth|gemi|hf|rdis|metr|ping|plex|dhcp|mdns|mail|apns|gcm|team|rdp|vnc|irc|ftp|dot|mux|oth|block|p\d{1,5})\b/i', $c['blue'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[[#!.]+\])/', $c['green'] . '$1' . $c['reset'], $line);
     $line = color_replace('/([█▇▆▅▄▃▂▁▓]+)/u', $c['green'] . '$1' . $c['reset'], $line);

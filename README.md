@@ -96,7 +96,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-alert-ticker` - bottom status ticker for readable firewall/security events.
 - `scripts/socx-ups-status` - compact NUT/APC UPS status widget for the tmux status bar.
 - `scripts/socx-ups-cache` - background UPS collector that keeps `/tmp/socx-ups-cache.env` fresh without blocking wall rendering.
-- `scripts/socx-speedtest-cache` - scheduled Speedtest collector that writes `/tmp/socx-speedtest-cache.env`.
+- `scripts/socx-speedtest-cache` - scheduled Speedtest collector/importer that keeps active, client, and router Speedtest cache files.
 - `scripts/socx-iftop-color` and `scripts/socx_iftop_color.pl` - color flow radar wrapper and renderer.
 - `scripts/socx-tcpdump-color` and `scripts/socx_tcpdump_color.pl` - color packet story wrapper and renderer.
 - `scripts/socx-incident` - short incident command that runs capture and prints the latest bundle manifest.
@@ -578,9 +578,35 @@ SOCX_SPEEDTEST_FRONTIER_SERVER_ID=56485
 SOCX_SPEEDTEST_FRONTIER_SERVER_NAME=Frontier
 SOCX_SPEEDTEST_FRONTIER_SERVER_LOCATION='Secaucus, NJ'
 SOCX_OOKLA_SPEEDTEST=/usr/local/sbin/ookla-speedtest
+SOCX_SPEEDTEST_BASELINE_DOWN_MBPS=2000
+SOCX_SPEEDTEST_BASELINE_UP_MBPS=2000
 ```
 
-`SOCX_SPEEDTEST_SERVER_MODE=auto` uses the Frontier Secaucus server while VPN status is down/direct, and lets Speedtest auto-select when a VPN path appears active. The wall reads the cache only; scheduled bandwidth tests run in `socx-speedtest-cache`. SOCX prefers the official Ookla native CLI at `SOCX_OOKLA_SPEEDTEST`, then falls back to `speedtest-go`, then Python `speedtest-cli`.
+`SOCX_SPEEDTEST_SERVER_MODE=auto` uses the Frontier Secaucus server while VPN status is down/direct, and lets Speedtest auto-select when a VPN path appears active. The wall reads the cache only; scheduled bandwidth tests run in `socx-speedtest-cache`, so the 500 ms wall renderer never blocks on a bandwidth test.
+
+SOCX keeps Speedtest data in three small env caches:
+
+```text
+/tmp/socx-speedtest-cache.env         active result shown on the wall
+/tmp/socx-speedtest-client.env        browser/app Speedtest.net truth result
+/tmp/socx-speedtest-router.env        pfSense router-side CLI diagnostic result
+```
+
+Why separate client and router results? Some pfSense CLI Speedtest tools can under-report multi-gig fiber, choose a poor server, or fail with a zero/negative download while a browser Speedtest.net result is correct. SOCX now treats a fresh imported browser/app result as `CLIENT` truth and keeps pfSense CLI results as `ROUTER` diagnostics. The wall shows the source label, for example `SPD CLIENT:3223↓/2372↑ 9ms`, and the Speedtest card compares against the default 2G/2G baseline.
+
+Import a known-good Speedtest.net result from a browser or app:
+
+```sh
+socx speedtest import 3223.30 2371.66 9 "" 56485 Frontier "Secaucus, NJ" "Frontier Communications" 203.0.113.10 "https://www.speedtest.net/result/0000000000"
+```
+
+Run a router-side diagnostic test without overwriting a fresh client result:
+
+```sh
+socx speedtest once
+```
+
+If the router result is much lower than the client result, SOCX rotates a warning in the Event Feed instead of replacing the wall with the bad number. Use the router result as a pfSense/tool/path clue; use `CLIENT` as the real user-experience speed.
 
 Modern btop rendering defaults to Unicode/ANSI cards, block meters, and sparklines inside pfSense/tmux:
 

@@ -3,6 +3,8 @@
 ## v0.1.46
 
 - Polished the Modern Wall without changing the successful btop-style layout.
+- Split Speedtest into `CLIENT` truth and `ROUTER` diagnostic caches so bad pfSense CLI tests no longer overwrite known-good browser Speedtest.net results.
+- Added `socx speedtest import ...`, Speedtest source labels, 2G/2G baseline comparison, and Event Feed warnings when router-side CLI tests under-report versus the client result.
 - Set scheduled Speedtest runs to a six-hour default cadence.
 - Changed the Speedtest card to show a countdown to the next scheduled test instead of elapsed cache age.
 - Filled the spare Memory card row with live SWAP usage so memory pressure is visible at a glance.

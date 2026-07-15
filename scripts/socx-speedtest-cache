@@ -5,6 +5,8 @@
 # that socx-wall can read without blocking the 500 ms display loop.
 
 CACHE=${SOCX_SPEEDTEST_CACHE_FILE:-/tmp/socx-speedtest-cache.env}
+CLIENT_CACHE=${SOCX_SPEEDTEST_CLIENT_CACHE_FILE:-/tmp/socx-speedtest-client.env}
+ROUTER_CACHE=${SOCX_SPEEDTEST_ROUTER_CACHE_FILE:-/tmp/socx-speedtest-router.env}
 LOCK=${SOCX_SPEEDTEST_LOCK_FILE:-/tmp/socx-speedtest-cache.lock}
 LOG=${SOCX_SPEEDTEST_LOG:-/tmp/socx-speedtest-cache.log}
 SERVER_ID=${SOCX_SPEEDTEST_FRONTIER_SERVER_ID:-56485}
@@ -34,6 +36,22 @@ interval_seconds() {
     esac
 }
 
+cache_file_age() {
+    file=$1
+    [ -r "$file" ] || { echo 999999999; return; }
+    updated=$(awk -F= '$1=="updated"{print $2; exit}' "$file" 2>/dev/null)
+    awk -v now="$(now_epoch)" -v updated="$updated" 'BEGIN { if (updated == "") print 999999999; else printf "%.0f\n", now - updated }'
+}
+
+cache_file_is_fresh() {
+    file=$1
+    [ -r "$file" ] || return 1
+    status=$(awk -F= '$1=="status"{print tolower($2); exit}' "$file" 2>/dev/null)
+    [ "$status" = ok ] || return 1
+    age=$(cache_file_age "$file")
+    [ "$age" -le "$(interval_seconds)" ]
+}
+
 write_cache() {
     tmp="${CACHE}.$$"
     {
@@ -54,7 +72,20 @@ write_cache() {
         printf 'result_url=%s\n' "$(clean_value "${14}")"
         printf 'interval_seconds=%s\n' "$(interval_seconds)"
     } > "$tmp"
-    mv "$tmp" "$CACHE"
+    case "$3" in
+    client)
+        cp "$tmp" "$CLIENT_CACHE" 2>/dev/null || true
+        mv "$tmp" "$CACHE"
+        ;;
+    *)
+        cp "$tmp" "$ROUTER_CACHE" 2>/dev/null || true
+        if cache_file_is_fresh "$CLIENT_CACHE"; then
+            rm -f "$tmp"
+        else
+            mv "$tmp" "$CACHE"
+        fi
+        ;;
+    esac
 }
 
 speedtest_tool() {
@@ -261,8 +292,7 @@ EOF
 
 cache_age() {
     [ -r "$CACHE" ] || { echo 999999999; return; }
-    updated=$(awk -F= '$1=="updated"{print $2; exit}' "$CACHE" 2>/dev/null)
-    awk -v now="$(now_epoch)" -v updated="$updated" 'BEGIN { if (updated == "") print 999999999; else printf "%.0f\n", now - updated }'
+    cache_file_age "$CACHE"
 }
 
 with_lock() {
