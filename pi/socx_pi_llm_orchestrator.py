@@ -12,6 +12,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
+import secrets
 import time
 import urllib.error
 import urllib.request
@@ -62,6 +64,10 @@ MAX_NETWORK_HISTORY = 120
 STATE_DIR = Path(os.getenv("SOCX_PI_STATE_DIR", "/tmp/socx-pi-state"))
 HISTORY_FILE = STATE_DIR / "history.json"
 EVIDENCE_DIR = STATE_DIR / "evidence"
+NETWORK_HISTORY_FILE = STATE_DIR / "network-history.json"
+DRAFTS_FILE = STATE_DIR / "drafts.json"
+DRAFTS: list[dict[str, Any]] = []
+INGEST_TOKEN = os.getenv("SOCX_PI_INGEST_TOKEN", "").strip()
 AUTONOMY_STATE: dict[str, Any] = {
     "mode": "observe",
     "score": 0,
@@ -91,12 +97,26 @@ def load_history() -> None:
             HISTORY.extend(data[-MAX_HISTORY:])
     except (OSError, ValueError, TypeError):
         pass
+    try:
+        data = json.loads(NETWORK_HISTORY_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            NETWORK_HISTORY.extend(data[-MAX_NETWORK_HISTORY:])
+    except (OSError, ValueError, TypeError):
+        pass
+    try:
+        data = json.loads(DRAFTS_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            DRAFTS.extend(data[-40:])
+    except (OSError, ValueError, TypeError):
+        pass
 
 
 def save_history() -> None:
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         HISTORY_FILE.write_text(json.dumps(HISTORY[-MAX_HISTORY:], separators=(",", ":")), encoding="utf-8")
+        NETWORK_HISTORY_FILE.write_text(json.dumps(NETWORK_HISTORY[-MAX_NETWORK_HISTORY:], separators=(",", ":")), encoding="utf-8")
+        DRAFTS_FILE.write_text(json.dumps(DRAFTS[-40:], separators=(",", ":")), encoding="utf-8")
     except OSError:
         event("STATE", "history persistence unavailable", "WARN")
 
@@ -240,6 +260,11 @@ def build_network(payload: dict[str, Any]) -> dict[str, Any]:
         nodes.setdefault(source_id, {"id": source_id, "label": source_name, "address": source, "kind": "host", "status": "active"})
         nodes.setdefault(target_id, {"id": target_id, "label": target_name, "address": target, "kind": "peer", "status": "active"})
         links.append({"id": f"flow-{idx}", "source": source_id, "target": target_id, "label": label[:18], "state": "live"})
+    arp_raw = str(payload.get("arp_lines") or "")
+    for match in re.finditer(r"\? \((\d{1,3}(?:\.\d{1,3}){3})\) at ([0-9a-f:]{11,})", arp_raw, re.I):
+        address, mac = match.groups()
+        node_id = "host-" + address.replace(".", "-")
+        nodes.setdefault(node_id, {"id": node_id, "label": address, "address": address, "mac": mac.lower(), "kind": "host", "status": "discovered"})
     return {
         "nodes": list(nodes.values()),
         "links": links,
@@ -256,7 +281,9 @@ def response_draft(kind: str, target: str = "") -> dict[str, Any]:
         "allow": f"Review and draft a narrow allow rule for {target}.",
     }
     action = kind if kind in actions else "block"
-    return {
+    draft = {
+        "id": secrets.token_hex(6),
+        "created_iso": now_iso(),
         "type": action,
         "target": target,
         "approval_required": True,
@@ -265,6 +292,17 @@ def response_draft(kind: str, target: str = "") -> dict[str, Any]:
         "proposal": actions[action],
         "guardrails": ["No pfSense API was called.", "Operator approval is required.", "Preserve evidence before applying changes."],
     }
+    DRAFTS.append(draft)
+    del DRAFTS[:-40]
+    save_history()
+    return draft
+
+
+def ingest_authorized(request: Request) -> bool:
+    if not INGEST_TOKEN:
+        return True
+    supplied = request.headers.get("authorization", "")
+    return secrets.compare_digest(supplied, f"Bearer {INGEST_TOKEN}")
 
 
 def summarize_role_text(text: str) -> str:
@@ -659,11 +697,14 @@ async def network() -> JSONResponse:
 
 @app.post("/api/socx/network")
 async def network_ingest(request: Request) -> JSONResponse:
+    if not ingest_authorized(request):
+        return JSONResponse({"error": "telemetry authorization required"}, status_code=401)
     payload = await request.json()
     LATEST_ANALYSIS["network_payload"] = payload
     graph = build_network(payload)
     NETWORK_HISTORY.append({"ts": time.time(), "iso": graph["updated_iso"], "nodes": len(graph["nodes"]), "links": len(graph["links"]), "graph": graph})
     del NETWORK_HISTORY[:-MAX_NETWORK_HISTORY]
+    save_history()
     event("FLOW", f"network twin refreshed nodes {len(graph['nodes'])} links {len(graph['links'])}", "INFO")
     return JSONResponse(graph)
 
@@ -677,6 +718,16 @@ async def network_history() -> JSONResponse:
 async def draft(request: Request) -> JSONResponse:
     payload = await request.json()
     return JSONResponse(response_draft(str(payload.get("kind") or "block"), str(payload.get("target") or "selected host")))
+
+
+@app.get("/api/socx/drafts")
+async def drafts() -> JSONResponse:
+    return JSONResponse({"drafts": DRAFTS[-40:]})
+
+
+@app.get("/api/socx/backup")
+async def backup() -> JSONResponse:
+    return JSONResponse({"created_iso": now_iso(), "history": HISTORY[-48:], "network_history": NETWORK_HISTORY[-120:], "drafts": DRAFTS[-40:], "read_only": True})
 
 
 @app.post("/api/socx/experiment")

@@ -5,6 +5,7 @@ OUT="${SOCX_PI_LLM_EXPORT:-/tmp/socx-pi-llm-export.json}"
 DISCOVERY_CACHE="${SOCX_PI_DISCOVERY_CACHE:-/tmp/socx-pi-discovery.env}"
 POST_URL="${SOCX_PI_LLM_POST_URL:-}"
 NETWORK_POST_URL="${SOCX_PI_NETWORK_POST_URL:-}"
+INGEST_TOKEN_FILE="${SOCX_PI_INGEST_TOKEN_FILE:-/usr/local/etc/socx_pi_ingest_token}"
 ANALYSIS_CACHE="${SOCX_PI_LLM_ANALYSIS_CACHE:-/tmp/socx-pi-llm-analysis.env}"
 TIMEOUT="${SOCX_PI_LLM_TIMEOUT:-300}"
 
@@ -56,6 +57,11 @@ if [ -z "$NETWORK_POST_URL" ]; then
     NETWORK_POST_URL="$(printf '%s' "$POST_URL" | sed 's#/api/socx/triage$#/api/socx/network#')"
 fi
 
+AUTH_HEADER=""
+if [ -s "$INGEST_TOKEN_FILE" ]; then
+    AUTH_HEADER="Authorization: Bearer $(tr -d '\r\n' < "$INGEST_TOKEN_FILE")"
+fi
+
 if [ -z "$POST_URL" ]; then
     write_cache "error" "WARN" "" "Pi LLM bridge cannot find Raspberry Pi; run socx-pi-discover" "" "pi-llm" "0/3"
     echo "$OUT"
@@ -68,7 +74,11 @@ if ! command -v curl >/dev/null 2>&1; then
     exit 1
 fi
 
-resp="$(curl -fsS --max-time "$TIMEOUT" -X POST -H 'Content-Type: application/json' --data-binary "@$OUT" "$POST_URL" 2>/tmp/socx-pi-llm-curl.err)"
+if [ -n "$AUTH_HEADER" ]; then
+    resp="$(curl -fsS --max-time "$TIMEOUT" -X POST -H 'Content-Type: application/json' -H "$AUTH_HEADER" --data-binary "@$OUT" "$POST_URL" 2>/tmp/socx-pi-llm-curl.err)"
+else
+    resp="$(curl -fsS --max-time "$TIMEOUT" -X POST -H 'Content-Type: application/json' --data-binary "@$OUT" "$POST_URL" 2>/tmp/socx-pi-llm-curl.err)"
+fi
 rc=$?
 if [ "$rc" -ne 0 ]; then
     err="$(cat /tmp/socx-pi-llm-curl.err 2>/dev/null | tr '\n' ' ' | cut -c1-180)"
@@ -78,7 +88,11 @@ if [ "$rc" -ne 0 ]; then
 fi
 
 # Refresh the lightweight digital twin independently of the slower LLM result.
-curl -fsS --max-time 5 -X POST -H 'Content-Type: application/json' --data-binary "@$OUT" "$NETWORK_POST_URL" >/dev/null 2>&1 || true
+if [ -n "$AUTH_HEADER" ]; then
+    curl -fsS --max-time 5 -X POST -H 'Content-Type: application/json' -H "$AUTH_HEADER" --data-binary "@$OUT" "$NETWORK_POST_URL" >/dev/null 2>&1 || true
+else
+    curl -fsS --max-time 5 -X POST -H 'Content-Type: application/json' --data-binary "@$OUT" "$NETWORK_POST_URL" >/dev/null 2>&1 || true
+fi
 
 printf '%s\n' "$resp"
 severity="$(printf '%s' "$resp" | sed -n 's/.*"severity"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
