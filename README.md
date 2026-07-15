@@ -390,12 +390,26 @@ sudo systemctl enable --now socx-pi-llm
 curl http://127.0.0.1:8095/health
 ```
 
-The Pi receiver uses three roles: `triage`, `evidence`, and `action`. By default they call local Ollama-compatible `/api/generate` endpoints and can use small models such as `llama3.2:3b`, `qwen2.5:3b`, and `phi3:mini`. Override models or endpoints with:
+The Pi receiver uses three roles: `triage`, `evidence`, and `action`. On a Raspberry Pi 5 AI HAT+ 2 / Hailo-10H node, SOCX tries the local Hailo chat-stream endpoint first, then falls back to CPU Ollama if a model is missing, slow, or offline. The default routing is:
+
+```text
+triage   -> Hailo llama3.2:3b
+evidence -> Hailo qwen2.5-instruct:1.5b
+action   -> Hailo qwen2.5-coder:1.5b
+fallback -> CPU Ollama llama3.2:3b / qwen2.5:3b
+```
+
+Hailo model swaps can be slow, especially on the first run after boot, so SOCX gives Hailo a longer role timeout and keeps the CPU fallback visible in the dashboard. Override models or endpoints with:
 
 ```sh
 SOCX_PI_LLM_TRIAGE_MODEL=llama3.2:3b
-SOCX_PI_LLM_EVIDENCE_MODEL=qwen2.5:3b
-SOCX_PI_LLM_ACTION_MODEL=phi3:mini
+SOCX_PI_LLM_EVIDENCE_MODEL=qwen2.5-instruct:1.5b
+SOCX_PI_LLM_ACTION_MODEL=qwen2.5-coder:1.5b
+SOCX_PI_HAILO_CHAT_URL=http://127.0.0.1:8000/api/chat
+SOCX_PI_HAILO_TIMEOUT=150
+SOCX_PI_CPU_TRIAGE_MODEL=llama3.2:3b
+SOCX_PI_CPU_EVIDENCE_MODEL=qwen2.5:3b
+SOCX_PI_CPU_ACTION_MODEL=llama3.2:3b
 SOCX_PI_LLM_TRIAGE_URL=http://127.0.0.1:11434/api/generate
 SOCX_PI_LLM_EVIDENCE_URL=http://127.0.0.1:11434/api/generate
 SOCX_PI_LLM_ACTION_URL=http://127.0.0.1:11434/api/generate
@@ -409,7 +423,7 @@ The Pi service also includes a real-time browser dashboard:
 http://<pi-ip>:8095/dashboard
 ```
 
-It shows the latest SOCX verdict, visible role summaries for `triage`, `evidence`, and `action`, Ollama health, model names, live events, pfSense payload summary, and an animated SOCX AI/network visualization. The dashboard intentionally shows visible role summaries and model status, not hidden chain-of-thought. If the model backend is offline, it will show `OLLAMA OFF` and `roles 0/3`.
+It shows the latest SOCX verdict, visible role summaries for `triage`, `evidence`, and `action`, Hailo/Ollama health, model names, backend route names, live events, pfSense payload summary, and an animated SOCX AI/network visualization. The dashboard intentionally shows visible role summaries and model status, not hidden chain-of-thought. If both model backends are offline, it will show `HAILO OFF`, `OLLAMA OFF`, and `roles 0/3`.
 
 The dashboard includes a read-only `Autopilot` layer for experimental local-AI SOC testing. Autopilot does not change firewall rules. After each SOCX analysis it records an in-memory trend point, scores the cycle, chooses an operator mode such as `OBSERVE`, `WATCH`, `INVESTIGATE`, or `COOLDOWN`, and shows safe experiment notes:
 
@@ -444,21 +458,21 @@ If SOCX shows the Pi endpoint as reachable but `roles 0/3`, the Pi receiver is r
 ```sh
 sudo systemctl status socx-pi-llm ollama
 curl http://127.0.0.1:8095/health
+curl http://127.0.0.1:8000/hailo/v1/list
 curl http://127.0.0.1:11434/api/tags
 ```
 
-Repair the usual Ollama case with:
+Repair the usual CPU Ollama fallback case with:
 
 ```sh
 curl -fsSL https://ollama.com/install.sh | sh
 sudo systemctl enable --now ollama
 ollama pull llama3.2:3b
 ollama pull qwen2.5:3b
-ollama pull phi3:mini
 sudo systemctl restart socx-pi-llm
 ```
 
-The pfSense bridge waits up to 300 seconds by default because the Pi may need time to run three small local model roles. The Pi service runs roles sequentially by default to avoid overloading Ollama while models are loading. Override only if your Pi is much faster or slower:
+The pfSense bridge waits up to 300 seconds by default because the Pi may need time to run three small local model roles. The Pi service runs roles sequentially by default because Hailo generation context swaps and CPU model loads are not instant. Override only if your Pi is much faster or slower:
 
 ```sh
 SOCX_PI_LLM_TIMEOUT=180 socx pi-llm

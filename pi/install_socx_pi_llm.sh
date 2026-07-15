@@ -28,9 +28,9 @@ if ! command -v ollama >/dev/null 2>&1; then
 else
     systemctl enable --now ollama >/dev/null 2>&1 || true
     sleep 1
-    ollama pull "${SOCX_PI_LLM_TRIAGE_MODEL:-llama3.2:3b}" || true
-    ollama pull "${SOCX_PI_LLM_EVIDENCE_MODEL:-qwen2.5:3b}" || true
-    ollama pull "${SOCX_PI_LLM_ACTION_MODEL:-phi3:mini}" || true
+    ollama pull "${SOCX_PI_CPU_TRIAGE_MODEL:-llama3.2:3b}" || true
+    ollama pull "${SOCX_PI_CPU_EVIDENCE_MODEL:-qwen2.5:3b}" || true
+    ollama pull "${SOCX_PI_CPU_ACTION_MODEL:-llama3.2:3b}" || true
 fi
 
 cat > "$SERVICE_FILE" <<EOF
@@ -43,9 +43,11 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=$APP_DIR
 Environment=SOCX_PI_LLM_TRIAGE_MODEL=${SOCX_PI_LLM_TRIAGE_MODEL:-llama3.2:3b}
-Environment=SOCX_PI_LLM_EVIDENCE_MODEL=${SOCX_PI_LLM_EVIDENCE_MODEL:-llama3.2:3b}
-Environment=SOCX_PI_LLM_ACTION_MODEL=${SOCX_PI_LLM_ACTION_MODEL:-llama3.2:3b}
+Environment=SOCX_PI_LLM_EVIDENCE_MODEL=${SOCX_PI_LLM_EVIDENCE_MODEL:-qwen2.5-instruct:1.5b}
+Environment=SOCX_PI_LLM_ACTION_MODEL=${SOCX_PI_LLM_ACTION_MODEL:-qwen2.5-coder:1.5b}
 Environment=SOCX_PI_LLM_TIMEOUT=${SOCX_PI_LLM_TIMEOUT:-75}
+Environment=SOCX_PI_HAILO_CHAT_URL=${SOCX_PI_HAILO_CHAT_URL:-http://127.0.0.1:8000/api/chat}
+Environment=SOCX_PI_HAILO_TIMEOUT=${SOCX_PI_HAILO_TIMEOUT:-150}
 Environment=SOCX_PI_LLM_CONCURRENCY=${SOCX_PI_LLM_CONCURRENCY:-1}
 Environment=SOCX_PI_LLM_NUM_PREDICT=${SOCX_PI_LLM_NUM_PREDICT:-96}
 Environment=SOCX_PI_LLM_NUM_CTX=${SOCX_PI_LLM_NUM_CTX:-2048}

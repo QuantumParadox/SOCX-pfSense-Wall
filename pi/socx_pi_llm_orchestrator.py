@@ -31,9 +31,24 @@ DEFAULT_ROLES = {
 }
 DEFAULT_MODELS = {
     "triage": os.getenv("SOCX_PI_LLM_TRIAGE_MODEL", "llama3.2:3b"),
-    "evidence": os.getenv("SOCX_PI_LLM_EVIDENCE_MODEL", "llama3.2:3b"),
-    "action": os.getenv("SOCX_PI_LLM_ACTION_MODEL", "llama3.2:3b"),
+    "evidence": os.getenv("SOCX_PI_LLM_EVIDENCE_MODEL", "qwen2.5-instruct:1.5b"),
+    "action": os.getenv("SOCX_PI_LLM_ACTION_MODEL", "qwen2.5-coder:1.5b"),
 }
+HAILO_URL = os.getenv("SOCX_PI_HAILO_URL", "http://127.0.0.1:8000/api/generate")
+HAILO_CHAT_URL = os.getenv("SOCX_PI_HAILO_CHAT_URL", "http://127.0.0.1:8000/api/chat")
+CPU_URL = os.getenv("SOCX_PI_CPU_URL", "http://127.0.0.1:11434/api/generate")
+CPU_FALLBACK_MODELS = {
+    "triage": os.getenv("SOCX_PI_CPU_TRIAGE_MODEL", "llama3.2:3b"),
+    "evidence": os.getenv("SOCX_PI_CPU_EVIDENCE_MODEL", "qwen2.5:3b"),
+    "action": os.getenv("SOCX_PI_CPU_ACTION_MODEL", "llama3.2:3b"),
+}
+HAILO_CAPABILITIES = {
+    "voice": "Whisper",
+    "vision": "qwen2-vl",
+    "complex": "deepseek-r1-distill:1.5b",
+    "fallback": "qwen3:1.7b",
+}
+HAILO_CACHE: dict[str, Any] = {"checked": 0.0, "ok": False, "models": [], "error": "not checked"}
 
 app = FastAPI(title=APP_NAME)
 LATEST_ANALYSIS: dict[str, Any] = {
@@ -333,6 +348,13 @@ def summarize_role_text(text: str) -> str:
     return text[:420]
 
 
+def clean_model_text(text: str) -> str:
+    cleaned = str(text or "").strip()
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+    return cleaned.strip()
+
+
 async def check_ollama_tags(timeout: float = 2.0) -> dict[str, Any]:
     def call() -> dict[str, Any]:
         req = urllib.request.Request("http://127.0.0.1:11434/api/tags")
@@ -347,6 +369,51 @@ async def check_ollama_tags(timeout: float = 2.0) -> dict[str, Any]:
         return await asyncio.to_thread(call)
     except Exception as exc:  # health endpoint should never crash the dashboard
         return {"ok": False, "error": str(exc)[:220]}
+
+
+async def check_hailo_tags(timeout: float = 3.0) -> dict[str, Any]:
+    now = time.time()
+    if now - float(HAILO_CACHE.get("checked") or 0) < 5:
+        return dict(HAILO_CACHE)
+    def call() -> dict[str, Any]:
+        req = urllib.request.Request("http://127.0.0.1:8000/hailo/v1/list")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", "replace")
+        data = json.loads(raw)
+        models = data.get("models", [])
+        names = [str(x.get("name", x) if isinstance(x, dict) else x) for x in models]
+        return {"ok": True, "model_count": len(names), "models": names[:24]}
+    try:
+        result = await asyncio.to_thread(call)
+    except Exception as exc:
+        result = {"ok": False, "model_count": 0, "models": [], "error": str(exc)[:220]}
+    result["checked"] = now
+    HAILO_CACHE.clear()
+    HAILO_CACHE.update(result)
+    return dict(result)
+
+
+async def runtime_inventory() -> dict[str, Any]:
+    hailo, cpu = await asyncio.gather(check_hailo_tags(), check_ollama_tags())
+    hailo_models = set(hailo.get("models", [])) if hailo.get("ok") else set()
+    role_routes = {}
+    for role, model in DEFAULT_MODELS.items():
+        role_routes[role] = {
+            "preferred": {"backend": "hailo", "model": model},
+            "available": model in hailo_models,
+            "fallback": {"backend": "cpu-ollama", "model": CPU_FALLBACK_MODELS[role]},
+        }
+    return {
+        "hailo": hailo,
+        "cpu_ollama": cpu,
+        "role_routes": role_routes,
+        "capabilities": HAILO_CAPABILITIES,
+        "router_policy": {
+            "hailo_chat_url": HAILO_CHAT_URL,
+            "cpu_generate_url": CPU_URL,
+            "mode": "hailo-chat-stream-first; cpu-ollama-fallback",
+        },
+    }
 
 
 async def run_experiment(kind: str, duration: int = 30) -> None:
@@ -572,25 +639,83 @@ def call_ollama_generate(url: str, model: str, prompt: str, timeout: float) -> d
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         raw = resp.read().decode("utf-8", "replace")
     data = json.loads(raw)
-    text = str(data.get("response") or data.get("text") or raw)
+    text = clean_model_text(str(data.get("response") or data.get("text") or raw))
     return {"ok": True, "model": model, "text": text[:1200]}
 
 
+def call_hailo_chat(url: str, model: str, prompt: str, timeout: float) -> dict[str, Any]:
+    body_data = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": True,
+        "options": {
+            "temperature": float(os.getenv("SOCX_PI_LLM_TEMPERATURE", "0.2")),
+            "num_predict": int(os.getenv("SOCX_PI_LLM_NUM_PREDICT", "96")),
+            "num_ctx": int(os.getenv("SOCX_PI_LLM_NUM_CTX", "2048")),
+        },
+    }
+    started = time.time()
+    body = json.dumps(body_data).encode()
+    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+    parts: list[str] = []
+    last_frame: dict[str, Any] = {}
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        for raw_line in resp:
+            line = raw_line.decode("utf-8", "replace").strip()
+            if not line:
+                continue
+            if line.startswith("data:"):
+                line = line[5:].strip()
+            if line == "[DONE]":
+                break
+            try:
+                frame = json.loads(line)
+            except json.JSONDecodeError:
+                parts.append(line)
+                continue
+            last_frame = frame
+            message = frame.get("message")
+            if isinstance(message, dict):
+                parts.append(str(message.get("content") or ""))
+            elif frame.get("response") is not None:
+                parts.append(str(frame.get("response") or ""))
+            elif frame.get("text") is not None:
+                parts.append(str(frame.get("text") or ""))
+            if frame.get("done"):
+                break
+    text = clean_model_text("".join(parts))
+    if not text:
+        text = str(last_frame)[:1200]
+    return {"ok": True, "model": model, "text": text[:1200], "elapsed_ms": round((time.time() - started) * 1000)}
+
+
 async def run_role(role: str, payload: dict[str, Any]) -> dict[str, Any]:
-    url = role_url(role)
-    model = DEFAULT_MODELS[role]
-    timeout = float(os.getenv("SOCX_PI_LLM_TIMEOUT", "75"))
+    inventory = await runtime_inventory()
+    preferred = inventory["role_routes"][role]
+    hailo_available = bool(preferred.get("available"))
+    attempts = []
+    if hailo_available:
+        attempts.append((HAILO_CHAT_URL, preferred["preferred"]["model"], "hailo", float(os.getenv("SOCX_PI_HAILO_TIMEOUT", "150"))))
+    attempts.append((role_url(role), CPU_FALLBACK_MODELS[role], "cpu-ollama", float(os.getenv("SOCX_PI_LLM_TIMEOUT", "75"))))
     prompt = build_prompt(role, payload)
-    event("ROLE", f"{role} thinking with {model}", "INFO")
-    try:
-        result = await asyncio.to_thread(call_ollama_generate, url, model, prompt, timeout)
-        result.update({"role": role, "summary": summarize_role_text(result.get("text", "")), "url": url})
-        event("ROLE", f"{role} complete with {model}", "INFO")
-        return result
-    except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError) as exc:
-        error = str(exc)[:220]
-        event("ROLE", f"{role} failed with {model}: {error}", "WARN")
-        return {"ok": False, "role": role, "model": model, "url": url, "summary": "offline or timed out", "error": error}
+    errors: list[str] = []
+    for url, model, backend, timeout in attempts:
+        event("ROLE", f"{role} thinking with {model} [{backend}]", "INFO")
+        try:
+            if backend == "hailo":
+                result = await asyncio.to_thread(call_hailo_chat, url, model, prompt, timeout)
+            else:
+                result = await asyncio.to_thread(call_ollama_generate, url, model, prompt, timeout)
+            result.update({"role": role, "backend": backend, "summary": summarize_role_text(result.get("text", "")), "url": url})
+            event("ROLE", f"{role} complete with {model} [{backend}]", "INFO")
+            return result
+        except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError) as exc:
+            error = str(exc)[:220]
+            event("ROLE", f"{role} failed with {model} [{backend}]: {error}", "WARN")
+            if backend == "hailo":
+                event("ROUTER", f"{role} falling back to CPU Ollama", "WARN")
+            errors.append(f"{backend}: {error}")
+    return {"ok": False, "role": role, "model": CPU_FALLBACK_MODELS[role], "backend": "unavailable", "summary": "Hailo and CPU Ollama unavailable", "error": "; ".join(errors)[:420]}
 
 
 async def run_roles(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -645,7 +770,7 @@ def heuristic_verdict(payload: dict[str, Any], role_results: dict[str, dict[str,
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    ollama = await check_ollama_tags()
+    inventory = await runtime_inventory()
     return {
         "status": "ok",
         "service": APP_NAME,
@@ -653,7 +778,8 @@ async def health() -> dict[str, Any]:
         "latest_status": LATEST_ANALYSIS.get("status"),
         "roles_online": LATEST_ANALYSIS.get("roles_online"),
         "updated_iso": LATEST_ANALYSIS.get("updated_iso"),
-        "ollama": ollama,
+        "ollama": inventory["cpu_ollama"],
+        "runtime": inventory,
         "system": system_metrics(),
         "autonomy": AUTONOMY_STATE,
         "ollama_hint": "curl http://127.0.0.1:11434/api/tags",
@@ -682,6 +808,7 @@ async def latest() -> JSONResponse:
     data["network"] = build_network(data.get("network_payload") or {})
     data["network_history"] = NETWORK_HISTORY[-30:]
     data["drafts"] = DRAFTS[-12:]
+    data["runtime"] = await runtime_inventory()
     data["history"] = HISTORY[-18:]
     return JSONResponse(data)
 
@@ -793,6 +920,7 @@ async def stream() -> StreamingResponse:
             data["network"] = build_network(data.get("network_payload") or {})
             data["network_history"] = NETWORK_HISTORY[-30:]
             data["drafts"] = DRAFTS[-12:]
+            data["runtime"] = await runtime_inventory()
             data["history"] = HISTORY[-18:]
             yield f"data: {json.dumps(data, separators=(',', ':'))}\n\n"
             await asyncio.sleep(1)
@@ -862,7 +990,7 @@ h2{margin:0 0 8px;color:var(--cyan);font-size:15px;letter-spacing:.08em}.metric{
   <header class="top">
     <div class="brand">SOCX PI 3-LLM DASHBOARD</div>
     <div class="status">
-      <span id="clock"></span><span id="svc" class="pill muted">WAIT</span><span id="roles" class="pill warn">0/3</span><span id="ollama" class="pill bad">OLLAMA</span><span id="age" class="pill muted">age ?</span>
+      <span id="clock"></span><span id="svc" class="pill muted">WAIT</span><span id="roles" class="pill warn">0/3</span><span id="hailo" class="pill muted">HAILO</span><span id="ollama" class="pill bad">OLLAMA</span><span id="age" class="pill muted">age ?</span>
     </div>
   </header>
   <main class="main">
@@ -937,12 +1065,12 @@ function render(d){
   state=d; $('clock').textContent=new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
   $('svc').textContent=(d.status||'waiting').toUpperCase(); $('svc').className='pill '+(d.status==='ok'?'ok':d.status==='degraded'?'warn':'muted');
   $('roles').textContent='ROLES '+(d.roles_online||'0/3'); $('roles').className='pill '+((d.roles_online||'').startsWith('3/')?'ok':(d.roles_online||'').startsWith('0/')?'bad':'warn');
-  $('coreRoles').textContent=d.roles_online||'0/3'; $('ollama').textContent=d.ollama&&d.ollama.ok?'OLLAMA '+d.ollama.model_count:'OLLAMA OFF'; $('ollama').className='pill '+(d.ollama&&d.ollama.ok?'ok':'bad');
+  $('coreRoles').textContent=d.roles_online||'0/3'; const rt=d.runtime||{}; const hh=rt.hailo||{}; $('hailo').textContent=hh.ok?'HAILO '+(hh.model_count||0):'HAILO OFF'; $('hailo').className='pill '+(hh.ok?'ok':'warn'); $('ollama').textContent=d.ollama&&d.ollama.ok?'OLLAMA '+d.ollama.model_count:'OLLAMA OFF'; $('ollama').className='pill '+(d.ollama&&d.ollama.ok?'ok':'bad');
   $('age').textContent='age '+(d.age_seconds??0)+'s'; $('severity').textContent=d.severity||'INFO'; $('severity').style.color=colors[d.severity]||colors.INFO;
   $('confidence').textContent=Math.round((d.confidence||0)*100)+'%'; $('confbar').style.width=Math.max(0,Math.min(100,(d.confidence||0)*100))+'%';
   $('elapsed').textContent=ms(d.elapsed_ms||0); $('evidence').textContent=(d.payload_summary?Object.keys(d.payload_summary).length:0)+' signal groups';
   $('next').textContent=d.recommended_next_step||'waiting';
-  const roles=d.role_results||{}; $('rolebox').innerHTML=['triage','evidence','action'].map(r=>{const x=roles[r]||{};return `<div class="role ${x.ok?'ok':'fail'}"><div class="role-name">${r}</div><div><div class="role-text">${esc(x.summary||x.error||'waiting for role output')}</div><div class="role-meta">${esc(x.model||'model?')} ${x.ok?'online':'offline'} ${x.error?' | '+esc(x.error):''}</div></div></div>`}).join('');
+  const roles=d.role_results||{}; $('rolebox').innerHTML=['triage','evidence','action'].map(r=>{const x=roles[r]||{};return `<div class="role ${x.ok?'ok':'fail'}"><div class="role-name">${r}</div><div><div class="role-text">${esc(x.summary||x.error||'waiting for role output')}</div><div class="role-meta">${esc(x.model||'model?')} | ${esc(x.backend||'route?')} | ${x.ok?'online':'offline'} ${x.error?' | '+esc(x.error):''}</div></div></div>`}).join('');
   const models=d.models||{}; const ollama=d.ollama||{}; $('models').innerHTML=['triage','evidence','action'].map(r=>{const x=roles[r]||{};const ok=!!x.ok;return `<div class="model-card"><div class="model-role">${r}</div><div><div class="model-name">${esc(models[r]||x.model||'not set')}</div><div class="muted">${ok?'last role completed':'waiting or timed out'}</div></div><b class="${ok?'ok':'warn'}">${healthWord(ok)}</b></div>`}).join('')+`<div class="model-card"><div class="model-role">ollama</div><div><div class="model-name">${ollama.ok?fmt(ollama.model_count)+' local models':'not reachable'}</div><div class="muted">${esc((ollama.models||[]).slice(0,3).join(', ')||ollama.error||'local model server')}</div></div><b class="${ollama.ok?'ok':'bad'}">${ollama.ok?'online':'offline'}</b></div>`;
   $('reasons').innerHTML=(d.reasons||[]).map(r=>`<div class="event">${esc(r)}</div>`).join('');
   $('events').innerHTML=(d.events||[]).slice(-8).reverse().map(e=>`<div class="event"><span class="${cls(e.severity)}">[${esc(e.kind)}]</span> ${esc(e.message)}</div>`).join('');
