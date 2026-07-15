@@ -681,6 +681,7 @@ async def latest() -> JSONResponse:
     data["experiment"] = EXPERIMENT_STATE
     data["network"] = build_network(data.get("network_payload") or {})
     data["network_history"] = NETWORK_HISTORY[-30:]
+    data["drafts"] = DRAFTS[-12:]
     data["history"] = HISTORY[-18:]
     return JSONResponse(data)
 
@@ -723,6 +724,18 @@ async def draft(request: Request) -> JSONResponse:
 @app.get("/api/socx/drafts")
 async def drafts() -> JSONResponse:
     return JSONResponse({"drafts": DRAFTS[-40:]})
+
+
+@app.post("/api/socx/draft/{draft_id}/review")
+async def review_draft(draft_id: str) -> JSONResponse:
+    for draft in reversed(DRAFTS):
+        if draft.get("id") == draft_id:
+            draft["reviewed"] = True
+            draft["reviewed_iso"] = now_iso()
+            save_history()
+            event("REVIEW", f"draft {draft_id} acknowledged; no change applied", "INFO")
+            return JSONResponse({"ok": True, "draft": draft, "applied": False})
+    return JSONResponse({"ok": False, "error": "draft not found"}, status_code=404)
 
 
 @app.get("/api/socx/backup")
@@ -779,6 +792,7 @@ async def stream() -> StreamingResponse:
             data["experiment"] = EXPERIMENT_STATE
             data["network"] = build_network(data.get("network_payload") or {})
             data["network_history"] = NETWORK_HISTORY[-30:]
+            data["drafts"] = DRAFTS[-12:]
             data["history"] = HISTORY[-18:]
             yield f"data: {json.dumps(data, separators=(',', ':'))}\n\n"
             await asyncio.sleep(1)
@@ -838,6 +852,7 @@ h2{margin:0 0 8px;color:var(--cyan);font-size:15px;letter-spacing:.08em}.metric{
 .bar{height:9px;background:#ffffff16;margin-top:6px;overflow:hidden}.bar span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--lcars),var(--cyan),var(--green))}
 .lab{border:1px solid #ff9f4355;background:#1b1018;padding:9px 10px;margin-top:10px}.lab-title{display:flex;justify-content:space-between;color:var(--lcars);font-weight:900;letter-spacing:.06em}.lab-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}.lab button{border:1px solid #49fff466;background:#071c21;color:var(--cyan);padding:7px 5px;font:700 11px ui-monospace,Consolas,monospace;cursor:pointer}.lab button:hover{background:#49fff422;color:#fff}.lab button.stop{color:var(--red);border-color:#ff5e7866}.lab-status{margin-top:8px;font:12px ui-monospace,Consolas,monospace;color:var(--ink);white-space:normal}.lab-history{margin-top:6px;color:var(--muted);font:11px ui-monospace,Consolas,monospace}
 .command{border:1px solid #c76dff66;background:#130d1b;padding:9px 10px;margin-top:10px}.command-title{display:flex;justify-content:space-between;color:var(--lcars2);font-weight:900;letter-spacing:.06em}.command-row{display:grid;grid-template-columns:1fr auto;gap:6px;margin-top:7px}.command input{min-width:0;border:1px solid #ffffff22;background:#020609;color:var(--ink);padding:7px;font:12px ui-monospace,Consolas,monospace}.command button{border:1px solid #c76dff88;background:#21102d;color:var(--lcars2);padding:6px 8px;font:700 11px ui-monospace,Consolas,monospace;cursor:pointer}.command-output{margin-top:7px;min-height:42px;white-space:pre-wrap;color:var(--ink);font:12px/1.4 ui-monospace,Consolas,monospace}.command-help{color:var(--muted);font:10px ui-monospace,Consolas,monospace;margin-top:5px}
+.review{border:1px solid #ffe35b66;background:#1d180b;padding:9px 10px;margin-top:10px}.review-title{display:flex;justify-content:space-between;color:var(--yellow);font-weight:900;letter-spacing:.06em}.review-item{border-top:1px solid #ffffff17;padding:7px 0;font:12px/1.35 ui-monospace,Consolas,monospace}.review-item:first-child{border-top:0}.review-item b{color:var(--ink)}.review button{float:right;border:1px solid #66ff7c88;background:#0e2815;color:var(--green);padding:4px 6px;font:700 10px ui-monospace,Consolas,monospace;cursor:pointer}
 .model-grid,.summary-grid,.experiment-grid{display:grid;gap:8px}.model-card,.summary-card,.experiment-card{border:1px solid #ffffff1f;background:#ffffff08;padding:8px 10px}.model-card{display:grid;grid-template-columns:92px 1fr auto;gap:8px;align-items:center}.model-role{font-weight:900;text-transform:uppercase;color:var(--cyan)}.model-name{font-weight:800}.summary-grid{grid-template-columns:1fr 1fr}.summary-card span{display:block;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em}.summary-card b{display:block;color:var(--ink);font-size:20px;margin-top:2px}.plain{font-size:14px;line-height:1.45;color:var(--ink)}.autopilot{border:1px solid #ff56f455;background:#210a2438;padding:9px 10px;margin-top:10px}.autopilot-title{display:flex;justify-content:space-between;gap:10px;font-weight:900;color:var(--mag);letter-spacing:.06em}.experiment-card{font-size:13px}.experiment-card b{display:block;color:var(--ink)}.trend{height:34px;width:100%;margin-top:8px}
 @media(max-width:1100px){.main{grid-template-columns:1fr}.shell{overflow:auto;height:auto}.viz{height:360px}.feed{grid-template-columns:1fr}body{overflow:auto}}
 </style>
@@ -880,6 +895,10 @@ h2{margin:0 0 8px;color:var(--cyan);font-size:15px;letter-spacing:.08em}.metric{
         <div class="command-row"><input id="command-input" value="status" aria-label="SOCX command"><button id="command-run">RUN</button></div>
         <div class="command-output" id="command-output">Awaiting operator command.</div>
         <div class="command-help">status | vpn | top talkers | thermal | models | preserve evidence</div>
+      </div>
+      <div class="review">
+        <div class="review-title"><span>REVIEW QUEUE</span><span id="review-count">0</span></div>
+        <div id="review-queue" class="review-item">No response drafts awaiting review.</div>
       </div>
       <h2 style="margin-top:18px">Model Health</h2>
       <div id="models" class="model-grid"></div>
@@ -931,6 +950,7 @@ function render(d){
   const lab=d.experiment||{}; $('lab-progress').textContent=lab.active?((lab.progress||0)+'% '+String(lab.kind||'RUN').toUpperCase()):String(lab.status||'READY').toUpperCase(); $('lab-progress').className=lab.active?'warn':lab.status==='complete'?'ok':'muted'; $('lab-status').textContent=lab.result||'All experiments are bounded and read-only.'; $('lab-history').textContent=(lab.history||[]).slice(-2).map(x=>x.result).join(' | ');
   const p=d.payload_summary||{}; const cards=[['Firewall blocks',p.firewall_blocks_sampled,'blocked samples'],['DNSBL hits',p.dnsbl_lines_sampled,'DNS blocks'],['IDS watch',p.ids_watch_sampled,'routine alerts'],['High IDS',p.ids_high_sampled,'urgent alerts'],['IDS lines',p.ids_alert_lines_sampled,'sample size']]; $('payload').innerHTML=cards.map(([k,v,s])=>`<div class="summary-card"><span>${esc(k)}</span><b>${fmt(v)}</b><small class="muted">${esc(s)}</small></div>`).join('');
   $('vizFw').textContent=fmt(p.firewall_blocks_sampled); $('vizDns').textContent=fmt(p.dnsbl_lines_sampled); $('vizIds').textContent=fmt(p.ids_watch_sampled); $('vizAuto').textContent=(a.mode||'observe').toUpperCase(); const twin=d.network||{}; $('twin-status').textContent='TWIN '+(twin.links||[]).length+' LINKS | '+(twin.nodes||[]).length+' NODES | '+(d.network_history||[]).length+' SNAP'; $('twin-status').style.color=(twin.links||[]).length?'var(--green)':'var(--lcars)';
+  const drafts=d.drafts||[]; const pending=drafts.filter(x=>!x.reviewed); $('review-count').textContent=pending.length+' PENDING'; $('review-queue').innerHTML=pending.length?pending.slice(-4).reverse().map(x=>`<div class="review-item"><button data-review="${esc(x.id)}">ACKNOWLEDGE</button><b>${esc(String(x.type||'draft').toUpperCase())}</b> ${esc(x.target||'selected host')}<br><span class="muted">${esc(x.proposal||'draft response')} | no change applied</span></div>`).join(''):'No response drafts awaiting review.';
 }
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function drawTrend(hist){const cv=$('trend'); if(!cv)return; const g=cv.getContext('2d'),r=cv.getBoundingClientRect(),dpr=devicePixelRatio||1; cv.width=Math.max(1,r.width*dpr); cv.height=Math.max(1,r.height*dpr); g.clearRect(0,0,cv.width,cv.height); const pts=(hist||[]).slice(-18); g.strokeStyle='rgba(73,255,244,.25)'; g.beginPath(); g.moveTo(0,cv.height-1); g.lineTo(cv.width,cv.height-1); g.stroke(); if(!pts.length)return; g.strokeStyle='#ff56f4'; g.lineWidth=2*dpr; g.beginPath(); pts.forEach((p,i)=>{const x=pts.length===1?0:i*(cv.width/(pts.length-1)); const y=cv.height-(Math.min(100,p.score||0)/100)*cv.height; if(i===0)g.moveTo(x,y); else g.lineTo(x,y)}); g.stroke();}
@@ -938,6 +958,7 @@ async function poll(){try{render(await (await fetch('/api/socx/latest',{cache:'n
 if(window.EventSource){const es=new EventSource('/api/socx/stream');es.onmessage=e=>{try{render(JSON.parse(e.data))}catch(_){}};es.onerror=poll}else setInterval(poll,1000); poll();
 document.querySelectorAll('[data-experiment]').forEach(button=>button.addEventListener('click',async()=>{try{await fetch('/api/socx/experiment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:button.dataset.experiment,action:'start',duration:30})})}catch(_){}})); $('lab-stop').addEventListener('click',async()=>{try{await fetch('/api/socx/experiment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'stop'})})}catch(_){}});
 async function runCommand(){const input=$('command-input'),output=$('command-output'); const command=input.value.trim()||'help'; output.textContent='Querying local SOCX telemetry...'; try{const r=await fetch('/api/socx/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command})}); const d=await r.json(); output.textContent=(d.title||'SOCX')+'\n'+(d.lines||[]).join('\n')}catch(e){output.textContent='Command service unavailable'}} $('command-run').addEventListener('click',runCommand); $('command-input').addEventListener('keydown',e=>{if(e.key==='Enter')runCommand()});
+document.addEventListener('click',async e=>{const button=e.target.closest('[data-review]');if(!button)return;button.disabled=true;try{await fetch('/api/socx/draft/'+encodeURIComponent(button.dataset.review)+'/review',{method:'POST'})}catch(_){button.disabled=false}});
 const c=$('space'),ctx=c.getContext('2d');let t=0;
 function resize(){c.width=c.clientWidth*devicePixelRatio;c.height=c.clientHeight*devicePixelRatio}addEventListener('resize',resize);resize();
 function draw(){t+=0.014;ctx.clearRect(0,0,c.width,c.height);const w=c.width,h=c.height,cx=w/2,cy=h/2;const roles=['triage','evidence','action'];const online=(state.roles_online||'0/3').split('/')[0]*1;const p=state.payload_summary||{};const auto=state.autonomy||{};const fw=Math.min(1,(p.firewall_blocks_sampled||0)/2000),dns=Math.min(1,(p.dnsbl_lines_sampled||0)/2000),ids=Math.min(1,(p.ids_watch_sampled||0)/300),ascore=Math.min(1,(auto.score||0)/100);const energy=.45+fw*.22+dns*.18+ids*.12+ascore*.2;
