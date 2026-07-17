@@ -143,6 +143,23 @@ def human_rate(value: float) -> str:
     return human_bytes(value, "/s")
 
 
+def human_duration(seconds: Any) -> str:
+    try:
+        total = int(float(seconds))
+    except (TypeError, ValueError):
+        return "--"
+    if total <= 0:
+        return "--"
+    days, rem = divmod(total, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, _ = divmod(rem, 60)
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
+
+
 def service_name(port: str) -> str:
     services = {
         "22": "ssh",
@@ -584,17 +601,33 @@ class SocxCollector:
         result = dict(node)
         result.setdefault("status", "online" if ip else "unknown")
         if not ip:
-            return result
+            return self.decorate_pi_node(result)
         pi_ai = run_cmd(f"curl -fsS --max-time 1 http://{ip}:8095/health 2>/dev/null", timeout=1.4)
         if pi_ai:
             result["status"] = "online"
             try:
                 data = json.loads(pi_ai)
                 system = data.get("system") if isinstance(data.get("system"), dict) else {}
+                runtime = data.get("runtime") if isinstance(data.get("runtime"), dict) else {}
+                hailo = runtime.get("hailo") if isinstance(runtime.get("hailo"), dict) else {}
+                cpu_ollama = runtime.get("cpu_ollama") if isinstance(runtime.get("cpu_ollama"), dict) else {}
+                autonomy = data.get("autonomy") if isinstance(data.get("autonomy"), dict) else {}
                 result["service"] = result.get("service") or "socx-3llm"
                 result["temperature_c"] = system.get("temp_c")
                 result["load_one"] = (system.get("load") or {}).get("one") if isinstance(system.get("load"), dict) else None
                 result["memory_used_pct"] = (system.get("memory") or {}).get("used_pct") if isinstance(system.get("memory"), dict) else None
+                result["roles_online"] = data.get("roles_online")
+                result["latest_status"] = data.get("latest_status")
+                result["hailo_models"] = hailo.get("model_count")
+                result["cpu_models"] = cpu_ollama.get("model_count") or (data.get("ollama") or {}).get("model_count")
+                result["autonomy_mode"] = autonomy.get("mode")
+                result["autonomy_score"] = autonomy.get("score")
+                result["autonomy_summary"] = autonomy.get("summary")
+                result["last_cycle_iso"] = autonomy.get("last_cycle_iso") or data.get("updated_iso")
+                experiments = autonomy.get("experiments")
+                if isinstance(experiments, list):
+                    result["experiments_ok"] = sum(1 for item in experiments if isinstance(item, dict) and item.get("status") in {"pass", "stable", "ok"})
+                    result["experiments_total"] = len(experiments)
             except Exception:
                 pass
         sidecar = run_cmd(f"curl -fsS --max-time 1 http://{ip}:8096/health 2>/dev/null", timeout=1.4)
@@ -610,7 +643,7 @@ class SocxCollector:
                 result["load_one"] = (data.get("load") or {}).get("one")
                 result["memory_used_pct"] = (data.get("memory") or {}).get("used_pct")
                 result["uptime_seconds"] = data.get("uptime_seconds")
-                return result
+                return self.decorate_pi_node(result)
             except Exception:
                 pass
         metrics = run_cmd(f"curl -fsS --max-time 1 http://{ip}:9100/metrics 2>/dev/null | head -900", timeout=1.4)
@@ -642,9 +675,42 @@ class SocxCollector:
                     result["temperature_c"] = round(float(temp.group(1)), 1)
                 except ValueError:
                     pass
-            return result
+            return self.decorate_pi_node(result)
         if result.get("status") != "online":
             result["status"] = "offline"
+        return self.decorate_pi_node(result)
+
+    def decorate_pi_node(self, node: dict[str, Any]) -> dict[str, Any]:
+        result = dict(node)
+        temp = result.get("temperature_c")
+        try:
+            temp_c = float(temp)
+            result["temperature_f"] = round((temp_c * 9 / 5) + 32, 1)
+            result["temperature_h"] = f"{temp_c:.0f}C/{result['temperature_f']:.0f}F"
+        except (TypeError, ValueError):
+            result["temperature_h"] = "--"
+        try:
+            result["memory_h"] = f"{float(result.get('memory_used_pct')):.0f}%"
+        except (TypeError, ValueError):
+            result["memory_h"] = "--"
+        try:
+            result["load_h"] = f"{float(result.get('load_one')):.2f}"
+        except (TypeError, ValueError):
+            result["load_h"] = "--"
+        result["uptime_h"] = human_duration(result.get("uptime_seconds"))
+        role = str(result.get("role") or "pi").replace("pi-", "").replace("-", " ").upper()
+        if result.get("roles_online"):
+            role = f"AI {result.get('roles_online')}"
+        result["role_h"] = role
+        service = str(result.get("service") or "")
+        extras = []
+        if result.get("hailo_models") not in {None, ""}:
+            extras.append(f"Hailo {result.get('hailo_models')}")
+        if result.get("cpu_models") not in {None, ""}:
+            extras.append(f"CPU {result.get('cpu_models')}")
+        if result.get("experiments_total") not in {None, ""}:
+            extras.append(f"EXP {result.get('experiments_ok', 0)}/{result.get('experiments_total')}")
+        result["service_h"] = " ".join([service, *extras]).strip() or "--"
         return result
 
     def collect_incident_light(self, center: dict[str, Any] | None = None) -> dict[str, Any]:

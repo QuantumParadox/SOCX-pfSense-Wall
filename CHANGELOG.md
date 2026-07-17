@@ -9,6 +9,7 @@
 - Added safe browser voice Commander support for allowlisted SOCX actions: status, Incident Mode, snapshot, Zeek, Speedtest, and Pi AI.
 - Added Speedtest truth comparison in the browser Command Center so client, router, direct, and VPN path readings can be compared without hiding under-reporting router-side tests.
 - Fixed Zeek health checks to honor the configured `zeekctl` log directory instead of assuming the legacy `/usr/local/zeek/logs/current` path.
+- Slowed the browser ticker for wall-display readability and expanded Pi Fleet cards with AI roles, Hailo/CPU model counts, experiment health, autonomy mode/score, uptime, load, memory, and Celsius/Fahrenheit temperature.
 - Added safe browser Commander buttons backed by `/api/commander` for status, Incident Mode, evidence snapshot, Zeek health, Speedtest profiles, and Pi AI analysis.
 - Added `socx snapshot-cron` for nightly read-only evidence snapshots with retention cleanup, and expanded snapshots with `incident.json` and `top-talkers.json`.
 - Added `socx-doctor zeek --archive-reviewed` to checksum/archive reviewed Zeek crash folders before removing them from the live Zeek tmp directory.

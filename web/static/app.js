@@ -202,13 +202,31 @@ function renderPiNodes(piNodes = {}) {
   }
   drawCluster(canvas, nodes);
   if (!nodes.length) {
-    root.innerHTML = row(["pi", "no Pi nodes discovered yet"], "command-row");
+    root.innerHTML = `<div class="pi-node-card empty">No Pi nodes discovered yet</div>`;
     return;
   }
-  root.innerHTML = nodes.slice(0, 4).map((node) => row([
-    node.role || "pi",
-    `${node.name || node.ip} ${node.ip || ""} ${node.status || "?"} ${piNodeStats(node)}`,
-  ], "command-row")).join("");
+  root.innerHTML = nodes.slice(0, 3).map((node) => {
+    const stateClass = node.status === "online" ? "green" : node.status === "offline" ? "red" : "yellow";
+    const aiLine = node.autonomy_mode || node.autonomy_score !== undefined
+      ? `${safe(node.autonomy_mode, "watch")} ${safe(node.autonomy_score, "--")}`
+      : safe(node.detail || node.model, "telemetry");
+    return `
+      <div class="pi-node-card">
+        <div class="pi-node-top">
+          <b>${escapeHtml(node.role_h || node.role || "PI")}</b>
+          <span class="${stateClass}">${escapeHtml((node.status || "?").toUpperCase())}</span>
+        </div>
+        <div class="pi-node-name" title="${escapeHtml(`${node.name || ""} ${node.model || ""}`)}">${escapeHtml(node.name || node.ip || "Pi node")} <span>${escapeHtml(node.ip || "")}</span></div>
+        <div class="pi-node-metrics">
+          <span title="Temperature">${escapeHtml(node.temperature_h || piTemp(node))}</span>
+          <span title="Memory">mem ${escapeHtml(node.memory_h || "--")}</span>
+          <span title="Load">load ${escapeHtml(node.load_h || "--")}</span>
+          <span title="Uptime">up ${escapeHtml(node.uptime_h || "--")}</span>
+        </div>
+        <div class="pi-node-ai" title="${escapeHtml(node.autonomy_summary || node.service_h || node.service || "")}">${escapeHtml(node.service_h || node.service || "--")} | ${escapeHtml(aiLine)}</div>
+      </div>
+    `;
+  }).join("");
 }
 
 function piNodeStats(node = {}) {
@@ -218,6 +236,13 @@ function piNodeStats(node = {}) {
   if (node.load_one !== undefined && node.load_one !== null) bits.push(`ld ${Number(node.load_one).toFixed(2)}`);
   if (node.service) bits.push(node.service);
   return bits.join(" ");
+}
+
+function piTemp(node = {}) {
+  if (node.temperature_c === undefined || node.temperature_c === null) return "--";
+  const c = Number(node.temperature_c);
+  const f = (c * 9 / 5) + 32;
+  return `${c.toFixed(0)}C/${f.toFixed(0)}F`;
 }
 
 function drawCluster(canvas, nodes = []) {
@@ -348,7 +373,7 @@ function renderTicker(events = []) {
   if (text === lastTickerText) return;
   lastTickerText = text;
   ticker.innerHTML = `<span>${escapeHtml(text)}</span><span aria-hidden="true">${escapeHtml(text)}</span>`;
-  const duration = Math.max(9, Math.min(42, text.length / 9));
+  const duration = Math.max(26, Math.min(110, text.length / 3.8));
   document.documentElement.style.setProperty("--ticker-duration", `${duration}s`);
   ticker.style.animation = "none";
   ticker.offsetHeight;
