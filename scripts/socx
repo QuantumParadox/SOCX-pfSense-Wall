@@ -45,6 +45,10 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-doctor why-blocked "$@"
         ;;
+    services|unknown-services|unknowns)
+        shift
+        exec /usr/local/bin/socx-doctor unknown-services "$@"
+        ;;
     *)
         exec sh /root/socxboard.sh "$@"
         ;;

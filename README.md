@@ -316,11 +316,14 @@ Unknown ports and labels:
 socx-explain tls
 socx-explain dnsbl
 socx-explain unknowns
+socx services
+socx services --apply
+socx services --archive
 tail -40 /var/db/socx_unknown_services.log
 vi /usr/local/etc/socx_services.conf
 ```
 
-When SOCX repeatedly sees an unlabeled port, it appends a compact observation to `/var/db/socx_unknown_services.log`. Add stable local labels to `/usr/local/etc/socx_services.conf` using `port=name`, for example `540=custom-app`.
+When SOCX repeatedly sees an unlabeled port, it appends a compact observation to `/var/db/socx_unknown_services.log`. `socx services` summarizes the top unknown ports and writes safe label suggestions to `/tmp/socx-service-suggestions.conf`. `socx services --apply` appends known-safe labels to `/usr/local/etc/socx_services.conf` after making a timestamped backup. `socx services --archive` saves the learner log and keeps only the newest observations. Add stable local labels manually using `port=name`, for example `540=custom-app`.
 
 Daily/weekly report:
 

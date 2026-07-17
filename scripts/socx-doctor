@@ -404,6 +404,124 @@ doctor_vnstat() {
     finish
 }
 
+unknown_service_label() {
+    port="$1"
+    case "$port" in
+        81|808|8080|8081|8000|8001|8888) echo web ;;
+        443|844|5443|8443|9443) echo tls ;;
+        540) echo legacy ;;
+        943|1194|1443|4500|51820|51821) echo vpn ;;
+        3000) echo ntop ;;
+        3001) echo webui ;;
+        4000|8886) echo app ;;
+        5000) echo mlflow ;;
+        5355) echo llmnr ;;
+        6379) echo redis ;;
+        7860) echo gradio ;;
+        8086) echo influx ;;
+        8089) echo splunk ;;
+        8093) echo miranda ;;
+        8094) echo socweb ;;
+        8095) echo pi3llm ;;
+        8265|10001) echo ray ;;
+        8728) echo router ;;
+        8889) echo jupyter ;;
+        9042) echo cass ;;
+        9090|9100) echo metrics ;;
+        9091) echo trans ;;
+        11434) echo ollama ;;
+        11435) echo llm ;;
+        19090) echo triton ;;
+        27015|27016|27017|27018|27019|27020|27021|27022|27023|27024|27025|27026|27027|27028|27029|27030|27031|27032|27033|27034|27035|27036|27037|27038|27039|27040|27041|27042|27043|27044|27045|27046|27047|27048|27049|27050) echo game ;;
+        57|291|306|935|1009|1013|1018|1020|1024) echo legacy ;;
+        *) echo "" ;;
+    esac
+}
+
+doctor_unknown_services() {
+    header "unknown services"
+    log="${SOCX_UNKNOWN_SERVICES_LOG:-/var/db/socx_unknown_services.log}"
+    services="${SOCX_SERVICES_FILE:-/usr/local/etc/socx_services.conf}"
+    suggestions="${SOCX_UNKNOWN_SERVICE_SUGGESTIONS:-/tmp/socx-service-suggestions.conf}"
+    if [ ! -s "$log" ]; then
+        mark OK "unknown-service learner is clean"
+        finish
+        return
+    fi
+    bytes="$(wc -c "$log" 2>/dev/null | awk '{print $1}')"
+    mark INFO "unknown-service learner size=${bytes:-0}B"
+    mark INFO "top observed ports:"
+    awk 'match($0,/port=[0-9]+/){p=substr($0,RSTART+5,RLENGTH-5); c[p]++} END{for(p in c) print c[p],p}' "$log" |
+        sort -nr | head -20 |
+        while read -r count port; do
+            label="$(unknown_service_label "$port")"
+            [ -n "$label" ] || label="review"
+            printf '      %-5s port %-6s suggested=%s\n' "$count" "$port" "$label"
+        done
+    : > "$suggestions"
+    awk 'match($0,/port=[0-9]+/){p=substr($0,RSTART+5,RLENGTH-5); c[p]++} END{for(p in c) print c[p],p}' "$log" |
+        sort -nr | head -40 |
+        while read -r count port; do
+            label="$(unknown_service_label "$port")"
+            [ -n "$label" ] || continue
+            if ! grep -q "^$port=" "$services" 2>/dev/null; then
+                printf '%s=%s\n' "$port" "$label" >> "$suggestions"
+            fi
+        done
+    if [ -s "$suggestions" ]; then
+        mark WARN "new service-label suggestions written to $suggestions"
+        sed 's/^/      /' "$suggestions"
+    else
+        mark OK "top unknown ports are already covered by service labels or need manual review"
+    fi
+    mark INFO "apply safe labels with: socx-doctor unknown-services --apply"
+    mark INFO "archive learner log with: socx-doctor unknown-services --archive"
+    finish
+}
+
+doctor_unknown_services_apply() {
+    header "unknown services apply"
+    services="${SOCX_SERVICES_FILE:-/usr/local/etc/socx_services.conf}"
+    suggestions="${SOCX_UNKNOWN_SERVICE_SUGGESTIONS:-/tmp/socx-service-suggestions.conf}"
+    doctor_unknown_services >/dev/null 2>&1 || true
+    ok=0
+    warn=0
+    fail=0
+    if [ ! -s "$suggestions" ]; then
+        mark OK "no generated service-label suggestions to apply"
+        finish
+        return
+    fi
+    mkdir -p "$(dirname "$services")" 2>/dev/null || true
+    [ -f "$services" ] || printf '# SOCX service label overrides.\n' > "$services"
+    cp "$services" "$services.bak-$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+    while IFS= read -r line; do
+        port="${line%%=*}"
+        [ -n "$port" ] || continue
+        grep -q "^$port=" "$services" 2>/dev/null && continue
+        printf '%s\n' "$line" >> "$services"
+    done < "$suggestions"
+    mark OK "applied suggestions from $suggestions to $services"
+    finish
+}
+
+doctor_unknown_services_archive() {
+    header "unknown services archive"
+    log="${SOCX_UNKNOWN_SERVICES_LOG:-/var/db/socx_unknown_services.log}"
+    keep="${SOCX_UNKNOWN_SERVICE_KEEP_LINES:-300}"
+    if [ ! -f "$log" ]; then
+        mark OK "unknown-service learner log missing; nothing to archive"
+        finish
+        return
+    fi
+    archive="$log.archive-$(date +%Y%m%d-%H%M%S)"
+    cp "$log" "$archive"
+    tail -n "$keep" "$archive" > "$log"
+    mark OK "archived learner log to $archive"
+    mark OK "trimmed active learner log to last $keep lines"
+    finish
+}
+
 doctor_why_slow() {
     header "why-slow"
 
@@ -621,12 +739,19 @@ case "$cmd" in
     ids|suricata) doctor_ids ;;
     tune-ids|ids-tune|tune_ids) doctor_tune_ids ;;
     vnstat|vnstatd|traffic) doctor_vnstat ;;
+    unknown-services|unknowns|services)
+        case "$arg" in
+            --apply|apply) doctor_unknown_services_apply ;;
+            --archive|archive|trim) doctor_unknown_services_archive ;;
+            *) doctor_unknown_services ;;
+        esac
+        ;;
     why-slow|slow) doctor_why_slow ;;
     pi-llm|llm|pi) doctor_pi_llm ;;
     logs|pressure|cpu) doctor_logs ;;
     why-blocked|why) doctor_why "$arg" ;;
     *)
-        echo "Usage: socx-doctor [all|gateways|wan-quality|topology|dnsbl|dnsbl-review|ids|tune-ids|vnstat|why-slow|pi-llm|logs|why-blocked <term>]" >&2
+        echo "Usage: socx-doctor [all|gateways|wan-quality|topology|dnsbl|dnsbl-review|ids|tune-ids|vnstat|unknown-services|why-slow|pi-llm|logs|why-blocked <term>]" >&2
         exit 2
         ;;
 esac

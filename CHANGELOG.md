@@ -3,6 +3,9 @@
 ## v0.1.46
 
 - Polished the Modern Wall without changing the successful btop-style layout.
+- Added `socx services` / `socx-doctor unknown-services` to summarize unknown ports, generate safe service-label suggestions, apply known labels, and archive/trim the learner log.
+- Expanded built-in and example service labels for MIRANDA, SOCX Web, Pi 3-LLM, Ollama/vLLM, Ray, metrics, Splunk, router APIs, Cassandra, Transmission, and common local legacy ports.
+- Reworded Pi analysis events as `SOCX AI says...` so the rotating feed reads more like an operator verdict.
 - Added `CHANGE` intelligence events for top-flow, WAN-quality, Speedtest-source, Pi AI-node, and unknown-device changes.
 - Added `BACKUP` safety events for pfSense config age, backup count, and boot-environment visibility.
 - Filtered stale gateway log warnings so old dpinger noise does not keep `socx-doctor wan-quality` in WARN.
