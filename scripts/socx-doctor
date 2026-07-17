@@ -34,6 +34,29 @@ age_file() {
     echo $((now - mod))
 }
 
+env_value() {
+    key="$1"
+    file="$2"
+    [ -f "$file" ] || { echo ""; return; }
+    sed -n "s/^$key=//p" "$file" 2>/dev/null | tail -1
+}
+
+status_from_age() {
+    file="$1"
+    good_age="$2"
+    stale_age="$3"
+    [ -f "$file" ] || { echo "missing"; return; }
+    age="$(age_file "$file")"
+    [ -n "$age" ] || { echo "unknown"; return; }
+    if [ "$age" -le "$good_age" ] 2>/dev/null; then
+        echo "fresh"
+    elif [ "$age" -le "$stale_age" ] 2>/dev/null; then
+        echo "stale"
+    else
+        echo "old"
+    fi
+}
+
 recent_gateway_warnings() {
     file="${1:-/var/log/gateways.log}"
     max_age="${SOCX_GATEWAY_WARNING_MAX_AGE_SECONDS:-86400}"
@@ -669,6 +692,240 @@ doctor_pi_llm() {
     finish
 }
 
+doctor_status() {
+    header "status"
+    mark INFO "operator command center: socx doctor | socx autopilot | socx why-slow | socx services"
+
+    if tmux has-session -t socx 2>/dev/null; then
+        mark OK "SOCX wall tmux session running"
+    else
+        mark FAIL "SOCX wall tmux session missing; start with: soc"
+    fi
+
+    err_bytes="$(wc -c /tmp/socx-wall.err 2>/dev/null | awk '{print $1}')"
+    if [ "${err_bytes:-0}" = "0" ]; then
+        mark OK "wall renderer error log clean"
+    else
+        mark FAIL "wall renderer errors present: /tmp/socx-wall.err bytes=${err_bytes:-?}"
+    fi
+
+    if [ -f /tmp/socx-speedtest-cache.env ]; then
+        spd_status="$(env_value status /tmp/socx-speedtest-cache.env)"
+        spd_down="$(env_value download_mbps /tmp/socx-speedtest-cache.env)"
+        spd_up="$(env_value upload_mbps /tmp/socx-speedtest-cache.env)"
+        spd_ping="$(env_value ping_ms /tmp/socx-speedtest-cache.env)"
+        spd_age="$(age_file /tmp/socx-speedtest-cache.env)"
+        case "$spd_status" in
+            ok) mark OK "Speedtest cache ok ${spd_down:-?}/${spd_up:-?} Mbps ping=${spd_ping:-?}ms age=${spd_age:-?}s" ;;
+            running) mark WARN "Speedtest currently running age=${spd_age:-?}s" ;;
+            *) mark WARN "Speedtest cache status=${spd_status:-unknown} age=${spd_age:-?}s" ;;
+        esac
+    else
+        mark WARN "Speedtest cache missing; run: socx speedtest once"
+    fi
+
+    ups_cache="/tmp/socx-ups-cache.env"
+    [ -f "$ups_cache" ] || ups_cache="/tmp/socx-ups-cache.json"
+    if [ -f "$ups_cache" ]; then
+        mark OK "UPS cache present age=$(age_file "$ups_cache")s"
+    else
+        mark WARN "UPS cache missing; check NUT/APC collector"
+    fi
+
+    gw="$(gateway_table)"
+    if [ -n "$gw" ]; then
+        vpn_line="$(printf '%s\n' "$gw" | awk 'NR>1 && $1 !~ /WAN/ {total++; if (tolower($7) ~ /online/) up++} END {if (total>0) printf "%d/%d", up, total}')"
+        wan_bad="$(printf '%s\n' "$gw" | awk 'NR>1 && toupper($1) ~ /WAN/ && (tolower($7) !~ /online/ || $6 ~ /^100/) {bad=1} END{print bad+0}')"
+        [ "$wan_bad" = "0" ] && mark OK "WAN gateway online" || mark FAIL "WAN gateway loss/down detected"
+        if [ -n "$vpn_line" ]; then
+            vup="${vpn_line%/*}"
+            vtot="${vpn_line#*/}"
+            [ "$vup" = "$vtot" ] && mark OK "VPN gateways online $vpn_line" || mark WARN "VPN gateways partial/down $vpn_line"
+        else
+            mark WARN "VPN gateway status unavailable or no VPN gateways parsed"
+        fi
+    else
+        mark WARN "gatewaystatus unavailable"
+    fi
+
+    pgrep -f 'unbound' >/dev/null 2>&1 && mark OK "DNS resolver running" || mark FAIL "DNS resolver process missing"
+    pgrep -f 'vnstatd' >/dev/null 2>&1 && mark OK "vnstatd running" || mark WARN "vnstatd not running"
+    command -v lldpcli >/dev/null 2>&1 && mark OK "LLDP tools installed" || mark WARN "LLDP tools missing"
+
+    [ -f /etc/cron.d/socx-report ] && mark OK "daily SOCX report cron installed" || mark WARN "daily SOCX report cron missing"
+    [ -f /etc/cron.d/socx-miranda ] && mark OK "MIRANDA export cron installed" || mark WARN "MIRANDA export cron missing"
+    [ -f /etc/cron.d/socx-pi-llm ] && mark OK "Pi 3-LLM export cron installed" || mark WARN "Pi 3-LLM export cron missing"
+
+    if [ -f /tmp/socx-pi-llm-analysis.env ]; then
+        roles="$(env_value roles /tmp/socx-pi-llm-analysis.env)"
+        sev="$(env_value severity /tmp/socx-pi-llm-analysis.env)"
+        mark OK "Pi AI cache severity=${sev:-unknown} roles=${roles:-?} age=$(age_file /tmp/socx-pi-llm-analysis.env)s"
+    else
+        mark WARN "Pi AI cache missing; run: socx pi-llm"
+    fi
+
+    if [ -f /tmp/socx-miranda-analysis.env ]; then
+        sev="$(env_value severity /tmp/socx-miranda-analysis.env)"
+        mark OK "MIRANDA cache severity=${sev:-unknown} age=$(age_file /tmp/socx-miranda-analysis.env)s"
+    else
+        mark WARN "MIRANDA cache missing; run: socx-miranda-bridge"
+    fi
+
+    unknown_bytes="$(wc -c /var/db/socx_unknown_services.log 2>/dev/null | awk '{print $1}')"
+    if [ "${unknown_bytes:-0}" = "0" ]; then
+        mark OK "unknown-service learner clean"
+    else
+        mark WARN "unknown-service learner has ${unknown_bytes:-?} bytes; run: socx services"
+    fi
+
+    if [ -f /tmp/socx-autopilot.env ]; then
+        mode="$(env_value mode /tmp/socx-autopilot.env)"
+        score="$(env_value score /tmp/socx-autopilot.env)"
+        summary="$(env_value summary /tmp/socx-autopilot.env)"
+        mark INFO "Autopilot ${mode:-UNKNOWN} score=${score:-?} | ${summary:-run socx autopilot}"
+    else
+        mark INFO "Autopilot cache missing; run: socx autopilot"
+    fi
+    finish
+}
+
+doctor_autopilot() {
+    header "autopilot read-only"
+    cache="${SOCX_AUTOPILOT_CACHE:-/tmp/socx-autopilot.env}"
+    score=100
+    mode="NORMAL"
+    reasons=""
+    actions=""
+
+    wall_err="$(wc -c /tmp/socx-wall.err 2>/dev/null | awk '{print $1}')"
+    if [ "${wall_err:-0}" != "0" ]; then
+        score=$((score - 15))
+        reasons="${reasons} wall-errors"
+        actions="${actions} inspect /tmp/socx-wall.err;"
+    fi
+
+    gw="$(gateway_table)"
+    if [ -n "$gw" ]; then
+        wan_bad="$(printf '%s\n' "$gw" | awk 'NR>1 && toupper($1) ~ /WAN/ && (tolower($7) !~ /online/ || $6 ~ /^100/) {bad=1} END{print bad+0}')"
+        vpn_line="$(printf '%s\n' "$gw" | awk 'NR>1 && $1 !~ /WAN/ {total++; if (tolower($7) ~ /online/) up++} END {if (total>0) printf "%d/%d", up, total}')"
+        if [ "$wan_bad" != "0" ]; then
+            score=$((score - 30))
+            reasons="${reasons} wan-gateway"
+            actions="${actions} run socx-doctor wan-quality;"
+        fi
+        if [ -n "$vpn_line" ]; then
+            vup="${vpn_line%/*}"
+            vtot="${vpn_line#*/}"
+            if [ "$vup" = "0" ] && [ "$vtot" != "0" ]; then
+                score=$((score - 20))
+                reasons="${reasons} vpn-down"
+                actions="${actions} inspect VPN gateway status;"
+            elif [ "$vup" != "$vtot" ]; then
+                score=$((score - 10))
+                reasons="${reasons} vpn-partial"
+                actions="${actions} inspect partial VPN path;"
+            fi
+        fi
+    else
+        score=$((score - 10))
+        reasons="${reasons} gateway-unknown"
+        actions="${actions} run socx-doctor gateways;"
+    fi
+
+    spd="/tmp/socx-speedtest-cache.env"
+    if [ -f "$spd" ]; then
+        spd_status="$(env_value status "$spd")"
+        spd_age="$(age_file "$spd")"
+        if [ "$spd_status" != "ok" ]; then
+            score=$((score - 8))
+            reasons="${reasons} speedtest-${spd_status:-unknown}"
+            actions="${actions} run socx speedtest once;"
+        elif [ "${spd_age:-999999}" -gt 25200 ] 2>/dev/null; then
+            score=$((score - 5))
+            reasons="${reasons} speedtest-stale"
+        fi
+    else
+        score=$((score - 8))
+        reasons="${reasons} speedtest-missing"
+    fi
+
+    if [ -f /tmp/socx-pi-llm-analysis.env ]; then
+        roles="$(env_value roles /tmp/socx-pi-llm-analysis.env)"
+        sev="$(env_value severity /tmp/socx-pi-llm-analysis.env)"
+        case "$roles" in
+            3/3) : ;;
+            "") score=$((score - 6)); reasons="${reasons} ai-cache-weak" ;;
+            *) score=$((score - 10)); reasons="${reasons} ai-roles-${roles}" ;;
+        esac
+        case "$(printf '%s' "$sev" | tr '[:upper:]' '[:lower:]')" in
+            crit|critical|high) score=$((score - 15)); reasons="${reasons} ai-${sev}" ;;
+            warn|medium|med) score=$((score - 6)); reasons="${reasons} ai-${sev}" ;;
+        esac
+    else
+        score=$((score - 6))
+        reasons="${reasons} ai-missing"
+        actions="${actions} run socx pi-llm;"
+    fi
+
+    fw_recent="$(tail -250 /var/log/filter.log 2>/dev/null | grep -Eic 'block|drop|reject' || true)"
+    dns_recent="$(tail -1000 /var/log/pfblockerng/dnsbl.log /var/log/pfblockerng/dns_reply.log 2>/dev/null | grep -Eic 'DNSBL|sinkhole|blocked|deny' || true)"
+    ids_recent="$(find /var/log/suricata -maxdepth 2 -type f \( -name alerts.log -o -name fast.log \) 2>/dev/null | xargs tail -300 2>/dev/null | grep -Eic 'Priority: 1|malware|trojan|ransom|command.?and.?control|c2|exploit|drop' || true)"
+
+    if [ "$ids_recent" -gt 0 ] 2>/dev/null; then
+        score=$((score - 20))
+        reasons="${reasons} ids-high"
+        actions="${actions} run socx-doctor ids;"
+    fi
+    if [ "$fw_recent" -gt 80 ] 2>/dev/null; then
+        score=$((score - 10))
+        reasons="${reasons} firewall-burst"
+        actions="${actions} consider socx incident quick;"
+    fi
+    if [ "$dns_recent" -gt 200 ] 2>/dev/null; then
+        score=$((score - 8))
+        reasons="${reasons} dnsbl-burst"
+        actions="${actions} run socx-doctor dnsbl-review;"
+    fi
+
+    [ "$score" -lt 0 ] && score=0
+    if [ "$score" -lt 45 ]; then
+        mode="INCIDENT"
+    elif [ "$score" -lt 65 ]; then
+        mode="INVESTIGATE"
+    elif [ "$score" -lt 85 ]; then
+        mode="WATCH"
+    elif [ "$fw_recent" -gt 30 ] 2>/dev/null || [ "$dns_recent" -gt 50 ] 2>/dev/null; then
+        mode="WATCH"
+    else
+        mode="NORMAL"
+    fi
+
+    [ -n "$reasons" ] || reasons="nominal"
+    [ -n "$actions" ] || actions="keep monitoring;"
+    summary="FW ${fw_recent:-0} DNSBL ${dns_recent:-0} IDS ${ids_recent:-0} | ${reasons# }"
+    {
+        echo "updated=$(date +%s)"
+        echo "mode=$mode"
+        echo "score=$score"
+        echo "fw_recent=${fw_recent:-0}"
+        echo "dnsbl_recent=${dns_recent:-0}"
+        echo "ids_recent=${ids_recent:-0}"
+        echo "summary=$summary"
+        echo "actions=$actions"
+    } > "$cache"
+
+    case "$mode" in
+        NORMAL) mark OK "Autopilot NORMAL score=$score | $summary" ;;
+        WATCH) mark WARN "Autopilot WATCH score=$score | $summary" ;;
+        INVESTIGATE|INCIDENT) mark WARN "Autopilot $mode score=$score | $summary" ;;
+        *) mark WARN "Autopilot $mode score=$score | $summary" ;;
+    esac
+    mark INFO "read-only actions: $actions"
+    mark INFO "cache written: $cache"
+    mark INFO "Autopilot does not change firewall rules"
+    finish
+}
+
 doctor_all() {
     header "all"
     if tmux has-session -t socx 2>/dev/null; then mark OK "wall tmux session is running"; else mark FAIL "wall tmux session is not running"; fi
@@ -731,6 +988,8 @@ doctor_all() {
 
 case "$cmd" in
     all|"") doctor_all ;;
+    status|health) doctor_status ;;
+    autopilot|auto|autonomy) doctor_autopilot ;;
     gateways|gateway|dpinger) doctor_gateways ;;
     wan-quality|quality|wan) doctor_wan_quality ;;
     topology|lldp|devices) doctor_topology ;;
@@ -751,7 +1010,7 @@ case "$cmd" in
     logs|pressure|cpu) doctor_logs ;;
     why-blocked|why) doctor_why "$arg" ;;
     *)
-        echo "Usage: socx-doctor [all|gateways|wan-quality|topology|dnsbl|dnsbl-review|ids|tune-ids|vnstat|unknown-services|why-slow|pi-llm|logs|why-blocked <term>]" >&2
+        echo "Usage: socx-doctor [all|status|autopilot|gateways|wan-quality|topology|dnsbl|dnsbl-review|ids|tune-ids|vnstat|unknown-services|why-slow|pi-llm|logs|why-blocked <term>]" >&2
         exit 2
         ;;
 esac

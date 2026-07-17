@@ -745,6 +745,10 @@ function collect_live_frame(array &$state, array $hosts): array
     if (!empty($mirandaInsight['available'])) {
         $events[] = miranda_insight_event($mirandaInsight);
     }
+    $autopilotEvent = autopilot_status_event($now);
+    if ($autopilotEvent !== null) {
+        $events[] = $autopilotEvent;
+    }
     $events = balance_events_for_feed(prioritize_events($events), 80);
     $flows = collect_pf_state_flows($state, $hosts, $now);
     if (!$flows) {
@@ -6125,6 +6129,44 @@ function pi_llm_insight_event(array $insight): array
     return soc_event('AI', $severity, $msg, ['confidence' => $conf]);
 }
 
+function autopilot_status_event(float $now): ?array
+{
+    if (!env_bool('SOCX_AUTOPILOT_EVENTS_ENABLED', true)) {
+        return null;
+    }
+    $file = getenv('SOCX_AUTOPILOT_CACHE') ?: '/tmp/socx-autopilot.env';
+    if (!is_readable($file)) {
+        return null;
+    }
+    $data = parse_env_file($file);
+    $updated = isset($data['updated']) && is_numeric($data['updated']) ? (float)$data['updated'] : (float)@filemtime($file);
+    $age = $updated > 0 ? max(0.0, $now - $updated) : null;
+    $maxAge = (float)(getenv('SOCX_AUTOPILOT_MAX_AGE') ?: 180);
+    $mode = strtoupper(trim((string)($data['mode'] ?? 'UNKNOWN')));
+    $score = trim((string)($data['score'] ?? ''));
+    $summary = trim((string)($data['summary'] ?? 'read-only SOCX autonomy'));
+    $actions = trim((string)($data['actions'] ?? 'keep monitoring'));
+    $severity = match ($mode) {
+        'NORMAL' => 'INFO',
+        'WATCH', 'COOLDOWN' => 'LOW',
+        'INVESTIGATE' => 'WARN',
+        'INCIDENT' => 'HIGH',
+        default => 'WARN',
+    };
+    if ($age !== null && $age > $maxAge) {
+        $severity = 'WARN';
+        $mode = 'STALE';
+    }
+    $ageText = $age === null ? '' : ' age ' . format_age_seconds($age);
+    $msg = sprintf('Autopilot %s%s%s | %s | %s',
+        $mode,
+        $score !== '' ? ' score ' . $score : '',
+        $ageText,
+        $summary !== '' ? $summary : 'read-only SOCX autonomy',
+        $actions !== '' ? truncate_text($actions, 70) : 'keep monitoring');
+    return soc_event('AUTO', $severity, $msg);
+}
+
 function socx_health_score(array $wanHealth, array $vpnStatus, array $ups, array $mem, array $cpu, array $speedtest, array $pulse): array
 {
     $score = 100;
@@ -9058,7 +9100,7 @@ function colorize_line($line, bool $color): string
     $line = color_replace('/(\[DROP\]|\[HIGH\])|\b(FW BLOCK|FIREWALL BLOCK|IPS BLOCK|DROP|REJECT|BLOCK|blocked|failed|failure|critical|CRIT|HIGH|DOWN)\b/i', $c['red'] . '$0' . $c['reset'], $line);
     $line = color_replace('/(\[WARN\]|\[MED\])|\b(DNS DENY|WARN|warning|MED|PARTIAL|UNKNOWN|WATCH|stale|rising|falling|latency|loss|scanner|suspicious|burst|high-rate|high usage|SYN|FIN|SING|MULT)\b/i', $c['yellow'] . '$0' . $c['reset'], $line);
     $line = color_replace('/(\[INFO\]|\[LOW\])/', $c['green'] . '$1' . $c['reset'], $line);
-    $line = color_replace('/(\[FW\]|\[VPN\]|\[WAN\]|\[DHCP\]|\[ARP\]|\[FLOW\]|\[RADAR\]|\[PF\]|\[UPS\]|\[SYS\]|\[DNS\]|\[IFACE\]|\[DEVICE\]|\[PULSE\]|\[SOCX\]|\[DOCTOR\]|\[BACKUP\]|\[CHANGE\]|\[AI\]|\[LAB\]|\[INTEL\]|\[TTP\]|\[DETECT\]|\[EVID\]|\[CLOUD\]|\[SRC\])/', $c['cyan'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/(\[FW\]|\[VPN\]|\[WAN\]|\[DHCP\]|\[ARP\]|\[FLOW\]|\[RADAR\]|\[PF\]|\[UPS\]|\[SYS\]|\[DNS\]|\[IFACE\]|\[DEVICE\]|\[PULSE\]|\[SOCX\]|\[DOCTOR\]|\[BACKUP\]|\[CHANGE\]|\[AI\]|\[AUTO\]|\[LAB\]|\[INTEL\]|\[TTP\]|\[DETECT\]|\[EVID\]|\[CLOUD\]|\[SRC\])/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[DNSBL\]|\[IDS\]|\[IPS\])|\b(DNS BLOCK|DNS SINK|DNSBL HIT|SINKHOLE|DNSBL|Suricata|suricata|Sigma|YARA|CVE|CPE|CWE|CAPEC|CVSS|EPSS|KEV|ATT&CK|D3FEND|OpenAI|Anthropic|Gemini|xAI|Grok|NVIDIA Build|Hugging Face|Ollama|vLLM|MIRANDA|Local LLM|reputation|threat-intel|known-bad|known bad|malware|botnet|C2|abuse:high|abuse high|tor\?)\b/i', $c['purple'] . '$0' . $c['reset'], $line);
     $line = color_replace('/\b(contain|quarantine|preserve|evidence|pcap|pfctl|config\.xml|CloudTrail|AzureActivity|VPC Flow|Windows|Linux|macOS|memory)\b/i', $c['yellow'] . '$0' . $c['reset'], $line);
     $line = color_replace('/\b(CPU|RAM|ARC|SWAP|PF|LAN|WAN|IN|OUT|VPN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|PACKET RADAR|PFTOP|LIVE STATES|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES|THREAT PULSE|SPEEDTEST|SPD|CLIENT|ROUTER|AUTO|BASE|DOCTOR|BACKUP|CHANGE|PI|Mbps|STATES|SEARCH|TRAFFIC|TCP|UDP|ICMP|DIR|APP|PATH|TYPE|STAT|STATE|LEFT|PRO|SVC|RATE|FLOW|RADAR|AGE|EXP|PROTO|TEMP|HUMID|LOAD)\b/i', $c['cyan'] . '$1' . $c['reset'], $line);

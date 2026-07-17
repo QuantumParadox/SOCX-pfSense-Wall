@@ -8,6 +8,14 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-doctor "$@"
         ;;
+    status)
+        shift
+        exec /usr/local/bin/socx-doctor status "$@"
+        ;;
+    autopilot|auto)
+        shift
+        exec /usr/local/bin/socx-doctor autopilot "$@"
+        ;;
     tune)
         shift
         topic="${1:-}"

@@ -332,6 +332,8 @@ socx-report daily
 socx-report weekly
 socx-report-cron install
 socx-report-cron status
+socx status
+socx autopilot
 socx-doctor
 socx-doctor gateways
 socx-doctor dnsbl
@@ -345,6 +347,10 @@ socx-doctor why-blocked samsungcloudsolution.net
 ```
 
 Reports are written to `/root/socx-reports/` and include firewall blocks, DNSBL samples, IDS samples, VPN/gateway status, Speedtest cache, UPS cache, top PF states, Service Watchdog data, unknown ports, and a host audit.
+
+`socx status` is the fast operator overview. It checks the wall session, renderer errors, Speedtest cache, UPS cache, WAN/VPN gateway truth, DNS, vnstatd, LLDP tools, report/MIRANDA/Pi cron jobs, AI caches, and unknown-service learner noise. It prints `OK`, `WARN`, and `FAIL` lines with the next command to run when something needs attention.
+
+`socx autopilot` is read-only SOCX autonomy. It scores current wall, WAN/VPN, Speedtest, firewall, DNSBL, IDS, and Pi AI signals, writes `/tmp/socx-autopilot.env`, and selects an operator mode: `NORMAL`, `WATCH`, `INVESTIGATE`, or `INCIDENT`. It never changes firewall rules. The Modern Wall rotates the cached Autopilot mode, score, summary, and suggested read-only actions through the Event Feed.
 
 `socx-doctor` is the operator troubleshooting command. It checks the wall, VPN/dpinger gateway health, DNSBL false-positive candidates, Suricata routine-vs-high-signal noise, Traffic Totals/vnStat, log pressure, topology, and targeted “why was this blocked?” lookups. `socx-doctor wan-quality` shows gateway status, loss, recent gateway warnings, and Speedtest context. `socx-doctor topology` shows LLDP interface/neighbor state, host-naming audit output, and Pi AI-node discovery. `socx-doctor why-slow` pulls together load, gateway loss, interface counters, Speedtest cache, and PF state samples. `socx tune ids` prints the repeated Suricata signatures that are safest to threshold or suppress after review.
 
