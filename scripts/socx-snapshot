@@ -48,6 +48,7 @@ if command -v fetch >/dev/null 2>&1; then
     fetch -qo "$DIR/history.json" http://127.0.0.1:8094/api/history 2>/dev/null || true
     fetch -qo "$DIR/incident.json" http://127.0.0.1:8094/api/incident 2>/dev/null || true
     fetch -qo "$DIR/top-talkers.json" http://127.0.0.1:8094/api/top-talkers 2>/dev/null || true
+    fetch -qo "$DIR/label-brain.json" http://127.0.0.1:8094/api/label-brain 2>/dev/null || true
 fi
 
 : > "$DIR/SHA256SUMS"

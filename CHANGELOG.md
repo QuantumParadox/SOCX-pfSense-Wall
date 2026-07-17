@@ -2,6 +2,9 @@
 
 ## v0.1.46
 
+- Added Label Brain v2 rolling local memory with per-device profiles, normal apps/services, unusual behavior hints, grouped Now Watching categories, and browser/terminal visibility.
+- Added an Explain button to the browser Commander and a `/api/label-brain` endpoint for integrations and snapshots.
+- Enriched Pi/MIRANDA exports with Label Brain context so local LLMs can reason about device identity and learned-normal behavior.
 - Added safer IDS high-signal logic so routine Suricata decoder/checksum noise is counted as watch/routine instead of inflating critical IDS counts.
 - Added friendly app/domain labels for SOCX browser and terminal wall events, including Netflix, Prime Video, YouTube, Disney+, Apple/iCloud, Hugging Face, Civitai, IBM Quantum, OpenAI, Anthropic, xAI/Grok, NVIDIA AI, Ollama, vLLM, and common cloud/CDN services when DNS/log evidence is available.
 - Expanded terminal `tcpdumpx` and `iftopx` local host labeling from `/usr/local/etc/socx_hosts.conf`, plus richer lab/service port names for MIRANDA, SOCX web, Pi LLM, Ollama, vLLM, Jupyter, Ray, Gradio, Plex, metrics, and UPS/NUT.

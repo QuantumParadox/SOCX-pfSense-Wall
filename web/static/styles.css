@@ -276,6 +276,46 @@ body {
   min-width: 0;
 }
 
+.now-strip,
+.anomaly-strip,
+.profile-strip {
+  grid-column: 1 / -1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.now-strip span,
+.anomaly-strip span,
+.profile-strip span {
+  min-width: 0;
+  padding: 4px 7px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  background: rgba(255, 255, 255, .035);
+  color: var(--text);
+  font-size: clamp(9px, .68vw, 12px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.now-strip b {
+  margin-right: 5px;
+  color: var(--cyan);
+}
+
+.anomaly-strip span {
+  color: var(--yellow);
+  border-color: rgba(255, 226, 103, .24);
+}
+
+.profile-strip span {
+  color: var(--muted);
+}
+
 .identity-row {
   min-width: 0;
   display: grid;

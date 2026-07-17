@@ -286,6 +286,9 @@ class SocxCollector:
         self.pi_fleet_checked = 0.0
         self.pi_fleet_cache: dict[str, Any] = {"updated": 0, "count": 0, "online": 0, "score": 0, "nodes": []}
         self.ups_samples: deque[float] = deque(maxlen=120)
+        self.label_history_path = Path(os.environ.get("SOCX_LABEL_BRAIN_HISTORY", "/var/db/socx_label_brain.json"))
+        self.label_history_last_write = 0.0
+        self.label_history_cache: dict[str, Any] = self.load_label_history()
         self.state: dict[str, Any] = self.demo_state()
 
     def load_hosts(self) -> dict[str, str]:
@@ -300,6 +303,17 @@ class SocxCollector:
         except Exception:
             pass
         return hosts
+
+    def load_label_history(self) -> dict[str, Any]:
+        try:
+            data = json.loads(self.label_history_path.read_text(errors="ignore"))
+            if isinstance(data, dict):
+                data.setdefault("devices", {})
+                data.setdefault("updated", 0)
+                return data
+        except Exception:
+            pass
+        return {"updated": 0, "devices": {}}
 
     def start(self) -> None:
         thread = threading.Thread(target=self.loop, daemon=True)
@@ -915,9 +929,14 @@ class SocxCollector:
         top_service = rank(top_services)
         top_app = (label_brain.get("top_apps") if isinstance(label_brain.get("top_apps"), list) else [])[:4]
         devices = (label_brain.get("devices") if isinstance(label_brain.get("devices"), list) else [])[:5]
+        now_watching = (label_brain.get("now_watching") if isinstance(label_brain.get("now_watching"), list) else [])[:4]
+        profiles = (label_brain.get("profiles") if isinstance(label_brain.get("profiles"), list) else [])[:4]
+        anomalies = (label_brain.get("anomalies") if isinstance(label_brain.get("anomalies"), list) else [])[:4]
         status = "green" if unknown_bytes < 50000 and pi_online == pi_count else "yellow"
         if pi_count and pi_online < pi_count:
             status = "red"
+        if anomalies:
+            status = "yellow"
         headline = f"Pi {pi_online}/{pi_count} | unknown learner {human_bytes(unknown_bytes)}"
         if top_app:
             headline = f"Now: {top_app[0].get('name', '--')} | {headline}"
@@ -933,6 +952,9 @@ class SocxCollector:
             "top_services": top_service,
             "top_apps": top_app,
             "devices": devices,
+            "now_watching": now_watching,
+            "profiles": profiles,
+            "anomalies": anomalies,
             "headline": headline,
         }
 
@@ -940,6 +962,7 @@ class SocxCollector:
         """Build a local, passive label model from pf states and DNS/DNSBL evidence."""
         devices: dict[str, dict[str, Any]] = {}
         apps: dict[str, int] = {}
+        history = self.label_history_cache if isinstance(self.label_history_cache, dict) else {"devices": {}}
 
         def asset_row(name: str) -> dict[str, Any]:
             if name not in devices:
@@ -989,6 +1012,9 @@ class SocxCollector:
             service_rank = rank_map(row["services"], 3)
             domain_rank = rank_map(row["domains"], 3)
             confidence = "high" if app_rank and row["flows"] else ("medium" if app_rank or row["flows"] >= 3 else "low")
+            profile = self.device_profile(row["asset"], app_rank, service_rank)
+            baseline = self.baseline_for_asset(history, row["asset"])
+            unusual = self.unusual_for_asset(baseline, app_rank, service_rank)
             rows.append({
                 "asset": row["asset"],
                 "flows": row["flows"],
@@ -996,16 +1022,128 @@ class SocxCollector:
                 "services": service_rank,
                 "domains": domain_rank,
                 "confidence": confidence,
+                "profile": profile,
+                "normal_apps": baseline.get("apps", [])[:4],
+                "normal_services": baseline.get("services", [])[:4],
+                "unusual": unusual,
                 "summary": self.device_identity_summary(row["asset"], app_rank, service_rank, confidence),
             })
         rows.sort(key=lambda item: (len(item.get("apps", [])), int(item.get("flows", 0))), reverse=True)
+        anomalies = [
+            {"asset": row["asset"], "items": row["unusual"], "profile": row.get("profile", "device")}
+            for row in rows if row.get("unusual")
+        ][:8]
+        top_apps = rank_map(apps, 8)
+        self.update_label_history(rows)
         return {
             "mode": "local-passive",
             "privacy": "local DNS, pf states, DNSBL and host labels only",
             "devices": rows[:10],
-            "top_apps": rank_map(apps, 8),
+            "top_apps": top_apps,
+            "now_watching": self.now_watching_groups(rank_map(apps, 12)),
+            "profiles": self.profile_counts(rows),
+            "anomalies": anomalies,
             "updated_ms": now_ms(),
         }
+
+    def baseline_for_asset(self, history: dict[str, Any], asset: str) -> dict[str, Any]:
+        devices = history.get("devices") if isinstance(history.get("devices"), dict) else {}
+        row = devices.get(asset) if isinstance(devices.get(asset), dict) else {}
+        return {
+            "apps": [str(item) for item in row.get("apps", []) if item],
+            "services": [str(item) for item in row.get("services", []) if item],
+            "seen": int(row.get("seen", 0) or 0),
+        }
+
+    def unusual_for_asset(self, baseline: dict[str, Any], apps: list[dict[str, Any]], services: list[dict[str, Any]]) -> list[str]:
+        if int(baseline.get("seen", 0) or 0) < 3:
+            return []
+        known_apps = set(str(item) for item in baseline.get("apps", []))
+        known_services = set(str(item) for item in baseline.get("services", []))
+        unusual: list[str] = []
+        for item in apps[:3]:
+            name = str(item.get("name") or "")
+            if name and name not in known_apps:
+                unusual.append(name)
+        for item in services[:3]:
+            name = str(item.get("name") or "")
+            if name and name.startswith("port") and name not in known_services:
+                unusual.append(name)
+        return unusual[:4]
+
+    def update_label_history(self, rows: list[dict[str, Any]]) -> None:
+        now = time.time()
+        if now - self.label_history_last_write < env_int("SOCX_LABEL_BRAIN_WRITE_SECONDS", 20):
+            return
+        self.label_history_last_write = now
+        history = self.label_history_cache if isinstance(self.label_history_cache, dict) else {"devices": {}}
+        devices = history.setdefault("devices", {})
+        if not isinstance(devices, dict):
+            devices = {}
+            history["devices"] = devices
+        for row in rows[:30]:
+            asset = str(row.get("asset") or "")
+            if not asset:
+                continue
+            entry = devices.setdefault(asset, {"seen": 0, "apps": [], "services": [], "profile": "device"})
+            entry["seen"] = int(entry.get("seen", 0) or 0) + 1
+            entry["profile"] = row.get("profile") or entry.get("profile") or "device"
+            for key in ("apps", "services"):
+                current = [str(item) for item in entry.get(key, []) if item]
+                observed = [str(item.get("name")) for item in row.get(key, []) if item.get("name")]
+                merged = []
+                for item in [*observed, *current]:
+                    if item and item not in merged:
+                        merged.append(item)
+                entry[key] = merged[:12]
+            entry["last_seen"] = int(now)
+        history["updated"] = int(now)
+        try:
+            self.label_history_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.label_history_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(history, separators=(",", ":")), encoding="utf-8")
+            tmp.replace(self.label_history_path)
+            self.label_history_cache = history
+        except Exception:
+            pass
+
+    def device_profile(self, asset: str, apps: list[dict[str, Any]], services: list[dict[str, Any]]) -> str:
+        text = " ".join([asset, " ".join(str(item.get("name")) for item in apps), " ".join(str(item.get("name")) for item in services)]).lower()
+        if any(token in text for token in ["ollama", "vllm", "hugging face", "openai", "miranda", "pi-llm", "gradio", "jupyter", "ray"]):
+            return "AI lab"
+        if any(token in text for token in ["netflix", "prime video", "youtube", "disney", "hulu", "max", "plex", "roku"]):
+            return "streaming"
+        if any(token in text for token in ["nas", "smb", "imaps", "mail"]):
+            return "storage"
+        if any(token in text for token in ["ups", "nut", "snmp"]):
+            return "sensor"
+        if any(token in text for token in ["pfsense", "gateway", "router", "dns", "dhcp"]):
+            return "network"
+        if any(token in text for token in ["ibm quantum", "qiskit", "civitai", "github"]):
+            return "research"
+        return "workstation" if "lan." in text else "device"
+
+    def profile_counts(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        counts: dict[str, int] = {}
+        for row in rows:
+            profile = str(row.get("profile") or "device")
+            counts[profile] = counts.get(profile, 0) + 1
+        return [{"name": k, "count": v} for k, v in sorted(counts.items(), key=lambda kv: kv[1], reverse=True)]
+
+    def now_watching_groups(self, apps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        groups: dict[str, list[str]] = {"Streaming": [], "AI Lab": [], "Quantum": [], "Cloud": []}
+        for item in apps:
+            name = str(item.get("name") or "")
+            lower = name.lower()
+            if any(x in lower for x in ["netflix", "prime", "youtube", "disney", "hulu", "max", "plex", "roku"]):
+                groups["Streaming"].append(name)
+            elif any(x in lower for x in ["hugging", "openai", "anthropic", "grok", "nvidia", "ollama", "vllm", "civitai"]):
+                groups["AI Lab"].append(name)
+            elif "ibm" in lower or "quantum" in lower:
+                groups["Quantum"].append(name)
+            elif any(x in lower for x in ["microsoft", "google", "aws", "cloudfront", "apple"]):
+                groups["Cloud"].append(name)
+        return [{"group": group, "apps": values[:3]} for group, values in groups.items() if values][:4]
 
     def collect_recent_dns_labels(self) -> dict[str, list[dict[str, Any]]]:
         logs = "/var/log/pfblockerng/dnsbl.log /var/log/pfblockerng/dns_reply.log /var/log/resolver.log"
@@ -1282,6 +1420,7 @@ class SocxCollector:
         ids_lines = [line for line in ids_log.splitlines() if line.strip()]
         ids_high = sum(1 for line in ids_lines if is_high_signal_ids(line))
         ids_routine = sum(1 for line in ids_lines if is_routine_ids(line))
+        ids_watch = max(0, len(ids_lines) - ids_high - ids_routine)
         return {
             "mode": center.get("mode"),
             "score": center.get("score"),
@@ -1291,7 +1430,7 @@ class SocxCollector:
             "blocked_ports": rank(port_counts),
             "lan_hosts": rank(lan_counts),
             "dnsbl_domains": [{"name": app_label(k) or k, "raw": k, "count": v} for k, v in sorted(domains.items(), key=lambda kv: kv[1], reverse=True)[:8]],
-            "ids": {"high_signal": ids_high, "routine": ids_routine},
+            "ids": {"signal": ids_high, "high_signal": ids_high, "watch": ids_watch, "routine": ids_routine, "total": len(ids_lines)},
             "actions": [
                 "socx snapshot",
                 "socx incident-mode 120",
@@ -1641,6 +1780,9 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/top-talkers":
             self.send_json(self.collector.collect_top_talkers())
             return
+        if parsed.path == "/api/label-brain":
+            self.send_json(self.collector.snapshot().get("label_brain", {}))
+            return
         if parsed.path == "/api/incident":
             self.send_json(self.collector.collect_incident())
             return
@@ -1674,9 +1816,10 @@ class SocxHandler(BaseHTTPRequestHandler):
             "speedtest": (["/usr/local/bin/socx-doctor", "speedtest-profiles"], 25.0, "Speedtest profiles"),
             "pi": (["/usr/local/bin/socx", "pi-llm"], 330.0, "Pi 3-LLM analysis"),
             "status": (["/usr/local/bin/socx", "status"], 25.0, "SOCX status"),
+            "explain": (["/usr/local/bin/socx", "explain-screen"], 25.0, "SOCX explanation"),
         }
         if action not in commands:
-            return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, incident, zeek, speedtest, pi, status"}
+            return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, incident, zeek, speedtest, pi, status, explain"}
         args, timeout, title = commands[action]
         result = run_cmd_capture(args, timeout=timeout)
         return {"action": action, "title": title, **result}

@@ -11,9 +11,11 @@ fi
 
 exec "$PY" - "$@" <<'PY'
 import csv
+import json
 import os
 import re
 import subprocess
+import time
 from collections import Counter, defaultdict
 
 
@@ -89,6 +91,27 @@ def load_hosts():
 
 
 HOSTS = load_hosts()
+HISTORY_PATH = os.environ.get("SOCX_LABEL_BRAIN_HISTORY", "/var/db/socx_label_brain.json")
+
+
+def load_history():
+    try:
+        with open(HISTORY_PATH, errors="ignore") as fh:
+            data = json.load(fh)
+            return data if isinstance(data, dict) else {"devices": {}}
+    except Exception:
+        return {"devices": {}}
+
+
+def write_history(history):
+    try:
+        os.makedirs(os.path.dirname(HISTORY_PATH), exist_ok=True)
+        tmp = HISTORY_PATH + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump(history, fh, separators=(",", ":"))
+        os.replace(tmp, HISTORY_PATH)
+    except Exception:
+        pass
 
 
 def pretty_host(ip):
@@ -102,7 +125,25 @@ def pretty_host(ip):
     return ip or "unknown"
 
 
+def profile_for(asset, apps, services):
+    text = " ".join([asset, " ".join(apps), " ".join(services)]).lower()
+    if any(token in text for token in ["ollama", "vllm", "hugging face", "openai", "miranda", "pi-llm", "gradio", "jupyter", "ray"]):
+        return "AI lab"
+    if any(token in text for token in ["netflix", "prime video", "youtube", "disney", "hulu", "max", "plex", "roku"]):
+        return "streaming"
+    if any(token in text for token in ["nas", "smb", "mail", "imaps"]):
+        return "storage"
+    if any(token in text for token in ["ups", "nut", "snmp"]):
+        return "sensor"
+    if any(token in text for token in ["pfsense", "router", "dns", "dhcp"]):
+        return "network"
+    if any(token in text for token in ["ibm quantum", "qiskit", "civitai"]):
+        return "research"
+    return "workstation" if "lan." in text.lower() else "device"
+
+
 devices = defaultdict(lambda: {"flows": 0, "services": Counter(), "apps": Counter(), "domains": Counter()})
+history = load_history()
 
 states = run("pfctl -ss 2>/dev/null | head -260")
 for line in states.splitlines():
@@ -137,18 +178,44 @@ print("privacy: no external lookups")
 print()
 rows = []
 for asset, data in devices.items():
-    apps = ", ".join(name for name, _ in data["apps"].most_common(3)) or "--"
-    svcs = ", ".join(name for name, _ in data["services"].most_common(3)) or "--"
+    app_names = [name for name, _ in data["apps"].most_common(3)]
+    svc_names = [name for name, _ in data["services"].most_common(3)]
+    apps = ", ".join(app_names) or "--"
+    svcs = ", ".join(svc_names) or "--"
     conf = "high" if data["apps"] and data["flows"] else ("medium" if data["apps"] or data["flows"] >= 3 else "low")
-    rows.append((len(data["apps"]), data["flows"], asset, apps, svcs, conf))
+    profile = profile_for(asset, app_names, svc_names)
+    hist = history.get("devices", {}).get(asset, {})
+    odd = []
+    if int(hist.get("seen", 0) or 0) >= 3:
+        known_apps = set(hist.get("apps", []))
+        known_svcs = set(hist.get("services", []))
+        odd = [name for name in app_names if name not in known_apps]
+        odd += [name for name in svc_names if name.startswith("port") and name not in known_svcs]
+    rows.append((len(data["apps"]), data["flows"], asset, apps, svcs, profile, conf, ", ".join(odd[:3]) or "--"))
+
+hist_devices = history.setdefault("devices", {})
+for _, _, asset, apps, svcs, profile, _, _ in rows:
+    entry = hist_devices.setdefault(asset, {"seen": 0, "apps": [], "services": [], "profile": profile})
+    entry["seen"] = int(entry.get("seen", 0) or 0) + 1
+    entry["profile"] = profile
+    for key, values in [("apps", [v.strip() for v in apps.split(",") if v.strip() and v.strip() != "--"]), ("services", [v.strip() for v in svcs.split(",") if v.strip() and v.strip() != "--"])]:
+        merged = []
+        for value in [*values, *entry.get(key, [])]:
+            if value and value not in merged:
+                merged.append(value)
+        entry[key] = merged[:12]
+    entry["last_seen"] = int(time.time())
+history["updated"] = int(time.time())
+write_history(history)
 
 if not rows:
     print("No active label evidence yet.")
 else:
-    print(f"{'DEVICE':30} {'LIKELY APPS':34} {'SERVICES':22} {'CONF'}")
-    print("-" * 98)
-    for _, _, asset, apps, svcs, conf in sorted(rows, reverse=True)[:16]:
-        print(f"{asset[:30]:30} {apps[:34]:34} {svcs[:22]:22} {conf}")
+    print(f"{'DEVICE':30} {'LIKELY APPS':30} {'PROFILE':12} {'CONF':6} ODD")
+    print("-" * 102)
+    for _, _, asset, apps, svcs, profile, conf, odd in sorted(rows, reverse=True)[:16]:
+        left = f"{apps[:20]} / {svcs[:8]}"
+        print(f"{asset[:30]:30} {left[:30]:30} {profile[:12]:12} {conf[:6]:6} {odd[:18]}")
 
 top = Counter()
 for data in devices.values():

@@ -167,12 +167,15 @@ function renderIncident(incident = {}) {
   }
   setText("incident-headline", incident.headline || incident.summary || "No current incident pressure");
   const counts = incident.counts || {};
+  const ids = incident.ids || {};
   const grid = $("incident-grid");
   if (grid) {
     grid.innerHTML = [
       ["FW", counts.sources || 0],
       ["DNSBL", counts.dnsbl || 0],
-      ["IDS", counts.ids_high || 0],
+      ["IDS sig", ids.signal || counts.ids_high || 0],
+      ["IDS watch", ids.watch || 0],
+      ["routine", ids.routine || 0],
       ["LAN", counts.lan || 0],
     ].map(([label, value]) => `<div><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`).join("");
   }
@@ -264,26 +267,38 @@ function renderAssetWatch(asset = {}) {
   const topSvc = (asset.top_services || [])[0] || {};
   const topApp = (asset.top_apps || [])[0] || {};
   const devices = Array.isArray(asset.devices) ? asset.devices.slice(0, 3) : [];
+  const now = Array.isArray(asset.now_watching) ? asset.now_watching.slice(0, 4) : [];
+  const anomalies = Array.isArray(asset.anomalies) ? asset.anomalies.slice(0, 2) : [];
+  const profiles = Array.isArray(asset.profiles) ? asset.profiles.slice(0, 3) : [];
   const boxes = [
     metricBox("Pi nodes", `${safe(asset.pi_online, 0)}/${safe(asset.pi_count, 0)}`, asset.pi_online === asset.pi_count ? "green" : "red"),
     metricBox("Unknown log", safe(asset.unknown_h, "--"), asset.unknown_bytes > 50000 ? "yellow" : "green"),
     metricBox("Top LAN", `${safe(topAsset.name, "--")} x${safe(topAsset.count, 0)}`, "cyan"),
     metricBox("Now app", `${safe(topApp.name || topSvc.name, "--")} x${safe(topApp.count || topSvc.count, 0)}`, "purple"),
   ].join("");
+  const nowLine = now.length
+    ? `<div class="now-strip">${now.map((item) => `<span><b>${escapeHtml(item.group)}</b>${escapeHtml((item.apps || []).join(", "))}</span>`).join("")}</div>`
+    : "";
+  const anomalyLine = anomalies.length
+    ? `<div class="anomaly-strip">${anomalies.map((item) => `<span title="${escapeHtml((item.items || []).join(", "))}">${escapeHtml(item.asset || "--")}: ${escapeHtml((item.items || []).join(", "))}</span>`).join("")}</div>`
+    : "";
+  const profileLine = profiles.length
+    ? `<div class="profile-strip">${profiles.map((item) => `<span>${escapeHtml(item.name)} ${escapeHtml(item.count)}</span>`).join("")}</div>`
+    : "";
   const rows = devices.map((device) => {
     const apps = Array.isArray(device.apps) && device.apps.length
       ? device.apps.slice(0, 3).map((item) => item.name).join(", ")
       : (Array.isArray(device.services) ? device.services.slice(0, 2).map((item) => item.name).join(", ") : "--");
-    const cls = device.confidence === "high" ? "green" : device.confidence === "medium" ? "yellow" : "cyan";
+    const cls = Array.isArray(device.unusual) && device.unusual.length ? "red" : device.confidence === "high" ? "green" : device.confidence === "medium" ? "yellow" : "cyan";
     return `
       <div class="identity-row">
         <b>${escapeHtml(device.asset || "--")}</b>
-        <span title="${escapeHtml(device.summary || apps)}">${escapeHtml(apps || "--")}</span>
-        <em class="${cls}">${escapeHtml(device.confidence || "low")}</em>
+        <span title="${escapeHtml(device.summary || apps)}">${escapeHtml(device.profile ? `${device.profile}: ${apps || "--"}` : apps || "--")}</span>
+        <em class="${cls}">${escapeHtml((device.unusual || []).length ? "odd" : device.confidence || "low")}</em>
       </div>
     `;
   }).join("");
-  root.innerHTML = boxes + (rows ? `<div class="identity-list">${rows}</div>` : "");
+  root.innerHTML = boxes + nowLine + anomalyLine + profileLine + (rows ? `<div class="identity-list">${rows}</div>` : "");
 }
 
 function renderAiTimeline(ai = {}) {
@@ -532,6 +547,7 @@ function commanderActionFromSpeech(text) {
   if (/(snapshot|evidence|capture)/.test(value)) return "snapshot";
   if (/(zeek|logs?)/.test(value)) return "zeek";
   if (/(pi|raspberry|ai|llm)/.test(value)) return "pi";
+  if (/(explain|why|summary|plain english)/.test(value)) return "explain";
   if (/(status|health|doctor)/.test(value)) return "status";
   return "";
 }
@@ -558,7 +574,7 @@ function runVoiceCommand() {
     const action = commanderActionFromSpeech(transcript);
     if (!action) {
       if (title) title.textContent = "Voice command not mapped";
-      if (body) body.textContent = `Heard: ${transcript}\nAllowed: status, incident, snapshot, speedtest, zeek, pi.`;
+    if (body) body.textContent = `Heard: ${transcript}\nAllowed: status, incident, snapshot, speedtest, zeek, pi, explain.`;
       return;
     }
     runCommander(action);

@@ -73,6 +73,9 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds friendly app/domain labels across the browser wall and terminal wall when SOCX has DNS/log evidence, including streaming, Apple/iCloud, Hugging Face, Civitai, IBM Quantum, OpenAI/Claude/Grok, NVIDIA AI, Ollama, vLLM, and common cloud/CDN services.
 - Keeps app/service enrichment local by default: raw IP-only `pftop`/`tcpdump` flows are labeled from local host maps, ports, DNS/DNSBL logs, and safe built-in patterns rather than automatic third-party lookups.
 - Adds `socx label-brain`, a terminal-friendly passive identity summary that shows likely per-device apps and services from local pf states, DNS/DNSBL/resolver logs, and host labels.
+- Adds rolling local Label Brain memory in `/var/db/socx_label_brain.json`, so SOCX can learn normal per-device apps/services and flag unusual app/service changes without external lookups.
+- Adds grouped Now Watching categories such as Streaming, AI Lab, Quantum, and Cloud inside LAN Asset Watch when local DNS/log evidence supports them.
+- Adds an Explain button in the browser Commander for a safe plain-English screen summary.
 - Adds `socx snapshot`, a read-only evidence bundle for status, why-now, history, timeline, Speedtest paths, topology, unknown services, and web API JSON.
 - Adds `socx snapshot-cron`, a nightly read-only evidence snapshot schedule with retention cleanup.
 - Adds `/api/history` plus a tiny Command Center score sparkline in the browser wall.
