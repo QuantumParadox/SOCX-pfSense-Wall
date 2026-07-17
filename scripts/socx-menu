@@ -21,6 +21,8 @@ run_choice() {
         16|history) exec socx history trend ;;
         17|notify) exec socx notify rules ;;
         18|hosts|labels) exec socx hosts suggest ;;
+        19|snapshot|bundle) exec socx snapshot ;;
+        20|notify-cron) exec socx notify-cron status ;;
         q|quit|exit) exit 0 ;;
         *) echo "Unknown choice: $1" >&2; exit 2 ;;
     esac
@@ -51,6 +53,8 @@ SOCX COMMAND CENTER
 16. History trend
 17. Run notification rules
 18. Host label suggestions
+19. Build SOCX snapshot
+20. Notification cron status
  q. Quit
 EOF
 printf '\nSelect: '

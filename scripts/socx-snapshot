@@ -1,0 +1,55 @@
+#!/bin/sh
+# Build a read-only SOCX evidence snapshot for troubleshooting or GitHub issues.
+
+BASE="${SOCX_SNAPSHOT_DIR:-/root/socx-snapshots}"
+STAMP="$(date +%Y%m%d-%H%M%S)"
+DIR="$BASE/$STAMP"
+mkdir -p "$DIR"
+
+run_save() {
+    name="$1"; shift
+    {
+        echo "# $name"
+        echo "# generated $(date)"
+        "$@" 2>&1
+    } > "$DIR/$name.txt"
+}
+
+copy_if() {
+    src="$1"
+    [ -f "$src" ] || return
+    cp "$src" "$DIR/$(basename "$src")" 2>/dev/null || true
+}
+
+run_save status socx status
+run_save why-now socx why-now
+run_save history-trend socx history trend 48
+run_save timeline socx timeline 120
+run_save speedtest-profiles socx-doctor speedtest-profiles
+run_save topology socx-doctor topology
+run_save unknown-services socx services
+
+copy_if /tmp/socx-autopilot.env
+copy_if /tmp/socx-speedtest-direct.env
+copy_if /tmp/socx-speedtest-vpn.env
+copy_if /tmp/socx-ups-cache.env
+copy_if /tmp/socx-pi-discovery.env
+copy_if /tmp/socx-pi-llm-analysis.env
+copy_if /tmp/socx-miranda-analysis.env
+copy_if /tmp/socx-repair-report.txt
+
+if command -v fetch >/dev/null 2>&1; then
+    fetch -qo "$DIR/command-center.json" http://127.0.0.1:8094/api/command-center 2>/dev/null || true
+    fetch -qo "$DIR/history.json" http://127.0.0.1:8094/api/history 2>/dev/null || true
+fi
+
+: > "$DIR/SHA256SUMS"
+for file in "$DIR"/*; do
+    [ -f "$file" ] || continue
+    [ "$(basename "$file")" = "SHA256SUMS" ] && continue
+    sha256 "$file" >> "$DIR/SHA256SUMS" 2>/dev/null || true
+done
+tar -C "$BASE" -czf "$BASE/socx-snapshot-$STAMP.tgz" "$STAMP" 2>/dev/null || true
+
+echo "snapshot directory: $DIR"
+[ -f "$BASE/socx-snapshot-$STAMP.tgz" ] && echo "snapshot archive: $BASE/socx-snapshot-$STAMP.tgz"

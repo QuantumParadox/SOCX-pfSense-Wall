@@ -433,16 +433,7 @@ class SocxCollector:
                 continue
             label = data.get("profile_label") or path.stem.replace("socx-speedtest-vpn-", "").upper()
             named_paths.append(self.speedtest_summary(label, data))
-        history_path = Path(os.environ.get("SOCX_HISTORY_FILE", "/var/db/socx_history.jsonl"))
-        history_rows: list[dict[str, Any]] = []
-        try:
-            for raw in history_path.read_text(errors="ignore").splitlines()[-8:]:
-                try:
-                    history_rows.append(json.loads(raw))
-                except Exception:
-                    continue
-        except Exception:
-            pass
+        history_rows = self.collect_history(48)
 
         mode = auto.get("mode", "UNKNOWN")
         score = auto.get("score", "0")
@@ -477,9 +468,11 @@ class SocxCollector:
 
     def history_trend(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
         if not rows:
-            return {"label": "no history", "score_avg": "", "direct_avg": "", "vpn_avg": ""}
-        def avg(key: str) -> float:
+            return {"label": "no history", "score_avg": "", "direct_avg": "", "vpn_avg": "", "network_avg": "", "security_avg": "", "ai_avg": "", "sensor_avg": ""}
+        def avg(key: str, nonzero: bool = False) -> float:
             vals = [float(row.get(key, 0) or 0) for row in rows]
+            if nonzero:
+                vals = [v for v in vals if v > 0]
             return sum(vals) / max(1, len(vals))
         first = float(rows[0].get("score", 0) or 0)
         last = float(rows[-1].get("score", 0) or 0)
@@ -494,7 +487,24 @@ class SocxCollector:
             "score_avg": round(avg("score")),
             "direct_avg": round(avg("direct_down")),
             "vpn_avg": round(avg("vpn_down")),
+            "network_avg": round(avg("network_score", True)),
+            "security_avg": round(avg("security_score", True)),
+            "ai_avg": round(avg("ai_score", True)),
+            "sensor_avg": round(avg("sensor_score", True)),
         }
+
+    def collect_history(self, limit: int = 120) -> list[dict[str, Any]]:
+        history_path = Path(os.environ.get("SOCX_HISTORY_FILE", "/var/db/socx_history.jsonl"))
+        rows: list[dict[str, Any]] = []
+        try:
+            for raw in history_path.read_text(errors="ignore").splitlines()[-limit:]:
+                try:
+                    rows.append(json.loads(raw))
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return rows
 
     def speedtest_summary(self, label: str, data: dict[str, str]) -> dict[str, Any]:
         status = data.get("status") or data.get("result_status") or ("OK" if data.get("download_mbps") else "WAIT")
@@ -844,6 +854,10 @@ class SocxHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/command-center":
             self.send_json(self.collector.snapshot().get("command_center", {}))
+            return
+        if parsed.path == "/api/history":
+            rows = self.collector.collect_history(240)
+            self.send_json({"count": len(rows), "trend": self.collector.history_trend(rows), "rows": rows})
             return
         if parsed.path == "/api/config":
             self.send_json({"refresh_ms": int(self.collector.interval * 1000), "demo": self.collector.demo})

@@ -1,0 +1,31 @@
+#!/bin/sh
+# Install/remove scheduled SOCX notification-rule checks.
+
+CRON="${SOCX_NOTIFY_CRON_FILE:-/etc/cron.d/socx-notify}"
+
+case "${1:-status}" in
+    install)
+        cat > "$CRON" <<'EOF'
+SHELL=/bin/sh
+PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+*/5 * * * * root /usr/local/bin/socx notify rules >/tmp/socx-notify-cron.log 2>&1
+EOF
+        echo "installed $CRON"
+        ;;
+    remove|uninstall)
+        rm -f "$CRON"
+        echo "removed $CRON"
+        ;;
+    status)
+        if [ -f "$CRON" ]; then
+            echo "installed: $CRON"
+            cat "$CRON"
+        else
+            echo "not installed: $CRON"
+        fi
+        ;;
+    *)
+        echo "Usage: socx-notify-cron [install|remove|status]" >&2
+        exit 2
+        ;;
+esac

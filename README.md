@@ -70,6 +70,9 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds four-part Autopilot scoring for network, security, AI, and sensor health.
 - Adds `socx mode` presets for normal, incident, speedtest, AI, UPS, and quiet-night viewing.
 - Adds `socx hosts suggest/apply` to reduce `LAN.x` and unknown labels using DHCP, ARP, and Pi discovery hints.
+- Adds `socx snapshot`, a read-only evidence bundle for status, why-now, history, timeline, Speedtest paths, topology, unknown services, and web API JSON.
+- Adds `/api/history` plus a tiny Command Center score sparkline in the browser wall.
+- Adds `socx notify-cron` to install/remove/status a five-minute notification-rule cron job.
 - Can surface LLDP and Service Watchdog health in the rotating Event Feed when those pfSense packages are configured.
 - Adds WAN quality events from gateway/dpinger latency, loss, and status, separate from bandwidth-only Speedtest results.
 - Adds compact `CHANGE` events when top talker, WAN quality, Speedtest source/status, Pi AI-node state, or unknown-device count changes.
@@ -124,6 +127,8 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-why-now` - plain-English current-state explanation from Autopilot, Speedtest, and AI caches.
 - `scripts/socx-mode` - wall mode preset helper for normal, incident, speedtest, AI, UPS, and quiet-night operation.
 - `scripts/socx-host-labels` - DHCP/ARP/Pi-discovery friendly-name suggestions for `/usr/local/etc/socx_hosts.conf`.
+- `scripts/socx-snapshot` - read-only SOCX troubleshooting bundle with checksums and optional web API captures.
+- `scripts/socx-notify-cron` - scheduled notification-rule cron installer/remover/status helper.
 - `scripts/socx-doctor` - live health check for wall, logs, VPN, Speedtest, UPS, reports, MIRANDA ingest, vnstatd, unknown-service noise, DNSBL review, IDS tuning, and slow-network triage.
 - `scripts/socx-miranda-bridge` - exports a compact JSON summary for MIRANDA or another local-AI/SOC collector.
 - `scripts/socx-pi-llm-bridge` - posts the compact SOCX summary to a Raspberry Pi 5 AI HAT+ 3-LLM orchestration endpoint and caches the verdict.
@@ -357,8 +362,10 @@ socx timeline
 socx history trend
 socx repair
 socx notify rules
+socx notify-cron status
 socx hosts suggest
 socx mode show
+socx snapshot
 socx explain-screen
 socx-doctor
 socx-doctor gateways
@@ -391,6 +398,10 @@ Reports are written to `/root/socx-reports/` and include firewall blocks, DNSBL 
 `socx history trend` summarizes recent JSONL samples from `/var/db/socx_history.jsonl`, including score trend, DIRECT/VPN Speedtest averages, event pressure, and UPS wattage.
 
 `socx notify rules` evaluates Autopilot against notification rules. It only sends when `SOCX_NOTIFY_WEBHOOK_URL` is configured; otherwise it prints a safe skipped/quiet message.
+
+`socx notify-cron install` schedules `socx notify rules` every five minutes. Leave it uninstalled unless you have configured `SOCX_NOTIFY_WEBHOOK_URL`.
+
+`socx snapshot` builds a read-only troubleshooting bundle under `/root/socx-snapshots/` with text outputs, env caches, API captures, and checksums. This is the easiest artifact to attach when opening a GitHub issue.
 
 `socx mode show` lists wall presets. To apply one for a shell session:
 

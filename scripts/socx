@@ -39,6 +39,14 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-notify "$@"
         ;;
+    notify-cron)
+        shift
+        exec /usr/local/bin/socx-notify-cron "$@"
+        ;;
+    snapshot|bundle)
+        shift
+        exec /usr/local/bin/socx-snapshot "$@"
+        ;;
     mode|modes)
         shift
         exec /usr/local/bin/socx-mode "$@"

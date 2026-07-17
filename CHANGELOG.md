@@ -3,6 +3,7 @@
 ## v0.1.46
 
 - Polished the Modern Wall without changing the successful btop-style layout.
+- Added v0.4 evidence and web-history helpers: `socx snapshot`, `socx notify-cron`, `/api/history`, and a browser Command Center score sparkline.
 - Added v0.3 autonomy helpers: `socx why-now`, `socx history trend`, `socx notify rules`, `socx mode`, and `socx hosts suggest/apply`.
 - Split Autopilot into four operator scores: network, security, AI, and sensors.
 - Added before/after repair snapshots in `/tmp/socx-repair-report.txt`.

@@ -390,6 +390,12 @@ body {
   height: 42px;
 }
 
+.spark.mini {
+  height: 34px;
+  margin-top: 0;
+  margin-bottom: 8px;
+}
+
 .table-card {
   padding-bottom: 10px;
 }
@@ -431,6 +437,7 @@ body {
 }
 
 .command-table {
+  height: calc(100% - 84px);
   gap: 6px;
 }
 

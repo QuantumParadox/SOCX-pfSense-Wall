@@ -144,12 +144,13 @@ function renderCommandCenter(center = {}) {
   rows.push(row([
     "history",
     `${safe(center.history_count, 0)} samples ${safe(center.history_trend?.label, "")}`,
-    `avg score ${safe(center.history_trend?.score_avg, "--")}`,
+    `avg ${safe(center.history_trend?.score_avg, "--")} d/v ${safe(center.history_trend?.direct_avg, "--")}/${safe(center.history_trend?.vpn_avg, "--")}`,
   ], "command-row"));
   (center.actions || []).slice(0, 4).forEach((action, idx) => {
     rows.push(row([idx === 0 ? "next" : "", action, ""], "command-row action"));
   });
   root.innerHTML = rows.join("");
+  drawSparkline($("cmd-spark"), (center.history || []).map((p) => p.score || 0), { stroke: "#34d7f2", fill: "rgba(52, 215, 242, .16)" });
 }
 
 function renderFlows(flows = []) {
