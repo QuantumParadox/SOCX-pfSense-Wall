@@ -785,6 +785,62 @@ doctor_pi_llm() {
     finish
 }
 
+doctor_php_services() {
+    header "php services"
+    probe="/tmp/socx-php-service-probe.php"
+    cat > "$probe" <<'PHP'
+<?php
+require_once('globals.inc');
+require_once('config.inc');
+require_once('service-utils.inc');
+$bad = 0;
+$config_services = config_get_path('installedpackages/service', []);
+echo "installed service config entries: " . count($config_services) . "\n";
+foreach ($config_services as $idx => $svc) {
+    if (empty($svc)) {
+        echo "BAD config idx={$idx} empty entry\n";
+        $bad++;
+        continue;
+    }
+    $name = $svc['name'] ?? '';
+    $exe = $svc['executable'] ?? '';
+    if ($name === '' || $exe === '') {
+        echo "BAD config idx={$idx} name=" . var_export($name, true) . " executable=" . var_export($exe, true) . "\n";
+        $bad++;
+    }
+}
+$services = get_services();
+echo "runtime service entries: " . count($services) . "\n";
+foreach ($services as $idx => $svc) {
+    $name = $svc['name'] ?? null;
+    $desc = $svc['description'] ?? ($svc['descr'] ?? '');
+    if ($name === null || $name === '') {
+        echo "BAD runtime idx={$idx} name=" . var_export($name, true) . " desc=" . var_export($desc, true) . " keys=" . implode(',', array_keys($svc)) . "\n";
+        $bad++;
+        continue;
+    }
+    try {
+        get_service_status($svc);
+    } catch (Throwable $e) {
+        echo "BAD status idx={$idx} name={$name} error=" . $e->getMessage() . "\n";
+        $bad++;
+    }
+}
+echo "bad={$bad}\n";
+exit($bad > 0 ? 1 : 0);
+?>
+PHP
+    out="$(php "$probe" 2>&1)"
+    rc=$?
+    printf '%s\n' "$out" | sed 's/^/      /'
+    if [ "$rc" -eq 0 ]; then
+        mark OK "pfSense PHP service registry/status evaluation clean"
+    else
+        mark FAIL "pfSense PHP service registry/status evaluation found malformed entries"
+    fi
+    finish
+}
+
 doctor_status() {
     header "status"
     mark INFO "operator command center: socx doctor | socx autopilot | socx why-slow | socx services"
@@ -858,6 +914,11 @@ doctor_status() {
     pgrep -f 'unbound' >/dev/null 2>&1 && mark OK "DNS resolver running" || mark FAIL "DNS resolver process missing"
     pgrep -f 'vnstatd' >/dev/null 2>&1 && mark OK "vnstatd running" || mark WARN "vnstatd not running"
     command -v lldpcli >/dev/null 2>&1 && mark OK "LLDP tools installed" || mark WARN "LLDP tools missing"
+    if php -r 'require_once("globals.inc"); require_once("config.inc"); require_once("service-utils.inc"); foreach (get_services() as $svc) { if (!isset($svc["name"]) || $svc["name"] === "") exit(2); get_service_status($svc); }' >/tmp/socx-php-service-inline.out 2>&1; then
+        mark OK "pfSense PHP service registry clean"
+    else
+        mark WARN "pfSense PHP service registry/status warning; run: socx-doctor php-services"
+    fi
 
     [ -f /etc/cron.d/socx-report ] && mark OK "daily SOCX report cron installed" || mark WARN "daily SOCX report cron missing"
     [ -f /etc/cron.d/socx-miranda ] && mark OK "MIRANDA export cron installed" || mark WARN "MIRANDA export cron missing"
@@ -1176,10 +1237,11 @@ case "$cmd" in
         ;;
     why-slow|slow) doctor_why_slow ;;
     pi-llm|llm|pi) doctor_pi_llm ;;
+    php-services|service-registry|crash-report) doctor_php_services ;;
     logs|pressure|cpu) doctor_logs ;;
     why-blocked|why) doctor_why "$arg" ;;
     *)
-        echo "Usage: socx-doctor [all|status|autopilot|gateways|wan-quality|speedtest-profiles|topology|dnsbl|dnsbl-review|ids|tune-ids|vnstat|unknown-services|why-slow|pi-llm|logs|why-blocked <term>]" >&2
+        echo "Usage: socx-doctor [all|status|autopilot|gateways|wan-quality|speedtest-profiles|topology|dnsbl|dnsbl-review|ids|tune-ids|vnstat|unknown-services|why-slow|pi-llm|php-services|logs|why-blocked <term>]" >&2
         exit 2
         ;;
 esac

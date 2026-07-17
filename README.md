@@ -73,6 +73,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds `socx snapshot`, a read-only evidence bundle for status, why-now, history, timeline, Speedtest paths, topology, unknown services, and web API JSON.
 - Adds `/api/history` plus a tiny Command Center score sparkline in the browser wall.
 - Adds `socx notify-cron` to install/remove/status a five-minute notification-rule cron job.
+- Adds `socx-doctor php-services` to catch malformed pfSense service entries that can cause PHP service-status crash reports.
 - Can surface LLDP and Service Watchdog health in the rotating Event Feed when those pfSense packages are configured.
 - Adds WAN quality events from gateway/dpinger latency, loss, and status, separate from bandwidth-only Speedtest results.
 - Adds compact `CHANGE` events when top talker, WAN quality, Speedtest source/status, Pi AI-node state, or unknown-device count changes.
@@ -375,6 +376,7 @@ socx-doctor ids
 socx tune ids
 socx-doctor vnstat
 socx-doctor why-slow
+socx-doctor php-services
 socx-doctor logs
 socx-doctor why-blocked samsungcloudsolution.net
 ```
