@@ -72,6 +72,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds `socx hosts suggest/apply` to reduce `LAN.x` and unknown labels using DHCP, ARP, and Pi discovery hints.
 - Adds friendly app/domain labels across the browser wall and terminal wall when SOCX has DNS/log evidence, including streaming, Apple/iCloud, Hugging Face, Civitai, IBM Quantum, OpenAI/Claude/Grok, NVIDIA AI, Ollama, vLLM, and common cloud/CDN services.
 - Keeps app/service enrichment local by default: raw IP-only `pftop`/`tcpdump` flows are labeled from local host maps, ports, DNS/DNSBL logs, and safe built-in patterns rather than automatic third-party lookups.
+- Adds `socx label-brain`, a terminal-friendly passive identity summary that shows likely per-device apps and services from local pf states, DNS/DNSBL/resolver logs, and host labels.
 - Adds `socx snapshot`, a read-only evidence bundle for status, why-now, history, timeline, Speedtest paths, topology, unknown services, and web API JSON.
 - Adds `socx snapshot-cron`, a nightly read-only evidence snapshot schedule with retention cleanup.
 - Adds `/api/history` plus a tiny Command Center score sparkline in the browser wall.

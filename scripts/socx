@@ -63,6 +63,10 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-host-labels "$@"
         ;;
+    label-brain|identity|apps|now-watching)
+        shift
+        exec /usr/local/bin/socx-label-brain "$@"
+        ;;
     repair|heal)
         shift
         exec /usr/local/bin/socx-repair "$@"

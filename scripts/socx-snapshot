@@ -30,6 +30,7 @@ run_save speedtest-profiles socx-doctor speedtest-profiles
 run_save topology socx-doctor topology
 run_save zeek-health socx-doctor zeek
 run_save unknown-services socx services
+run_save label-brain socx label-brain
 run_save pi-nodes socx pi-nodes
 
 copy_if /tmp/socx-autopilot.env

@@ -1,0 +1,160 @@
+#!/bin/sh
+# Passive local app/device label summary for SOCX.
+
+PY="${PYTHON:-/usr/local/bin/python3.11}"
+[ -x "$PY" ] || PY="$(command -v python3 2>/dev/null || true)"
+
+if [ -z "$PY" ]; then
+    echo "SOCX Label Brain needs python3" >&2
+    exit 1
+fi
+
+exec "$PY" - "$@" <<'PY'
+import csv
+import os
+import re
+import subprocess
+from collections import Counter, defaultdict
+
+
+def run(cmd, timeout=1.2):
+    try:
+        return subprocess.run(cmd, shell=True, text=True, capture_output=True, timeout=timeout).stdout
+    except Exception:
+        return ""
+
+
+def app_label(text):
+    value = str(text or "").lower()
+    patterns = [
+        (r"netflix|nflxvideo", "Netflix"),
+        (r"primevideo|amazonvideo|aiv-cdn|atv-ps|media-amazon", "Prime Video"),
+        (r"youtube|googlevideo|ytimg", "YouTube"),
+        (r"disney|disneyplus|dssott", "Disney+"),
+        (r"hulu", "Hulu"),
+        (r"max\.com|hbomax|hbo", "Max"),
+        (r"peacocktv|peacock", "Peacock"),
+        (r"paramountplus|cbsivideo|cbsaavideo", "Paramount+"),
+        (r"roku", "Roku"),
+        (r"plex", "Plex"),
+        (r"apple|icloud|mzstatic|itunes|aaplimg|appldnld|tv\.apple", "Apple/iCloud"),
+        (r"huggingface|hf\.co", "Hugging Face"),
+        (r"civitai", "Civitai"),
+        (r"quantum-computing\.ibm|cloud\.ibm|ibm\.com", "IBM Quantum"),
+        (r"openai|chatgpt", "OpenAI"),
+        (r"anthropic|claude", "Anthropic"),
+        (r"x\.ai|grok", "xAI/Grok"),
+        (r"nvidia|build\.nvidia", "NVIDIA AI"),
+        (r"ollama", "Ollama"),
+        (r"vllm", "vLLM"),
+        (r"googleapis|gstatic|googleusercontent", "Google APIs"),
+        (r"doubleclick|googlesyndication|googleadservices", "Google Ads"),
+        (r"microsoft|windowsupdate|office365|live\.com|msn\.com|azure", "Microsoft"),
+        (r"amazonaws|cloudfront", "AWS/CloudFront"),
+        (r"facebook|fbcdn|instagram|whatsapp", "Meta"),
+        (r"discord", "Discord"),
+        (r"spotify", "Spotify"),
+        (r"steam|steampowered", "Steam"),
+    ]
+    for pattern, label in patterns:
+        if re.search(pattern, value):
+            return label
+    return ""
+
+
+def service_name(port):
+    services = {
+        "22": "ssh", "53": "dns", "80": "web", "123": "ntp", "443": "tls",
+        "500": "vpn", "1194": "vpn", "1443": "vpn", "4500": "vpn", "51820": "vpn", "51821": "vpn",
+        "5223": "apns", "5228": "gcm", "5230": "gcm", "6379": "redis", "7860": "gradio",
+        "8000": "vllm", "8001": "vllm", "8002": "vllm", "8093": "miranda", "8094": "socx-web",
+        "8095": "pi-llm", "8265": "ray", "8888": "jupyter", "8889": "jupyter",
+        "9090": "metrics", "9100": "node-exporter", "11434": "ollama", "19090": "triton",
+    }
+    return services.get(str(port), f"port{port}" if port else "other")
+
+
+def load_hosts():
+    hosts = {}
+    for path in [os.environ.get("SOCX_HOSTS_CONFIG"), "/usr/local/etc/socx_hosts.conf", "/root/socx_hosts.conf"]:
+        if not path or not os.path.exists(path):
+            continue
+        for raw in open(path, errors="ignore"):
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            ip, name = line.split("=", 1)
+            hosts[ip.strip()] = name.strip()
+    return hosts
+
+
+HOSTS = load_hosts()
+
+
+def pretty_host(ip):
+    if ip in HOSTS:
+        return f"{HOSTS[ip]}/LAN.{ip.rsplit('.', 1)[-1]}" if ip.startswith("192.168.1.") else HOSTS[ip]
+    if ip.startswith("192.168.1."):
+        return f"LAN.{ip.rsplit('.', 1)[-1]}"
+    if re.match(r"^\d+\.\d+\.\d+\.\d+$", ip):
+        parts = ip.split(".")
+        return f"EXT.{parts[2]}.{parts[3]}"
+    return ip or "unknown"
+
+
+devices = defaultdict(lambda: {"flows": 0, "services": Counter(), "apps": Counter(), "domains": Counter()})
+
+states = run("pfctl -ss 2>/dev/null | head -260")
+for line in states.splitlines():
+    match = re.search(r"\b(?P<proto>tcp|udp|icmp)\b.*?\((?P<src>192\.168\.1\.\d+):(?P<sport>\d+)\)\s+->\s+(?P<dst>[0-9a-fA-F:.]+):(?P<dport>\d+)", line, re.I)
+    if not match:
+        match = re.search(r"\b(?P<proto>tcp|udp|icmp)\b\s+(?P<src>192\.168\.1\.\d+):(?P<sport>\d+)\s+->\s+(?P<dst>[0-9a-fA-F:.]+):(?P<dport>\d+)", line, re.I)
+    if not match:
+        continue
+    asset = pretty_host(match.group("src"))
+    port = match.group("dport")
+    devices[asset]["flows"] += 1
+    devices[asset]["services"][service_name(port)] += 1
+
+dns = run("tail -n 2200 /var/log/pfblockerng/dnsbl.log /var/log/pfblockerng/dns_reply.log /var/log/resolver.log 2>/dev/null | tail -900")
+for line in dns.splitlines():
+    ips = re.findall(r"\b(192\.168\.1\.\d+)\b", line)
+    if not ips:
+        continue
+    domains = [d.strip(".").lower() for d in re.findall(r"([a-z0-9][a-z0-9._-]+\.[a-z][a-z0-9.-]+)", line.lower())]
+    for domain in domains:
+        app = app_label(domain)
+        if not app:
+            continue
+        for ip in ips[:2]:
+            asset = pretty_host(ip)
+            devices[asset]["apps"][app] += 1
+            devices[asset]["domains"][domain] += 1
+
+print("SOCX Label Brain")
+print("source: local pf states + DNS/DNSBL/resolver logs + host labels")
+print("privacy: no external lookups")
+print()
+rows = []
+for asset, data in devices.items():
+    apps = ", ".join(name for name, _ in data["apps"].most_common(3)) or "--"
+    svcs = ", ".join(name for name, _ in data["services"].most_common(3)) or "--"
+    conf = "high" if data["apps"] and data["flows"] else ("medium" if data["apps"] or data["flows"] >= 3 else "low")
+    rows.append((len(data["apps"]), data["flows"], asset, apps, svcs, conf))
+
+if not rows:
+    print("No active label evidence yet.")
+else:
+    print(f"{'DEVICE':30} {'LIKELY APPS':34} {'SERVICES':22} {'CONF'}")
+    print("-" * 98)
+    for _, _, asset, apps, svcs, conf in sorted(rows, reverse=True)[:16]:
+        print(f"{asset[:30]:30} {apps[:34]:34} {svcs[:22]:22} {conf}")
+
+top = Counter()
+for data in devices.values():
+    top.update(data["apps"])
+if top:
+    print()
+    print("Now watching:")
+    print("  " + " | ".join(f"{name} x{count}" for name, count in top.most_common(8)))
+PY

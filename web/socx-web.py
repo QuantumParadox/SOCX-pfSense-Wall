@@ -336,9 +336,11 @@ class SocxCollector:
         command_center = self.collect_command_center()
         incident = self.collect_incident_light(command_center)
         pi_nodes = self.collect_pi_nodes()
-        flows = self.collect_flows()
         threat_pulse = self.collect_threat_pulse(incident)
-        asset_watch = self.collect_asset_watch(flows, pi_nodes)
+        flows = self.collect_flows()
+        label_brain = self.collect_label_brain(flows, incident)
+        flows = self.enrich_flows_with_labels(flows, label_brain)
+        asset_watch = self.collect_asset_watch(flows, pi_nodes, label_brain)
         ai_timeline = self.collect_ai_timeline(pi_nodes, command_center)
 
         packets: list[dict[str, Any]] = []
@@ -385,6 +387,7 @@ class SocxCollector:
             "pi_nodes": pi_nodes,
             "threat_pulse": threat_pulse,
             "asset_watch": asset_watch,
+            "label_brain": label_brain,
             "ai_timeline": ai_timeline,
             "flows": flows,
             "packets": packets,
@@ -859,7 +862,8 @@ class SocxCollector:
             "top_source_count": top_source.get("count", 0),
         }
 
-    def collect_asset_watch(self, flows: list[dict[str, Any]], pi_nodes: dict[str, Any]) -> dict[str, Any]:
+    def collect_asset_watch(self, flows: list[dict[str, Any]], pi_nodes: dict[str, Any], label_brain: dict[str, Any] | None = None) -> dict[str, Any]:
+        label_brain = label_brain or {"devices": [], "top_apps": []}
         audit_path = Path(os.environ.get("SOCX_HOSTS_AUDIT_OUT", "/tmp/socx-hosts-audit.txt"))
         unknown_log = Path(os.environ.get("SOCX_UNKNOWN_SERVICES_LOG", "/var/db/socx_unknown_services.log"))
         audit = ""
@@ -909,9 +913,14 @@ class SocxCollector:
         pi_online = int(pi_nodes.get("online", 0) or 0)
         top_asset = rank(top_assets)
         top_service = rank(top_services)
+        top_app = (label_brain.get("top_apps") if isinstance(label_brain.get("top_apps"), list) else [])[:4]
+        devices = (label_brain.get("devices") if isinstance(label_brain.get("devices"), list) else [])[:5]
         status = "green" if unknown_bytes < 50000 and pi_online == pi_count else "yellow"
         if pi_count and pi_online < pi_count:
             status = "red"
+        headline = f"Pi {pi_online}/{pi_count} | unknown learner {human_bytes(unknown_bytes)}"
+        if top_app:
+            headline = f"Now: {top_app[0].get('name', '--')} | {headline}"
         return {
             "status": status,
             "known": known,
@@ -922,8 +931,135 @@ class SocxCollector:
             "pi_count": pi_count,
             "top_assets": top_asset,
             "top_services": top_service,
-            "headline": f"Pi {pi_online}/{pi_count} | unknown learner {human_bytes(unknown_bytes)}",
+            "top_apps": top_app,
+            "devices": devices,
+            "headline": headline,
         }
+
+    def collect_label_brain(self, flows: list[dict[str, Any]], incident: dict[str, Any]) -> dict[str, Any]:
+        """Build a local, passive label model from pf states and DNS/DNSBL evidence."""
+        devices: dict[str, dict[str, Any]] = {}
+        apps: dict[str, int] = {}
+
+        def asset_row(name: str) -> dict[str, Any]:
+            if name not in devices:
+                devices[name] = {"asset": name, "flows": 0, "services": {}, "apps": {}, "domains": {}, "confidence": "low"}
+            return devices[name]
+
+        for flow in flows:
+            asset = str(flow.get("asset") or "unknown")
+            row = asset_row(asset)
+            count = int(flow.get("count", 1) or 1)
+            row["flows"] += count
+            svc = str(flow.get("service") or "other")
+            row["services"][svc] = row["services"].get(svc, 0) + count
+            app = app_label(str(flow.get("peer") or "")) or app_label(svc)
+            if app:
+                row["apps"][app] = row["apps"].get(app, 0) + count
+                apps[app] = apps.get(app, 0) + count
+
+        dns_sources = self.collect_recent_dns_labels()
+        for src, entries in dns_sources.items():
+            asset = self.pretty_host(src)
+            row = asset_row(asset)
+            for entry in entries:
+                app = str(entry.get("app") or "")
+                domain = str(entry.get("domain") or "")
+                count = int(entry.get("count", 1) or 1)
+                if app:
+                    row["apps"][app] = row["apps"].get(app, 0) + count
+                    apps[app] = apps.get(app, 0) + count
+                if domain:
+                    row["domains"][domain] = row["domains"].get(domain, 0) + count
+
+        for item in incident.get("dnsbl_domains", []) if isinstance(incident.get("dnsbl_domains"), list) else []:
+            name = str(item.get("name") or "")
+            raw = str(item.get("raw") or name)
+            count = int(item.get("count", 1) or 1)
+            app = app_label(name) or app_label(raw)
+            if app:
+                apps[app] = apps.get(app, 0) + count
+
+        def rank_map(data: dict[str, int], limit: int = 4) -> list[dict[str, Any]]:
+            return [{"name": k, "count": v} for k, v in sorted(data.items(), key=lambda kv: kv[1], reverse=True)[:limit]]
+
+        rows: list[dict[str, Any]] = []
+        for row in devices.values():
+            app_rank = rank_map(row["apps"], 4)
+            service_rank = rank_map(row["services"], 3)
+            domain_rank = rank_map(row["domains"], 3)
+            confidence = "high" if app_rank and row["flows"] else ("medium" if app_rank or row["flows"] >= 3 else "low")
+            rows.append({
+                "asset": row["asset"],
+                "flows": row["flows"],
+                "apps": app_rank,
+                "services": service_rank,
+                "domains": domain_rank,
+                "confidence": confidence,
+                "summary": self.device_identity_summary(row["asset"], app_rank, service_rank, confidence),
+            })
+        rows.sort(key=lambda item: (len(item.get("apps", [])), int(item.get("flows", 0))), reverse=True)
+        return {
+            "mode": "local-passive",
+            "privacy": "local DNS, pf states, DNSBL and host labels only",
+            "devices": rows[:10],
+            "top_apps": rank_map(apps, 8),
+            "updated_ms": now_ms(),
+        }
+
+    def collect_recent_dns_labels(self) -> dict[str, list[dict[str, Any]]]:
+        logs = "/var/log/pfblockerng/dnsbl.log /var/log/pfblockerng/dns_reply.log /var/log/resolver.log"
+        out = run_cmd(f"tail -n 2200 {logs} 2>/dev/null | tail -900", timeout=1.0)
+        seen: dict[str, dict[str, int]] = {}
+        for line in out.splitlines():
+            ips = re.findall(r"\b(192\.168\.1\.\d+)\b", line)
+            if not ips:
+                continue
+            domains = [token.strip(".").lower() for token in re.findall(r"([a-z0-9][a-z0-9._-]+\.[a-z][a-z0-9.-]+)", line.lower())]
+            for domain in domains:
+                if not self.useful_domain(domain):
+                    continue
+                app = app_label(domain)
+                if not app:
+                    continue
+                for ip in ips[:2]:
+                    key = f"{app}|{domain}"
+                    seen.setdefault(ip, {})[key] = seen.setdefault(ip, {}).get(key, 0) + 1
+        result: dict[str, list[dict[str, Any]]] = {}
+        for ip, counts in seen.items():
+            result[ip] = [
+                {"app": key.split("|", 1)[0], "domain": key.split("|", 1)[1], "count": count}
+                for key, count in sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:8]
+            ]
+        return result
+
+    def useful_domain(self, domain: str) -> bool:
+        if len(domain) < 6 or domain.endswith((".arpa", ".local", ".lan")):
+            return False
+        noisy = {"log", "local", "home", "localhost"}
+        return domain not in noisy
+
+    def device_identity_summary(self, asset: str, apps: list[dict[str, Any]], services: list[dict[str, Any]], confidence: str) -> str:
+        app_text = ", ".join(str(item.get("name")) for item in apps[:3]) if apps else ""
+        svc_text = ", ".join(str(item.get("name")) for item in services[:2]) if services else "quiet"
+        if app_text:
+            return f"{asset}: {app_text} via {svc_text} ({confidence})"
+        return f"{asset}: {svc_text} traffic ({confidence})"
+
+    def enrich_flows_with_labels(self, flows: list[dict[str, Any]], label_brain: dict[str, Any]) -> list[dict[str, Any]]:
+        by_asset: dict[str, dict[str, Any]] = {}
+        for device in label_brain.get("devices", []) if isinstance(label_brain.get("devices"), list) else []:
+            by_asset[str(device.get("asset") or "")] = device
+        enriched: list[dict[str, Any]] = []
+        for flow in flows:
+            item = dict(flow)
+            device = by_asset.get(str(item.get("asset") or ""))
+            apps = device.get("apps", []) if isinstance(device, dict) and isinstance(device.get("apps"), list) else []
+            if apps and str(item.get("service") or "").lower() in {"https", "tls", "http", "web", "port 443", "port443"}:
+                item["app_hint"] = apps[0].get("name")
+                item["confidence"] = device.get("confidence", "medium")
+            enriched.append(item)
+        return enriched
 
     def collect_ai_timeline(self, pi_nodes: dict[str, Any], center: dict[str, Any]) -> dict[str, Any]:
         rows: list[dict[str, Any]] = []

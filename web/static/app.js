@@ -262,12 +262,28 @@ function renderAssetWatch(asset = {}) {
   if (!root) return;
   const topAsset = (asset.top_assets || [])[0] || {};
   const topSvc = (asset.top_services || [])[0] || {};
-  root.innerHTML = [
+  const topApp = (asset.top_apps || [])[0] || {};
+  const devices = Array.isArray(asset.devices) ? asset.devices.slice(0, 3) : [];
+  const boxes = [
     metricBox("Pi nodes", `${safe(asset.pi_online, 0)}/${safe(asset.pi_count, 0)}`, asset.pi_online === asset.pi_count ? "green" : "red"),
     metricBox("Unknown log", safe(asset.unknown_h, "--"), asset.unknown_bytes > 50000 ? "yellow" : "green"),
     metricBox("Top LAN", `${safe(topAsset.name, "--")} x${safe(topAsset.count, 0)}`, "cyan"),
-    metricBox("Top app", `${safe(topSvc.name, "--")} x${safe(topSvc.count, 0)}`, "purple"),
+    metricBox("Now app", `${safe(topApp.name || topSvc.name, "--")} x${safe(topApp.count || topSvc.count, 0)}`, "purple"),
   ].join("");
+  const rows = devices.map((device) => {
+    const apps = Array.isArray(device.apps) && device.apps.length
+      ? device.apps.slice(0, 3).map((item) => item.name).join(", ")
+      : (Array.isArray(device.services) ? device.services.slice(0, 2).map((item) => item.name).join(", ") : "--");
+    const cls = device.confidence === "high" ? "green" : device.confidence === "medium" ? "yellow" : "cyan";
+    return `
+      <div class="identity-row">
+        <b>${escapeHtml(device.asset || "--")}</b>
+        <span title="${escapeHtml(device.summary || apps)}">${escapeHtml(apps || "--")}</span>
+        <em class="${cls}">${escapeHtml(device.confidence || "low")}</em>
+      </div>
+    `;
+  }).join("");
+  root.innerHTML = boxes + (rows ? `<div class="identity-list">${rows}</div>` : "");
 }
 
 function renderAiTimeline(ai = {}) {
@@ -385,14 +401,15 @@ function drawCluster(canvas, nodes = []) {
 function renderFlows(flows = []) {
   const root = $("flows");
   if (!root) return;
-  const lines = [row(["#", "asset", "peer", "proto", "service", "tag"], "header")];
+  const lines = [row(["#", "asset", "peer", "proto", "app/service", "tag"], "header")];
   flows.slice(0, 13).forEach((f, idx) => {
+    const service = f.app_hint ? `${f.app_hint}*` : f.service;
     lines.push(row([
       String(idx + 1).padStart(2, "0"),
       f.asset,
       f.peer,
       f.proto,
-      f.service,
+      service,
       `${f.tag || "state"} x${f.count || 1}`,
     ]));
   });
