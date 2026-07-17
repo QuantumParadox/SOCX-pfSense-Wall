@@ -114,8 +114,25 @@
           <h2>Command Center</h2>
           <span id="cmd-note">autopilot</span>
         </div>
+        <div class="commander-buttons">
+          <button data-action="status">Status</button>
+          <button data-action="incident">Incident</button>
+          <button data-action="snapshot">Snapshot</button>
+          <button data-action="zeek">Zeek</button>
+          <button data-action="pi">Pi AI</button>
+        </div>
         <canvas class="spark mini" id="cmd-spark"></canvas>
         <div class="table command-table" id="command-center"></div>
+      </section>
+
+      <section class="card table-card incident-card">
+        <div class="card-head">
+          <h2>Incident Cockpit</h2>
+          <span id="incident-note">watch</span>
+        </div>
+        <div class="incident-headline" id="incident-headline">Waiting for incident telemetry</div>
+        <div class="incident-grid" id="incident-grid"></div>
+        <div class="table incident-table" id="incident-table"></div>
       </section>
 
       <section class="card table-card flows-card">
@@ -134,6 +151,14 @@
         <div class="table packet-table" id="packets"></div>
       </section>
     </main>
+
+    <div class="command-output" id="command-output" hidden>
+      <div class="card-head">
+        <h2 id="command-output-title">Command Output</h2>
+        <button class="icon-button" id="command-output-close" title="Close" aria-label="Close">x</button>
+      </div>
+      <pre id="command-output-body"></pre>
+    </div>
 
     <footer class="ticker-shell">
       <div class="ticker-fade left"></div>

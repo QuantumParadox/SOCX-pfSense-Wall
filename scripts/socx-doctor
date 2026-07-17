@@ -874,6 +874,39 @@ doctor_zeek() {
     finish
 }
 
+doctor_zeek_archive() {
+    header "zeek reviewed archive"
+    src="${SOCX_ZEEK_CRASH_DIR:-/var/spool/zeek/tmp}"
+    dest="${SOCX_ZEEK_ARCHIVE_DIR:-/root/socx-zeek-crash-archive}"
+    [ -d "$src" ] || {
+        mark OK "Zeek crash directory missing; nothing to archive: $src"
+        finish
+    }
+    mkdir -p "$dest"
+    found=0
+    for crash in "$src"/*-crash; do
+        [ -d "$crash" ] || continue
+        found=$((found + 1))
+        base="$(basename "$crash")"
+        stamp="$(date +%Y%m%d-%H%M%S)"
+        archive="$dest/$base-$stamp.tgz"
+        if tar -C "$src" -czf "$archive" "$base" 2>/tmp/socx-zeek-archive.err; then
+            sha256 "$archive" > "$archive.sha256" 2>/dev/null || true
+            rm -rf "$crash"
+            mark OK "archived reviewed Zeek crash folder: $archive"
+        else
+            err="$(cat /tmp/socx-zeek-archive.err 2>/dev/null | tr '\n' ' ' | cut -c1-160)"
+            mark FAIL "failed to archive $crash ${err:-}"
+        fi
+    done
+    if [ "$found" -eq 0 ]; then
+        mark OK "no Zeek crash folders found"
+    else
+        mark INFO "archive directory: $dest"
+    fi
+    finish
+}
+
 doctor_status() {
     header "status"
     mark INFO "operator command center: socx doctor | socx autopilot | socx why-slow | socx services"
@@ -1273,11 +1306,16 @@ case "$cmd" in
     why-slow|slow) doctor_why_slow ;;
     pi-llm|llm|pi) doctor_pi_llm ;;
     php-services|service-registry|crash-report) doctor_php_services ;;
-    zeek|zeek-health) doctor_zeek ;;
+    zeek|zeek-health)
+        case "$arg" in
+            --archive|archive|--archive-reviewed|archive-reviewed) doctor_zeek_archive ;;
+            *) doctor_zeek ;;
+        esac
+        ;;
     logs|pressure|cpu) doctor_logs ;;
     why-blocked|why) doctor_why "$arg" ;;
     *)
-        echo "Usage: socx-doctor [all|status|autopilot|gateways|wan-quality|speedtest-profiles|topology|dnsbl|dnsbl-review|ids|tune-ids|vnstat|unknown-services|why-slow|pi-llm|php-services|zeek|logs|why-blocked <term>]" >&2
+        echo "Usage: socx-doctor [all|status|autopilot|gateways|wan-quality|speedtest-profiles|topology|dnsbl|dnsbl-review|ids|tune-ids|vnstat|unknown-services|why-slow|pi-llm|php-services|zeek [--archive-reviewed]|logs|why-blocked <term>]" >&2
         exit 2
         ;;
 esac

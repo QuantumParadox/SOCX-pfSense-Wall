@@ -2,6 +2,11 @@
 
 ## v0.1.46
 
+- Added v0.6 Incident Cockpit for the browser wall with top blocked sources, ports, DNSBL domains, affected LAN hosts, IDS signal, and a visible incident verdict.
+- Added safe browser Commander buttons backed by `/api/commander` for status, Incident Mode, evidence snapshot, Zeek health, Speedtest profiles, and Pi AI analysis.
+- Added `socx snapshot-cron` for nightly read-only evidence snapshots with retention cleanup, and expanded snapshots with `incident.json` and `top-talkers.json`.
+- Added `socx-doctor zeek --archive-reviewed` to checksum/archive reviewed Zeek crash folders before removing them from the live Zeek tmp directory.
+- Enriched pfSense-to-Pi 3-LLM exports with Incident Mode and top-talker context, and added terminal-wall Incident Mode rotation through Threat Pulse/Event Feed.
 - Polished the Modern Wall without changing the successful btop-style layout.
 - Added v0.4 evidence and web-history helpers: `socx snapshot`, `socx notify-cron`, `/api/history`, and a browser Command Center score sparkline.
 - Added `socx-doctor php-services` and a status check for malformed pfSense service entries that can trigger PHP crash reports such as `is_process_running(null)`.

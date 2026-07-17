@@ -1,0 +1,34 @@
+#!/bin/sh
+# Install/remove scheduled SOCX evidence snapshots.
+
+CRON="${SOCX_SNAPSHOT_CRON_FILE:-/etc/cron.d/socx-snapshot}"
+HOUR="${SOCX_SNAPSHOT_HOUR:-3}"
+MINUTE="${SOCX_SNAPSHOT_MINUTE:-17}"
+KEEP_DAYS="${SOCX_SNAPSHOT_KEEP_DAYS:-14}"
+
+case "${1:-status}" in
+    install)
+        cat > "$CRON" <<EOF
+SHELL=/bin/sh
+PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+$MINUTE $HOUR * * * root /usr/local/bin/socx snapshot >/tmp/socx-snapshot-cron.log 2>&1; find /root/socx-snapshots -type f -name 'socx-snapshot-*.tgz' -mtime +$KEEP_DAYS -delete 2>/dev/null || true
+EOF
+        echo "installed $CRON"
+        ;;
+    remove|uninstall)
+        rm -f "$CRON"
+        echo "removed $CRON"
+        ;;
+    status)
+        if [ -f "$CRON" ]; then
+            echo "installed: $CRON"
+            cat "$CRON"
+        else
+            echo "not installed: $CRON"
+        fi
+        ;;
+    *)
+        echo "Usage: socx-snapshot-cron [install|remove|status]" >&2
+        exit 2
+        ;;
+esac

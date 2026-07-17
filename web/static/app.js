@@ -135,22 +135,51 @@ function renderCommandCenter(center = {}) {
     `<div class="command-summary" title="${escapeHtml(center.summary)}">${escapeHtml(center.summary || "Run socx autopilot for a fresh verdict")}</div>`,
     row([
       "score",
-      `net ${safe(center.scores?.network, "--")} sec ${safe(center.scores?.security, "--")}`,
-      `ai ${safe(center.scores?.ai, "--")} sens ${safe(center.scores?.sensors, "--")}`,
+      `net ${safe(center.scores?.network, "--")} sec ${safe(center.scores?.security, "--")} ai ${safe(center.scores?.ai, "--")} sens ${safe(center.scores?.sensors, "--")}`,
     ], "command-row"),
-    row(["speed", speedLine(center.direct), speedLine(center.vpn)], "command-row"),
+    row(["speed", `${speedLine(center.direct)} | ${speedLine(center.vpn)}`], "command-row"),
   ];
-  (center.vpn_paths || []).slice(0, 3).forEach((path) => rows.push(row(["path", speedLine(path), ""], "command-row")));
+  (center.vpn_paths || []).slice(0, 2).forEach((path) => rows.push(row(["path", speedLine(path)], "command-row")));
   rows.push(row([
     "history",
-    `${safe(center.history_count, 0)} samples ${safe(center.history_trend?.label, "")}`,
-    `avg ${safe(center.history_trend?.score_avg, "--")} d/v ${safe(center.history_trend?.direct_avg, "--")}/${safe(center.history_trend?.vpn_avg, "--")}`,
+    `${safe(center.history_count, 0)} samples ${safe(center.history_trend?.label, "")} avg ${safe(center.history_trend?.score_avg, "--")} d/v ${safe(center.history_trend?.direct_avg, "--")}/${safe(center.history_trend?.vpn_avg, "--")}`,
   ], "command-row"));
   (center.actions || []).slice(0, 4).forEach((action, idx) => {
-    rows.push(row([idx === 0 ? "next" : "", action, ""], "command-row action"));
+    rows.push(row([idx === 0 ? "next" : "", action], "command-row action"));
   });
   root.innerHTML = rows.join("");
   drawSparkline($("cmd-spark"), (center.history || []).map((p) => p.score || 0), { stroke: "#34d7f2", fill: "rgba(52, 215, 242, .16)" });
+}
+
+function renderIncident(incident = {}) {
+  const noteClass = (incident.verdict || "").includes("INVESTIGATE") || (incident.verdict || "").includes("INCIDENT") ? "red" : (incident.verdict || "").includes("WATCH") ? "yellow" : "green";
+  const note = $("incident-note");
+  if (note) {
+    note.textContent = safe(incident.verdict, "quiet");
+    note.className = noteClass;
+  }
+  setText("incident-headline", incident.headline || incident.summary || "No current incident pressure");
+  const counts = incident.counts || {};
+  const grid = $("incident-grid");
+  if (grid) {
+    grid.innerHTML = [
+      ["FW", counts.sources || 0],
+      ["DNSBL", counts.dnsbl || 0],
+      ["IDS", counts.ids_high || 0],
+      ["LAN", counts.lan || 0],
+    ].map(([label, value]) => `<div><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`).join("");
+  }
+  const table = $("incident-table");
+  if (!table) return;
+  const lines = [row(["type", "item", "count"], "header")];
+  const addRows = (kind, items = []) => {
+    items.slice(0, 3).forEach((item) => lines.push(row([kind, item.name, item.count])));
+  };
+  addRows("src", incident.blocked_sources || []);
+  addRows("port", incident.blocked_ports || []);
+  addRows("dns", incident.dnsbl_domains || []);
+  addRows("lan", incident.lan_hosts || []);
+  table.innerHTML = lines.slice(0, 11).join("");
 }
 
 function renderFlows(flows = []) {
@@ -259,9 +288,32 @@ function render(state) {
 
   setText("cmd-note", `${safe(state.command_center?.mode, "autopilot")} ${safe(state.command_center?.score, "--")}`);
   renderCommandCenter(state.command_center || {});
+  renderIncident(state.incident || {});
   renderFlows(state.flows || []);
   renderPackets(state.packets || []);
   renderTicker(state.events || []);
+}
+
+async function runCommander(action) {
+  const output = $("command-output");
+  const title = $("command-output-title");
+  const body = $("command-output-body");
+  if (output) output.hidden = false;
+  if (title) title.textContent = `Running ${action}`;
+  if (body) body.textContent = "Working...";
+  try {
+    const res = await fetch("/api/commander", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    });
+    const data = await res.json();
+    if (title) title.textContent = `${data.title || action} ${data.ok ? "OK" : "WARN"}`;
+    if (body) body.textContent = data.output || "No output returned.";
+  } catch (err) {
+    if (title) title.textContent = "Command Error";
+    if (body) body.textContent = String(err);
+  }
 }
 
 async function poll() {
@@ -303,6 +355,15 @@ function connect() {
 $("fullscreen")?.addEventListener("click", () => {
   if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
   else document.exitFullscreen?.();
+});
+
+document.querySelectorAll(".commander-buttons button").forEach((button) => {
+  button.addEventListener("click", () => runCommander(button.dataset.action || ""));
+});
+
+$("command-output-close")?.addEventListener("click", () => {
+  const output = $("command-output");
+  if (output) output.hidden = true;
 });
 
 setInterval(updateClock, 500);

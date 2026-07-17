@@ -16,6 +16,19 @@ speed="$(cat /tmp/socx-speedtest-cache.env 2>/dev/null | tr '\n' ';' | sed 's/"/
 unknown="$(tail -20 /var/db/socx_unknown_services.log 2>/dev/null | sed 's/"/\\"/g' | awk '{printf "%s\\n",$0}' | tr '\n' ';' | cut -c1-800)"
 flow_lines="$(pfctl -ss 2>/dev/null | tail -n +2 | head -12 | sed 's/"/\\"/g' | tr '\n' ';' | cut -c1-1800)"
 arp_lines="$(arp -an 2>/dev/null | head -32 | sed 's/"/\\"/g' | tr '\n' ';' | cut -c1-2400)"
+incident_mode="$(socx incident-mode 120 2>/dev/null | sed 's/"/\\"/g' | tr '\n' ';' | cut -c1-2400)"
+top_talkers="$(pfctl -ss 2>/dev/null | awk '
+  /192\.168\.1\./ {
+    for (i=1; i<=NF; i++) {
+      if ($i ~ /192\.168\.1\.[0-9]+/) {
+        gsub(/[^0-9.].*/, "", $i)
+        host[$i]++
+      }
+    }
+  }
+  END {
+    for (h in host) print host[h], h
+  }' | sort -nr | head -8 | sed 's/"/\\"/g' | tr '\n' ';' | cut -c1-800)"
 
 cat > "$OUT" <<EOF
 {
@@ -33,6 +46,8 @@ cat > "$OUT" <<EOF
   "unknown_services": "$unknown",
   "flow_lines": "$flow_lines",
   "arp_lines": "$arp_lines",
+  "incident_mode": "$incident_mode",
+  "top_talkers": "$top_talkers",
   "recommended_prompt": "Summarize SOCX network health, likely benign noise vs items worth checking, and evidence-preserving next steps."
 }
 EOF

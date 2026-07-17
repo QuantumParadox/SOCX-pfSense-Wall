@@ -28,6 +28,7 @@ install -m 0755 "$ROOT/scripts/socx-history" /usr/local/bin/socx-history
 install -m 0755 "$ROOT/scripts/socx-notify" /usr/local/bin/socx-notify
 install -m 0755 "$ROOT/scripts/socx-notify-cron" /usr/local/bin/socx-notify-cron
 install -m 0755 "$ROOT/scripts/socx-snapshot" /usr/local/bin/socx-snapshot
+install -m 0755 "$ROOT/scripts/socx-snapshot-cron" /usr/local/bin/socx-snapshot-cron
 install -m 0755 "$ROOT/scripts/socx-incident-mode" /usr/local/bin/socx-incident-mode
 install -m 0755 "$ROOT/scripts/socx-why-now" /usr/local/bin/socx-why-now
 install -m 0755 "$ROOT/scripts/socx-mode" /usr/local/bin/socx-mode

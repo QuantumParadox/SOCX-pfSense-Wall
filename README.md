@@ -71,12 +71,16 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds `socx mode` presets for normal, incident, speedtest, AI, UPS, and quiet-night viewing.
 - Adds `socx hosts suggest/apply` to reduce `LAN.x` and unknown labels using DHCP, ARP, and Pi discovery hints.
 - Adds `socx snapshot`, a read-only evidence bundle for status, why-now, history, timeline, Speedtest paths, topology, unknown services, and web API JSON.
+- Adds `socx snapshot-cron`, a nightly read-only evidence snapshot schedule with retention cleanup.
 - Adds `/api/history` plus a tiny Command Center score sparkline in the browser wall.
+- Adds a browser Incident Cockpit and safe Commander buttons for status, Incident Mode, snapshots, Zeek health, and Pi AI checks.
+- Adds `/api/commander`, a fixed allowlist endpoint for safe operator actions without arbitrary shell access.
 - Adds `socx notify-cron` to install/remove/status a five-minute notification-rule cron job.
 - Adds `socx-doctor php-services` to catch malformed pfSense service entries that can cause PHP service-status crash reports.
 - Adds `socx incident-mode`, a read-only incident summary of top blocked sources, ports, affected LAN hosts, DNSBL domains, IDS signal, and next actions.
 - Adds `/api/incident` and `/api/top-talkers` for browser/detail integrations.
 - Adds `socx-doctor zeek` to check Zeek process/log health and crash diagnostic folders.
+- Adds `socx-doctor zeek --archive-reviewed` to archive reviewed Zeek crash diagnostics with checksums before live cleanup.
 - Can surface LLDP and Service Watchdog health in the rotating Event Feed when those pfSense packages are configured.
 - Adds WAN quality events from gateway/dpinger latency, loss, and status, separate from bandwidth-only Speedtest results.
 - Adds compact `CHANGE` events when top talker, WAN quality, Speedtest source/status, Pi AI-node state, or unknown-device count changes.
@@ -132,6 +136,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-mode` - wall mode preset helper for normal, incident, speedtest, AI, UPS, and quiet-night operation.
 - `scripts/socx-host-labels` - DHCP/ARP/Pi-discovery friendly-name suggestions for `/usr/local/etc/socx_hosts.conf`.
 - `scripts/socx-snapshot` - read-only SOCX troubleshooting bundle with checksums and optional web API captures.
+- `scripts/socx-snapshot-cron` - installs/removes/status a nightly read-only evidence snapshot cron entry.
 - `scripts/socx-incident-mode` - read-only incident-mode summary for firewall, DNSBL, IDS, and next actions.
 - `scripts/socx-notify-cron` - scheduled notification-rule cron installer/remover/status helper.
 - `scripts/socx-doctor` - live health check for wall, logs, VPN, Speedtest, UPS, reports, MIRANDA ingest, vnstatd, unknown-service noise, DNSBL review, IDS tuning, and slow-network triage.

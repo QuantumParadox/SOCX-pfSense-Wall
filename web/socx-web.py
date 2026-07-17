@@ -73,6 +73,30 @@ def run_cmd(command: str, timeout: float = 1.2) -> str:
     return proc.stdout or ""
 
 
+def run_cmd_capture(args: list[str], timeout: float = 20.0) -> dict[str, Any]:
+    started = time.time()
+    try:
+        proc = subprocess.run(
+            args,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        out = (proc.stdout or "") + (proc.stderr or "")
+        return {
+            "ok": proc.returncode == 0,
+            "returncode": proc.returncode,
+            "elapsed_ms": int((time.time() - started) * 1000),
+            "output": out[-6000:],
+        }
+    except subprocess.TimeoutExpired as exc:
+        out = ((exc.stdout or "") if isinstance(exc.stdout, str) else "") + ((exc.stderr or "") if isinstance(exc.stderr, str) else "")
+        return {"ok": False, "returncode": 124, "elapsed_ms": int((time.time() - started) * 1000), "output": (out + "\ncommand timed out")[-6000:]}
+    except Exception as exc:
+        return {"ok": False, "returncode": 1, "elapsed_ms": int((time.time() - started) * 1000), "output": str(exc)[:1000]}
+
+
 def parse_env_file(path: Path) -> dict[str, str]:
     data: dict[str, str] = {}
     try:
@@ -222,6 +246,7 @@ class SocxCollector:
         ups = self.collect_ups()
         processes = self.collect_processes()
         command_center = self.collect_command_center()
+        incident = self.collect_incident_light(command_center)
 
         packets: list[dict[str, Any]] = []
         if time.time() - self.last_event_read > 0.8:
@@ -264,6 +289,7 @@ class SocxCollector:
             "ups": ups | {"history": list(self.histories["ups_watts"])},
             "processes": processes,
             "command_center": command_center,
+            "incident": incident,
             "flows": flows,
             "packets": packets,
             "events": list(self.events.values())[-self.event_max :],
@@ -466,6 +492,33 @@ class SocxCollector:
             "actions": actions[:5],
         }
 
+    def collect_incident_light(self, center: dict[str, Any] | None = None) -> dict[str, Any]:
+        incident = self.collect_incident(center=center, sample_limit=280)
+        counts = {
+            "sources": sum(int(item.get("count", 0) or 0) for item in incident.get("blocked_sources", [])),
+            "dnsbl": sum(int(item.get("count", 0) or 0) for item in incident.get("dnsbl_domains", [])),
+            "lan": len(incident.get("lan_hosts", [])),
+            "ids_high": int((incident.get("ids") or {}).get("high_signal", 0) or 0),
+        }
+        mode = str(incident.get("mode") or "WATCH").upper()
+        if counts["ids_high"] > 0 or counts["sources"] > 80:
+            verdict = "INVESTIGATE"
+        elif counts["sources"] > 0 or counts["dnsbl"] > 0:
+            verdict = "WATCH"
+        elif mode in {"INCIDENT", "SECURITY WATCH", "INVESTIGATE"}:
+            verdict = mode
+        else:
+            verdict = "QUIET"
+        top_src = incident.get("blocked_sources", [{}])[0].get("name", "none") if incident.get("blocked_sources") else "none"
+        top_port = incident.get("blocked_ports", [{}])[0].get("name", "none") if incident.get("blocked_ports") else "none"
+        return {
+            **incident,
+            "verdict": verdict,
+            "counts": counts,
+            "headline": f"{verdict}: top source {top_src}, top port {top_port}",
+            "updated_ms": now_ms(),
+        }
+
     def history_trend(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
         if not rows:
             return {"label": "no history", "score_avg": "", "direct_avg": "", "vpn_avg": "", "network_avg": "", "security_avg": "", "ai_avg": "", "sensor_avg": ""}
@@ -598,11 +651,12 @@ class SocxCollector:
         rank = lambda data: [{"name": k, "count": v} for k, v in sorted(data.items(), key=lambda kv: kv[1], reverse=True)[:10]]
         return {"assets": rank(assets), "peers": rank(peers), "services": rank(services), "flows": flows[:20]}
 
-    def collect_incident(self) -> dict[str, Any]:
-        center = self.collect_command_center()
-        filter_log = run_cmd("tail -n 1200 /var/log/filter.log 2>/dev/null | grep -Ei 'block|drop|reject' | tail -300", timeout=1.0)
-        dns_log = run_cmd("tail -n 1200 /var/log/pfblockerng/dnsbl.log /var/log/pfblockerng/dns_reply.log 2>/dev/null | tail -300", timeout=1.0)
-        ids_log = run_cmd("find /var/log/suricata -maxdepth 2 -type f \\( -name alerts.log -o -name fast.log \\) 2>/dev/null | xargs tail -400 2>/dev/null", timeout=1.0)
+    def collect_incident(self, center: dict[str, Any] | None = None, sample_limit: int = 300) -> dict[str, Any]:
+        center = center or self.collect_command_center()
+        limit = max(80, min(1200, int(sample_limit)))
+        filter_log = run_cmd(f"tail -n 1600 /var/log/filter.log 2>/dev/null | grep -Ei 'block|drop|reject' | tail -{limit}", timeout=1.0)
+        dns_log = run_cmd(f"tail -n 1600 /var/log/pfblockerng/dnsbl.log /var/log/pfblockerng/dns_reply.log 2>/dev/null | tail -{limit}", timeout=1.0)
+        ids_log = run_cmd("find /var/log/suricata -maxdepth 2 -type f \\( -name alerts.log -o -name fast.log \\) 2>/dev/null | xargs tail -500 2>/dev/null", timeout=1.0)
 
         src_counts: dict[str, int] = {}
         port_counts: dict[str, int] = {}
@@ -640,12 +694,19 @@ class SocxCollector:
             "mode": center.get("mode"),
             "score": center.get("score"),
             "summary": center.get("summary"),
+            "generated_ms": now_ms(),
             "blocked_sources": rank(src_counts),
             "blocked_ports": rank(port_counts),
             "lan_hosts": rank(lan_counts),
             "dnsbl_domains": [{"name": k, "count": v} for k, v in sorted(domains.items(), key=lambda kv: kv[1], reverse=True)[:8]],
             "ids": {"high_signal": ids_high, "routine": ids_routine},
-            "actions": ["socx snapshot", "socx timeline 120", "socx-doctor dnsbl-review", "socx tune ids"],
+            "actions": [
+                "socx snapshot",
+                "socx incident-mode 120",
+                "socx-doctor dnsbl-review",
+                "socx tune ids",
+                "socx pi-llm",
+            ],
         }
 
     def collect_events(self) -> list[dict[str, Any]]:
@@ -884,6 +945,18 @@ class SocxCollector:
                 "history": [],
                 "actions": ["socx status", "socx timeline 60", "socx repair", "socx explain-screen"],
             },
+            "incident": {
+                "verdict": "WATCH",
+                "headline": "WATCH: top source EXT.217.142, top port 443",
+                "counts": {"sources": 22, "dnsbl": 7, "lan": 2, "ids_high": 1},
+                "blocked_sources": [{"name": "217.142.11.40", "count": 9}, {"name": "147.185.133.70", "count": 6}],
+                "blocked_ports": [{"name": "443", "count": 11}, {"name": "23", "count": 4}],
+                "lan_hosts": [{"name": "192.168.1.161", "count": 8}],
+                "dnsbl_domains": [{"name": "beacons.gvt2.com", "count": 7}],
+                "ids": {"high_signal": 1, "routine": 12},
+                "actions": ["socx snapshot", "socx incident-mode 120", "socx pi-llm"],
+                "updated_ms": now_ms(),
+            },
             "flows": [
                 {"asset": "JupiterLXI/192.168.1.161", "peer": "EXT.155.209", "proto": "TCP", "service": "https", "port": "443", "state": "ESTABLISHED", "count": 3, "tag": "web"},
                 {"asset": "NAS-Core/192.168.1.127", "peer": "EXT.57.155", "proto": "TCP", "service": "imaps", "port": "993", "state": "ESTABLISHED", "count": 1, "tag": "mail"},
@@ -932,6 +1005,38 @@ class SocxHandler(BaseHTTPRequestHandler):
             self.send_json({"refresh_ms": int(self.collector.interval * 1000), "demo": self.collector.demo})
             return
         self.serve_static(parsed.path)
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path != "/api/commander":
+            self.send_error(404)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+        except ValueError:
+            length = 0
+        raw = self.rfile.read(min(length, 4096)) if length else b"{}"
+        try:
+            data = json.loads(raw.decode("utf-8", "replace"))
+        except Exception:
+            data = {}
+        action = str(data.get("action", "")).strip().lower()
+        self.send_json(self.run_commander_action(action))
+
+    def run_commander_action(self, action: str) -> dict[str, Any]:
+        commands: dict[str, tuple[list[str], float, str]] = {
+            "snapshot": (["/usr/local/bin/socx", "snapshot"], 90.0, "Evidence snapshot"),
+            "incident": (["/usr/local/bin/socx", "incident-mode", "120"], 25.0, "Incident Mode"),
+            "zeek": (["/usr/local/bin/socx-doctor", "zeek"], 25.0, "Zeek health"),
+            "speedtest": (["/usr/local/bin/socx-doctor", "speedtest-profiles"], 25.0, "Speedtest profiles"),
+            "pi": (["/usr/local/bin/socx", "pi-llm"], 330.0, "Pi 3-LLM analysis"),
+            "status": (["/usr/local/bin/socx", "status"], 25.0, "SOCX status"),
+        }
+        if action not in commands:
+            return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, incident, zeek, speedtest, pi, status"}
+        args, timeout, title = commands[action]
+        result = run_cmd_capture(args, timeout=timeout)
+        return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
         if path in {"", "/"}:

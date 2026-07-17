@@ -753,6 +753,11 @@ function collect_live_frame(array &$state, array $hosts): array
     if ($autopilotEvent !== null) {
         $events[] = $autopilotEvent;
     }
+    $incidentSummary = collect_incident_mode_summary($state, $now);
+    $incidentEvent = incident_mode_wall_event($incidentSummary);
+    if ($incidentEvent !== null) {
+        $events[] = $incidentEvent;
+    }
     $events = balance_events_for_feed(prioritize_events($events), 80);
     $flows = collect_pf_state_flows($state, $hosts, $now);
     if (!$flows) {
@@ -840,6 +845,7 @@ function collect_live_frame(array &$state, array $hosts): array
         'top_flow' => $topFlow,
         'ai_lab' => is_array($state['ai_lab_status'] ?? null) ? $state['ai_lab_status'] : [],
         'socx_health' => $socxHealth,
+        'incident_summary' => $incidentSummary,
         'wan_health' => $wanHealth,
         'speedtest_history' => speedtest_history_summary($state['speedtest_history'] ?? [], $now),
         'packets' => $packets,
@@ -2478,11 +2484,16 @@ function memory_swap_text(array $mem, int $width): string
 function modern_threat_pulse_rows(array $f, array $p): array
 {
     $pulse = $f['threat_pulse'] ?? [];
+    $incident = is_array($f['incident_summary'] ?? null) ? $f['incident_summary'] : [];
     $w = modern_content_width($p);
+    $incidentLine = '';
+    if ($incident) {
+        $incidentLine = truncate_text(sprintf('INC %s p%s', compact_num_tight((int)($incident['fw_blocks'] ?? 0)), (string)($incident['top_port'] ?? '?')), $w);
+    }
     return [
         truncate_text(sprintf('FW drops/min %s %s', compact_num_tight((int)($pulse['fw_drops_min'] ?? 0)), trend_arrow($f, 'packet_drops')), $w),
         truncate_text(sprintf('DNSBL/min %s %s', compact_num_tight((int)($pulse['dnsbl_min'] ?? 0)), trend_arrow($f, 'dnsbl_hits')), $w),
-        truncate_text(sprintf('IDS alerts %s', compact_num_tight((int)($pulse['ids_alerts'] ?? 0))), $w),
+        $incidentLine !== '' ? $incidentLine : truncate_text(sprintf('IDS alerts %s', compact_num_tight((int)($pulse['ids_alerts'] ?? 0))), $w),
         truncate_text(sprintf('New hosts %s', compact_num_tight((int)($pulse['new_hosts'] ?? 0))), $w),
     ];
 }
@@ -5271,6 +5282,71 @@ function threat_pulse_from_events(array $events, array $packets, array $hosts, a
     ];
 }
 
+function collect_incident_mode_summary(array &$state, float $now): array
+{
+    $ttl = max(10.0, (float)(getenv('SOCX_INCIDENT_MODE_CACHE_SECONDS') ?: 30.0));
+    $cached = is_array($state['incident_mode_summary'] ?? null) ? $state['incident_mode_summary'] : [];
+    $last = (float)($state['incident_mode_checked'] ?? 0.0);
+    if ($cached && ($now - $last) < $ttl) {
+        return $cached;
+    }
+    $summary = [
+        'status' => 'unknown',
+        'fw_blocks' => 0,
+        'top_port' => '?',
+        'top_source' => '',
+        'dnsbl' => 0,
+        'ids_high' => 0,
+        'text' => 'Incident Mode waiting',
+        'checked' => $now,
+    ];
+    $cmd = 'command -v socx-incident-mode >/dev/null 2>&1 && socx-incident-mode 120 2>/dev/null | head -80';
+    $out = shell_exec($cmd);
+    if (is_string($out) && trim($out) !== '') {
+        $summary['status'] = 'ok';
+        if (preg_match('/(?:FW|firewall|blocks?)[^0-9]{0,20}([0-9][0-9,]*)/i', $out, $m)) {
+            $summary['fw_blocks'] = (int)str_replace(',', '', $m[1]);
+        }
+        if (preg_match('/(?:top ports?|ports?)[:\s|]+([0-9]+)/i', $out, $m)) {
+            $summary['top_port'] = $m[1];
+        } elseif (preg_match('/\bport\s+([0-9]{1,5})\b/i', $out, $m)) {
+            $summary['top_port'] = $m[1];
+        }
+        if (preg_match('/(?:top sources?|sources?)[:\s|]+([A-Za-z0-9_.:-]+)/i', $out, $m)) {
+            $summary['top_source'] = $m[1];
+        }
+        if (preg_match('/DNSBL[^0-9]{0,20}([0-9][0-9,]*)/i', $out, $m)) {
+            $summary['dnsbl'] = (int)str_replace(',', '', $m[1]);
+        }
+        if (preg_match('/IDS[^0-9]{0,20}([0-9][0-9,]*)/i', $out, $m)) {
+            $summary['ids_high'] = (int)str_replace(',', '', $m[1]);
+        }
+        $firstLine = trim((string)strtok($out, "\n"));
+        $summary['text'] = $firstLine !== '' ? $firstLine : 'Incident Mode sampled';
+    }
+    $state['incident_mode_summary'] = $summary;
+    $state['incident_mode_checked'] = $now;
+    return $summary;
+}
+
+function incident_mode_wall_event(array $summary): ?array
+{
+    if (($summary['status'] ?? '') !== 'ok') {
+        return null;
+    }
+    $blocks = (int)($summary['fw_blocks'] ?? 0);
+    $dns = (int)($summary['dnsbl'] ?? 0);
+    $ids = (int)($summary['ids_high'] ?? 0);
+    if ($blocks <= 0 && $dns <= 0 && $ids <= 0) {
+        return soc_event('INC', 'INFO', 'Incident Mode quiet | evidence sampler ready');
+    }
+    $severity = ($ids > 0 || $blocks > 80) ? 'HIGH' : (($blocks > 20 || $dns > 20) ? 'WARN' : 'LOW');
+    $port = (string)($summary['top_port'] ?? '?');
+    $source = trim((string)($summary['top_source'] ?? ''));
+    $detail = $source !== '' ? $source : 'recent window';
+    return soc_event('INC', $severity, sprintf('Incident watch FW %d DNSBL %d IDS %d | top port %s | %s', $blocks, $dns, $ids, $port, $detail));
+}
+
 function threat_pulse_event(array $pulse, array $trends = []): array
 {
     return soc_event('PULSE', 'INFO', sprintf(
@@ -7276,7 +7352,7 @@ function interleave_event_rows(array $rows): array
 {
     $urgent = [];
     $buckets = [];
-    $categoryOrder = ['WATCH', 'PULSE', 'INTEL', 'TTP', 'DETECT', 'EVID', 'CLOUD', 'SRC', 'FLOW', 'UPS', 'PF', 'DNSBL', 'WAN', 'DNS', 'VPN', 'IDS', 'IPS', 'DHCP', 'ARP', 'IFACE', 'SYS', 'DEVICE', 'SOCX', 'FW'];
+    $categoryOrder = ['WATCH', 'INC', 'PULSE', 'INTEL', 'TTP', 'DETECT', 'EVID', 'CLOUD', 'SRC', 'FLOW', 'UPS', 'PF', 'DNSBL', 'WAN', 'DNS', 'VPN', 'IDS', 'IPS', 'DHCP', 'ARP', 'IFACE', 'SYS', 'DEVICE', 'SOCX', 'FW'];
     foreach ($rows as $row) {
         $parts = event_text_parts((string)$row);
         if (in_array($parts['severity'], ['CRIT', 'HIGH'], true)) {
@@ -9297,10 +9373,10 @@ function colorize_line($line, bool $color): string
     $line = color_replace('/(\[DROP\]|\[HIGH\])|\b(FW BLOCK|FIREWALL BLOCK|IPS BLOCK|DROP|REJECT|BLOCK|blocked|failed|failure|critical|CRIT|HIGH|DOWN)\b/i', $c['red'] . '$0' . $c['reset'], $line);
     $line = color_replace('/(\[WARN\]|\[MED\])|\b(DNS DENY|WARN|warning|MED|PARTIAL|UNKNOWN|WATCH|SECURITY WATCH|stale|rising|falling|latency|loss|scanner|suspicious|burst|high-rate|high usage|SYN|FIN|SING|MULT)\b/i', $c['yellow'] . '$0' . $c['reset'], $line);
     $line = color_replace('/(\[INFO\]|\[LOW\])/', $c['green'] . '$1' . $c['reset'], $line);
-    $line = color_replace('/(\[FW\]|\[VPN\]|\[WAN\]|\[DHCP\]|\[ARP\]|\[FLOW\]|\[RADAR\]|\[PF\]|\[UPS\]|\[SYS\]|\[DNS\]|\[IFACE\]|\[DEVICE\]|\[PULSE\]|\[SOCX\]|\[DOCTOR\]|\[BACKUP\]|\[CHANGE\]|\[AI\]|\[AUTO\]|\[LAB\]|\[INTEL\]|\[TTP\]|\[DETECT\]|\[EVID\]|\[CLOUD\]|\[SRC\])/', $c['cyan'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/(\[FW\]|\[VPN\]|\[WAN\]|\[DHCP\]|\[ARP\]|\[FLOW\]|\[RADAR\]|\[PF\]|\[UPS\]|\[SYS\]|\[DNS\]|\[IFACE\]|\[DEVICE\]|\[PULSE\]|\[INC\]|\[SOCX\]|\[DOCTOR\]|\[BACKUP\]|\[CHANGE\]|\[AI\]|\[AUTO\]|\[LAB\]|\[INTEL\]|\[TTP\]|\[DETECT\]|\[EVID\]|\[CLOUD\]|\[SRC\])/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[DNSBL\]|\[IDS\]|\[IPS\])|\b(DNS BLOCK|DNS SINK|DNSBL HIT|SINKHOLE|DNSBL|Suricata|suricata|Sigma|YARA|CVE|CPE|CWE|CAPEC|CVSS|EPSS|KEV|ATT&CK|D3FEND|OpenAI|Anthropic|Gemini|xAI|Grok|NVIDIA Build|Hugging Face|Ollama|vLLM|MIRANDA|Local LLM|reputation|threat-intel|known-bad|known bad|malware|botnet|C2|abuse:high|abuse high|tor\?)\b/i', $c['purple'] . '$0' . $c['reset'], $line);
     $line = color_replace('/\b(contain|quarantine|preserve|evidence|pcap|pfctl|config\.xml|CloudTrail|AzureActivity|VPC Flow|Windows|Linux|macOS|memory)\b/i', $c['yellow'] . '$0' . $c['reset'], $line);
-    $line = color_replace('/\b(CPU|RAM|ARC|SWAP|PF|LAN|WAN|IN|OUT|VPN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|PACKET RADAR|PFTOP|LIVE STATES|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES|THREAT PULSE|SPEEDTEST|SPD|CLIENT|ROUTER|DIRECT|NYC|RCN-DE|RCN-VA|PATH|PATHS|AUTO|BASE|DOCTOR|BACKUP|CHANGE|PI|Mbps|STATES|SEARCH|TRAFFIC|TCP|UDP|ICMP|DIR|APP|PATH|TYPE|STAT|STATE|LEFT|PRO|SVC|RATE|FLOW|RADAR|AGE|EXP|PROTO|TEMP|HUMID|LOAD)\b/i', $c['cyan'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/\b(CPU|RAM|ARC|SWAP|PF|LAN|WAN|IN|OUT|VPN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|PACKET RADAR|PFTOP|LIVE STATES|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES|THREAT PULSE|INCIDENT|SPEEDTEST|SPD|CLIENT|ROUTER|DIRECT|NYC|RCN-DE|RCN-VA|PATH|PATHS|AUTO|BASE|DOCTOR|BACKUP|CHANGE|PI|Mbps|STATES|SEARCH|TRAFFIC|TCP|UDP|ICMP|DIR|APP|PATH|TYPE|STAT|STATE|LEFT|PRO|SVC|RATE|FLOW|RADAR|AGE|EXP|PROTO|TEMP|HUMID|LOAD)\b/i', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/\b(tls|web|dns|dnsblk|ssh|vpn|ntp|smb|sysl|rip|snmp|ssdp|nut|olma|vllm|llm|tgi|grad|jupy|ray|mlfl|trtn|graf|oai|xai|ngc|anth|gemi|hf|rdis|metr|ping|plex|dhcp|mdns|mail|apns|gcm|team|rdp|vnc|irc|ftp|dot|mux|oth|block|p\d{1,5})\b/i', $c['blue'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[[#!.]+\])/', $c['green'] . '$1' . $c['reset'], $line);
     $line = color_replace('/([█▇▆▅▄▃▂▁▓]+)/u', $c['green'] . '$1' . $c['reset'], $line);

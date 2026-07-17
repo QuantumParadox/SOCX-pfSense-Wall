@@ -183,9 +183,10 @@ body {
 }
 
 .process-card,
+.incident-card,
 .flows-card,
 .packets-card {
-  grid-column: span 4;
+  grid-column: span 3;
 }
 
 .card-head {
@@ -437,8 +438,36 @@ body {
 }
 
 .command-table {
-  height: calc(100% - 84px);
+  height: calc(100% - 118px);
   gap: 6px;
+}
+
+.commander-buttons {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.commander-buttons button {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid rgba(52, 215, 242, .32);
+  border-radius: 6px;
+  background: rgba(52, 215, 242, .07);
+  color: var(--cyan);
+  font: inherit;
+  font-size: clamp(10px, .72vw, 13px);
+  font-weight: 900;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commander-buttons button:hover {
+  border-color: rgba(118, 242, 125, .66);
+  color: var(--green);
 }
 
 .command-verdict {
@@ -470,7 +499,7 @@ body {
 }
 
 .command-table .row {
-  grid-template-columns: 68px minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: 58px minmax(0, 1fr);
 }
 
 .command-table .action span:nth-child(2) {
@@ -478,12 +507,93 @@ body {
   font-weight: 900;
 }
 
+.incident-headline {
+  min-height: 38px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--yellow);
+  background: rgba(255, 226, 103, .055);
+  color: var(--text);
+  font-size: clamp(12px, .9vw, 16px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.incident-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.incident-grid > div {
+  min-width: 0;
+  padding: 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .04);
+  border: 1px solid rgba(255, 255, 255, .08);
+}
+
+.incident-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: clamp(9px, .68vw, 12px);
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.incident-grid b {
+  display: block;
+  color: var(--yellow);
+  font-size: clamp(15px, 1.05vw, 22px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.incident-table {
+  height: calc(100% - 112px);
+}
+
+.incident-table .row {
+  grid-template-columns: 54px minmax(0, 1fr) 52px;
+}
+
 .flows-table .row {
   grid-template-columns: 32px minmax(90px, 1.3fr) minmax(90px, 1.3fr) 62px 88px 70px;
 }
 
 .packet-table .row {
-  grid-template-columns: 72px 66px 54px minmax(90px, 1fr) minmax(90px, 1fr) 82px minmax(90px, .9fr);
+  grid-template-columns: 62px 62px 50px minmax(72px, 1fr) minmax(72px, 1fr) 64px;
+}
+
+.packet-table .row span:nth-child(7) {
+  display: none;
+}
+
+.command-output {
+  position: fixed;
+  z-index: 10;
+  left: clamp(14px, 2vw, 32px);
+  right: clamp(14px, 2vw, 32px);
+  bottom: clamp(64px, 6vw, 96px);
+  max-height: min(62vh, 760px);
+  padding: 14px;
+  border: 1px solid rgba(52, 215, 242, .72);
+  border-radius: 8px;
+  background: rgba(5, 8, 12, .98);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .68);
+}
+
+.command-output pre {
+  max-height: calc(min(62vh, 760px) - 76px);
+  margin: 0;
+  overflow: auto;
+  color: var(--text);
+  font: inherit;
+  font-size: clamp(12px, .9vw, 16px);
+  white-space: pre-wrap;
 }
 
 .green {
@@ -582,6 +692,7 @@ body {
   .cpu-card,
   .mem-card,
   .process-card,
+  .incident-card,
   .flows-card,
   .packets-card {
     grid-column: span 3;
@@ -605,8 +716,13 @@ body {
   .cpu-card,
   .mem-card,
   .process-card,
+  .incident-card,
   .flows-card,
   .packets-card {
     grid-column: span 1;
+  }
+
+  .commander-buttons {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }

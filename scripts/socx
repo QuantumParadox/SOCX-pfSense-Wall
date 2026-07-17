@@ -47,6 +47,10 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-snapshot "$@"
         ;;
+    snapshot-cron|nightly-snapshot|evidence-cron)
+        shift
+        exec /usr/local/bin/socx-snapshot-cron "$@"
+        ;;
     incident-mode|incident-view)
         shift
         exec /usr/local/bin/socx-incident-mode "$@"
