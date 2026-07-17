@@ -3,6 +3,7 @@
 ## v0.1.46
 
 - Polished the Modern Wall without changing the successful btop-style layout.
+- Added SOCX Command Center v1 with `socx menu`, `socx timeline`, `socx repair`, and `socx explain-screen` for one-place operation, timeline review, safe collector restart, and plain-English wall interpretation.
 - Added `socx status`, a one-command operator health view for wall, Speedtest, UPS, WAN/VPN, DNS, vnstatd, LLDP, reports, MIRANDA, Pi AI, and unknown-service noise.
 - Added `socx autopilot`, a read-only SOCX autonomy mode that scores WAN/VPN, Speedtest, firewall, DNSBL, IDS, Pi AI, and wall health into `NORMAL`, `WATCH`, `INVESTIGATE`, or `INCIDENT` without changing firewall rules.
 - Rotates Autopilot mode, score, summary, and suggested read-only actions through the Modern Wall Event Feed from `/tmp/socx-autopilot.env`.

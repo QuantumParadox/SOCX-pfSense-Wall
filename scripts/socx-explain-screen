@@ -1,0 +1,56 @@
+#!/bin/sh
+# Plain-English explanation of the current SOCX wall state.
+
+env_get() {
+    key="$1"
+    file="$2"
+    [ -f "$file" ] || return
+    sed -n "s/^$key=//p" "$file" 2>/dev/null | tail -1
+}
+
+echo "SOCX screen explanation"
+echo "generated $(date)"
+echo
+
+auto_mode="$(env_get mode /tmp/socx-autopilot.env)"
+auto_score="$(env_get score /tmp/socx-autopilot.env)"
+auto_summary="$(env_get summary /tmp/socx-autopilot.env)"
+auto_actions="$(env_get actions /tmp/socx-autopilot.env)"
+
+[ -n "$auto_mode" ] || auto_mode="UNKNOWN"
+echo "Autopilot is ${auto_mode}${auto_score:+ with score $auto_score}."
+[ -n "$auto_summary" ] && echo "Why: $auto_summary"
+[ -n "$auto_actions" ] && echo "Suggested safe actions: $auto_actions"
+echo
+
+if command -v socx-doctor >/dev/null 2>&1; then
+    vpn_line="$(socx-doctor status 2>/dev/null | grep -E 'WAN gateway|VPN gateways|Speedtest|UPS cache|DNS resolver|Pi AI|MIRANDA' | head -12)"
+    [ -n "$vpn_line" ] && {
+        echo "Key health signals:"
+        printf '%s\n' "$vpn_line" | sed 's/^/  /'
+        echo
+    }
+fi
+
+if [ -f /tmp/socx-speedtest-direct.env ] || [ -f /tmp/socx-speedtest-vpn.env ]; then
+    echo "Speedtest meaning:"
+    d_down="$(env_get download_mbps /tmp/socx-speedtest-direct.env)"
+    d_up="$(env_get upload_mbps /tmp/socx-speedtest-direct.env)"
+    d_ping="$(env_get ping_ms /tmp/socx-speedtest-direct.env)"
+    v_down="$(env_get download_mbps /tmp/socx-speedtest-vpn.env)"
+    v_up="$(env_get upload_mbps /tmp/socx-speedtest-vpn.env)"
+    v_ping="$(env_get ping_ms /tmp/socx-speedtest-vpn.env)"
+    [ -n "$d_down" ] && echo "  DIRECT is ${d_down}/${d_up} Mbps at ${d_ping}ms."
+    [ -n "$v_down" ] && echo "  VPN is ${v_down}/${v_up} Mbps at ${v_ping}ms."
+    echo
+fi
+
+case "$auto_mode" in
+    NORMAL) echo "Plain English: SOCX sees the firewall and network as healthy right now." ;;
+    WATCH) echo "Plain English: SOCX sees activity worth watching, but not enough to call an incident." ;;
+    "VPN DEGRADED") echo "Plain English: WAN may be fine, but one or more VPN paths look slow, down, or stale." ;;
+    "WAN DEGRADED") echo "Plain English: the Frontier/WAN side looks degraded. Check gateway loss, latency, and ONT path." ;;
+    "SECURITY WATCH") echo "Plain English: network services are up, but firewall/DNSBL/IDS activity is elevated. Review before changing rules." ;;
+    INCIDENT) echo "Plain English: SOCX sees enough risk to preserve evidence now. Run: socx incident quick" ;;
+    *) echo "Plain English: SOCX does not have a fresh Autopilot read yet. Run: socx autopilot" ;;
+esac

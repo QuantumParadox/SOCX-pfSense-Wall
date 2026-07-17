@@ -1,0 +1,69 @@
+#!/bin/sh
+# Safe SOCX collector repair. Does not change firewall policy.
+
+ok=0
+warn=0
+
+mark() {
+    level="$1"; shift
+    [ "$level" = OK ] && ok=$((ok + 1))
+    [ "$level" = WARN ] && warn=$((warn + 1))
+    printf '%-5s %s\n' "$level" "$*"
+}
+
+restart_helper() {
+    name="$1"
+    cmd="$2"
+    pidfile="/tmp/${name}.pid"
+    if [ -f "$pidfile" ]; then
+        kill "$(cat "$pidfile")" 2>/dev/null || true
+        rm -f "$pidfile"
+    fi
+    pkill -f "$name" 2>/dev/null || true
+    sh -c "$cmd" >/tmp/${name}.log 2>&1 &
+    echo $! > "$pidfile"
+    sleep 1
+    if kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+        mark OK "$name restarted pid=$(cat "$pidfile")"
+    else
+        mark WARN "$name did not stay running; see /tmp/${name}.log"
+    fi
+}
+
+echo "SOCX repair"
+echo "generated $(date)"
+echo
+
+if command -v tmux >/dev/null 2>&1; then
+    if tmux has-session -t socx 2>/dev/null; then
+        mark OK "wall tmux session already running"
+    elif service socx restart >/tmp/socx-service-restart.log 2>&1; then
+        mark OK "wall service restarted"
+    else
+        mark WARN "wall service restart failed; see /tmp/socx-service-restart.log"
+    fi
+else
+    mark WARN "tmux missing"
+fi
+
+[ -x /usr/local/sbin/socx-ups-cache ] && restart_helper socx-ups-cache "/usr/local/sbin/socx-ups-cache loop"
+[ -x /usr/local/sbin/socx-speedtest-cache ] && restart_helper socx-speedtest-cache "/usr/local/sbin/socx-speedtest-cache loop"
+[ -x /usr/local/sbin/socx-packet-radar-cache ] && restart_helper socx-packet-radar-cache "/usr/local/sbin/socx-packet-radar-cache loop"
+
+if pgrep -f vnstatd >/dev/null 2>&1; then
+    mark OK "vnstatd running"
+elif service vnstatd restart >/tmp/socx-vnstatd-restart.log 2>&1; then
+    mark OK "vnstatd restarted"
+else
+    mark WARN "vnstatd restart failed"
+fi
+
+if command -v lldpcli >/dev/null 2>&1; then
+    service lldpd restart >/tmp/socx-lldpd-restart.log 2>&1 && mark OK "lldpd restart requested" || mark WARN "lldpd restart failed"
+fi
+
+[ -x /usr/local/bin/socx-pi-discover ] && /usr/local/bin/socx-pi-discover >/tmp/socx-pi-discover.out 2>/tmp/socx-pi-discover.err && mark OK "Pi discovery refreshed"
+[ -x /usr/local/bin/socx-doctor ] && /usr/local/bin/socx-doctor status
+
+echo
+printf 'repair summary OK=%d WARN=%d\n' "$ok" "$warn"

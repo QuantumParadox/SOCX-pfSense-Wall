@@ -1,0 +1,30 @@
+#!/bin/sh
+# Build a compact SOCX event timeline from recent pfSense/SOCX sources.
+
+MINUTES="${1:-${SOCX_TIMELINE_MINUTES:-60}}"
+case "$MINUTES" in
+    *[!0-9]*) MINUTES=60 ;;
+esac
+SINCE="$(date -v-"${MINUTES}"M '+%b %e %H:%M' 2>/dev/null || date '+%b %e %H:%M')"
+
+echo "SOCX TIMELINE last ${MINUTES}m"
+echo "generated $(date)"
+echo
+
+emit_section() {
+    title="$1"
+    shift
+    echo "== $title =="
+    "$@" 2>/dev/null | tail -20 | sed 's/^/  /'
+    echo
+}
+
+emit_section "Autopilot" sh -c 'cat /tmp/socx-autopilot.env 2>/dev/null || echo "no autopilot cache"'
+emit_section "Speedtest paths" sh -c 'socx-doctor speedtest-profiles 2>/dev/null'
+emit_section "Gateway/VPN changes" sh -c 'tail -300 /var/log/gateways.log /var/log/system.log 2>/dev/null | grep -Ei "dpinger|gateway|wireguard|openvpn|ipsec|link state|vpn|alarm|down|loss|online"'
+emit_section "Firewall blocks" sh -c 'tail -1000 /var/log/filter.log 2>/dev/null | grep -Ei "block|drop|reject"'
+emit_section "DNSBL" sh -c 'tail -1000 /var/log/pfblockerng/dnsbl.log /var/log/pfblockerng/dns_reply.log 2>/dev/null | grep -Ei "DNSBL|sinkhole|blocked|deny"'
+emit_section "IDS/Suricata" sh -c 'find /var/log/suricata -maxdepth 2 -type f \( -name alerts.log -o -name fast.log \) 2>/dev/null | xargs tail -300 2>/dev/null | grep -Ei "Priority: 1|malware|trojan|ransom|c2|command.?and.?control|exploit|drop|alert"'
+emit_section "AI verdicts" sh -c 'cat /tmp/socx-pi-llm-analysis.env /tmp/socx-miranda-analysis.env 2>/dev/null || echo "no AI verdict cache"'
+
+echo "Tip: run 'socx incident quick' to preserve evidence if this timeline looks suspicious."

@@ -1,0 +1,50 @@
+#!/bin/sh
+# SOCX operator command center.
+
+run_choice() {
+    case "$1" in
+        1|status) exec socx status ;;
+        2|autopilot|auto) exec socx autopilot ;;
+        3|speedtest|speedtests|spd) exec socx-doctor speedtest-profiles ;;
+        4|vpn) exec socx-doctor gateways ;;
+        5|slow|why-slow) exec socx why-slow ;;
+        6|dnsbl) exec socx-doctor dnsbl-review ;;
+        7|ids) exec socx-doctor ids ;;
+        8|services|unknowns) exec socx services ;;
+        9|incident) exec socx incident quick ;;
+        10|restart-wall) exec service socx restart ;;
+        11|repair) exec socx repair ;;
+        12|report) exec sh -c 'ls -1t /root/socx-reports/socx-*.txt 2>/dev/null | head -1 | xargs -r tail -120' ;;
+        13|timeline) exec socx timeline ;;
+        14|explain) exec socx explain-screen ;;
+        q|quit|exit) exit 0 ;;
+        *) echo "Unknown choice: $1" >&2; exit 2 ;;
+    esac
+}
+
+if [ $# -gt 0 ]; then
+    run_choice "$1"
+fi
+
+cat <<'EOF'
+SOCX COMMAND CENTER
+
+ 1. Status
+ 2. Autopilot
+ 3. Speedtest paths
+ 4. VPN details
+ 5. Why slow?
+ 6. DNSBL review
+ 7. IDS review
+ 8. Unknown services
+ 9. Incident quick capture
+10. Restart wall
+11. Repair collectors
+12. Show latest report
+13. Incident timeline
+14. Explain current screen
+ q. Quit
+EOF
+printf '\nSelect: '
+IFS= read -r choice
+run_choice "$choice"

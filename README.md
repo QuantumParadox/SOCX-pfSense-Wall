@@ -108,6 +108,10 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-report-cron` - installs/removes a daily SOCX report cron entry with report retention cleanup.
 - `scripts/socx-hosts-audit` - builds a known/unknown LAN device list from host config, ARP, DHCP leases, and PF states.
 - `scripts/socx-explain` - explains short labels such as `tls`, `dnsbl`, `nut`, `sysl`, `game`, and `unk`.
+- `scripts/socx-menu` - interactive SOCX Command Center for common operator workflows.
+- `scripts/socx-timeline` - compact incident timeline from recent VPN, Speedtest, firewall, DNSBL, IDS, and AI signals.
+- `scripts/socx-repair` - safe collector repair for SOCX wall helpers, vnstatd, LLDP, and Pi discovery without changing firewall policy.
+- `scripts/socx-explain-screen` - plain-English explanation of the current wall state and Autopilot mode.
 - `scripts/socx-doctor` - live health check for wall, logs, VPN, Speedtest, UPS, reports, MIRANDA ingest, vnstatd, unknown-service noise, DNSBL review, IDS tuning, and slow-network triage.
 - `scripts/socx-miranda-bridge` - exports a compact JSON summary for MIRANDA or another local-AI/SOC collector.
 - `scripts/socx-pi-llm-bridge` - posts the compact SOCX summary to a Raspberry Pi 5 AI HAT+ 3-LLM orchestration endpoint and caches the verdict.
@@ -333,8 +337,12 @@ socx-report daily
 socx-report weekly
 socx-report-cron install
 socx-report-cron status
+socx menu
 socx status
 socx autopilot
+socx timeline
+socx repair
+socx explain-screen
 socx-doctor
 socx-doctor gateways
 socx-doctor dnsbl
@@ -350,6 +358,14 @@ socx-doctor why-blocked samsungcloudsolution.net
 Reports are written to `/root/socx-reports/` and include firewall blocks, DNSBL samples, IDS samples, VPN/gateway status, Speedtest cache, UPS cache, top PF states, Service Watchdog data, unknown ports, and a host audit.
 
 `socx status` is the fast operator overview. It checks the wall session, renderer errors, Speedtest cache, UPS cache, WAN/VPN gateway truth, DNS, vnstatd, LLDP tools, report/MIRANDA/Pi cron jobs, AI caches, and unknown-service learner noise. It prints `OK`, `WARN`, and `FAIL` lines with the next command to run when something needs attention.
+
+`socx menu` opens the SOCX Command Center. It gives quick access to status, Autopilot, Speedtest paths, VPN details, why-slow, DNSBL/IDS review, unknown services, incident capture, wall restart, collector repair, latest report, timeline, and screen explanation.
+
+`socx timeline` builds a compact last-hour timeline from Autopilot, Speedtest paths, gateway/VPN logs, firewall blocks, DNSBL, IDS/Suricata, and AI verdict caches. Use it before or after `socx incident quick` to understand what happened.
+
+`socx repair` safely restarts SOCX helper collectors such as UPS cache, Speedtest cache, Packet Radar, vnstatd, LLDP, and Pi discovery. It does not change firewall policy or pfSense rules.
+
+`socx explain-screen` turns the current wall state into plain English, including Autopilot mode, key health signals, direct/VPN Speedtest meaning, and suggested safe next actions.
 
 `socx autopilot` is read-only SOCX autonomy. It scores current wall, WAN/VPN, Speedtest, firewall, DNSBL, IDS, and Pi AI signals, writes `/tmp/socx-autopilot.env`, and selects an operator mode: `NORMAL`, `WATCH`, `INVESTIGATE`, or `INCIDENT`. It never changes firewall rules. The Modern Wall rotates the cached Autopilot mode, score, summary, and suggested read-only actions through the Event Feed.
 

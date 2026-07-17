@@ -16,6 +16,22 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-doctor autopilot "$@"
         ;;
+    menu|command|commands)
+        shift
+        exec /usr/local/bin/socx-menu "$@"
+        ;;
+    timeline)
+        shift
+        exec /usr/local/bin/socx-timeline "$@"
+        ;;
+    repair|heal)
+        shift
+        exec /usr/local/bin/socx-repair "$@"
+        ;;
+    explain-screen|screen|explain-wall)
+        shift
+        exec /usr/local/bin/socx-explain-screen "$@"
+        ;;
     tune)
         shift
         topic="${1:-}"
