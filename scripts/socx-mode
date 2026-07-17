@@ -1,0 +1,56 @@
+#!/bin/sh
+# Wall display mode presets. Prints or exports environment lines for operators.
+
+mode="${1:-show}"
+case "$mode" in
+    normal)
+        cat <<'EOF'
+export SOCX_DENSITY=normal
+export SOCX_EVENT_INTERVAL=2
+export SOCX_WALL_MODE=normal
+EOF
+        ;;
+    incident)
+        cat <<'EOF'
+export SOCX_DENSITY=compact
+export SOCX_EVENT_INTERVAL=1
+export SOCX_WALL_MODE=incident
+EOF
+        ;;
+    speedtest)
+        cat <<'EOF'
+export SOCX_DENSITY=normal
+export SOCX_EVENT_INTERVAL=2
+export SOCX_WALL_MODE=speedtest
+EOF
+        ;;
+    ai)
+        cat <<'EOF'
+export SOCX_DENSITY=normal
+export SOCX_EVENT_INTERVAL=2
+export SOCX_WALL_MODE=ai
+EOF
+        ;;
+    ups|power)
+        cat <<'EOF'
+export SOCX_DENSITY=large
+export SOCX_EVENT_INTERVAL=3
+export SOCX_WALL_MODE=ups
+EOF
+        ;;
+    quiet-night|night)
+        cat <<'EOF'
+export SOCX_DENSITY=large
+export SOCX_EVENT_INTERVAL=4
+export SOCX_WALL_MODE=quiet-night
+EOF
+        ;;
+    show|list)
+        echo "SOCX modes: normal incident speedtest ai ups quiet-night"
+        echo "Apply one with: eval \"\$(socx mode incident)\" && soc"
+        ;;
+    *)
+        echo "Usage: socx-mode [normal|incident|speedtest|ai|ups|quiet-night|show]" >&2
+        exit 2
+        ;;
+esac

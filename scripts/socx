@@ -27,6 +27,10 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-timeline "$@"
         ;;
+    why-now|why-now?)
+        shift
+        exec /usr/local/bin/socx-why-now "$@"
+        ;;
     history)
         shift
         exec /usr/local/bin/socx-history "$@"
@@ -34,6 +38,14 @@ case "${1:-}" in
     notify)
         shift
         exec /usr/local/bin/socx-notify "$@"
+        ;;
+    mode|modes)
+        shift
+        exec /usr/local/bin/socx-mode "$@"
+        ;;
+    hosts|labels|host-labels)
+        shift
+        exec /usr/local/bin/socx-host-labels "$@"
         ;;
     repair|heal)
         shift

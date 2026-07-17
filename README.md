@@ -66,6 +66,10 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds `socx history`, a compact JSONL trend recorder for Autopilot, UPS, and DIRECT/VPN Speedtest path snapshots.
 - Adds `socx notify`, an optional webhook hook for operator alerts when `SOCX_NOTIFY_WEBHOOK_URL` is configured.
 - Adds a browser Command Center card and `/api/command-center` endpoint for Autopilot verdict, Speedtest path truth, history count, and recommended SOCX commands.
+- Adds `socx why-now`, a plain-English explanation of the current wall state with evidence and recommended next actions.
+- Adds four-part Autopilot scoring for network, security, AI, and sensor health.
+- Adds `socx mode` presets for normal, incident, speedtest, AI, UPS, and quiet-night viewing.
+- Adds `socx hosts suggest/apply` to reduce `LAN.x` and unknown labels using DHCP, ARP, and Pi discovery hints.
 - Can surface LLDP and Service Watchdog health in the rotating Event Feed when those pfSense packages are configured.
 - Adds WAN quality events from gateway/dpinger latency, loss, and status, separate from bandwidth-only Speedtest results.
 - Adds compact `CHANGE` events when top talker, WAN quality, Speedtest source/status, Pi AI-node state, or unknown-device count changes.
@@ -117,6 +121,9 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-explain-screen` - plain-English explanation of the current wall state and Autopilot mode.
 - `scripts/socx-history` - appends compact SOCX trend samples to `/var/db/socx_history.jsonl` and tails recent history.
 - `scripts/socx-notify` - optional webhook notification hook for manual or future automated alerts.
+- `scripts/socx-why-now` - plain-English current-state explanation from Autopilot, Speedtest, and AI caches.
+- `scripts/socx-mode` - wall mode preset helper for normal, incident, speedtest, AI, UPS, and quiet-night operation.
+- `scripts/socx-host-labels` - DHCP/ARP/Pi-discovery friendly-name suggestions for `/usr/local/etc/socx_hosts.conf`.
 - `scripts/socx-doctor` - live health check for wall, logs, VPN, Speedtest, UPS, reports, MIRANDA ingest, vnstatd, unknown-service noise, DNSBL review, IDS tuning, and slow-network triage.
 - `scripts/socx-miranda-bridge` - exports a compact JSON summary for MIRANDA or another local-AI/SOC collector.
 - `scripts/socx-pi-llm-bridge` - posts the compact SOCX summary to a Raspberry Pi 5 AI HAT+ 3-LLM orchestration endpoint and caches the verdict.
@@ -345,8 +352,13 @@ socx-report-cron status
 socx menu
 socx status
 socx autopilot
+socx why-now
 socx timeline
+socx history trend
 socx repair
+socx notify rules
+socx hosts suggest
+socx mode show
 socx explain-screen
 socx-doctor
 socx-doctor gateways
@@ -372,7 +384,20 @@ Reports are written to `/root/socx-reports/` and include firewall blocks, DNSBL 
 
 `socx explain-screen` turns the current wall state into plain English, including Autopilot mode, key health signals, direct/VPN Speedtest meaning, and suggested safe next actions.
 
-`socx autopilot` is read-only SOCX autonomy. It scores current wall, WAN/VPN, Speedtest, firewall, DNSBL, IDS, and Pi AI signals, writes `/tmp/socx-autopilot.env`, and selects an operator mode: `NORMAL`, `WATCH`, `INVESTIGATE`, or `INCIDENT`. It never changes firewall rules. The Modern Wall rotates the cached Autopilot mode, score, summary, and suggested read-only actions through the Event Feed.
+`socx autopilot` is read-only SOCX autonomy. It scores current wall, WAN/VPN, Speedtest, firewall, DNSBL, IDS, and Pi AI signals, writes `/tmp/socx-autopilot.env`, and selects an operator mode: `NORMAL`, `WATCH`, `INVESTIGATE`, or `INCIDENT`. It now also writes network, security, AI, and sensor sub-scores so the verdict is easier to understand. It never changes firewall rules. The Modern Wall rotates the cached Autopilot mode, score, summary, and suggested read-only actions through the Event Feed.
+
+`socx why-now` explains the current verdict in plain English. It includes the four-part score, Speedtest evidence, Pi AI role status, and the next safe commands to run.
+
+`socx history trend` summarizes recent JSONL samples from `/var/db/socx_history.jsonl`, including score trend, DIRECT/VPN Speedtest averages, event pressure, and UPS wattage.
+
+`socx notify rules` evaluates Autopilot against notification rules. It only sends when `SOCX_NOTIFY_WEBHOOK_URL` is configured; otherwise it prints a safe skipped/quiet message.
+
+`socx mode show` lists wall presets. To apply one for a shell session:
+
+```sh
+eval "$(socx mode incident)"
+soc
+```
 
 `socx-doctor` is the operator troubleshooting command. It checks the wall, VPN/dpinger gateway health, DNSBL false-positive candidates, Suricata routine-vs-high-signal noise, Traffic Totals/vnStat, log pressure, topology, and targeted “why was this blocked?” lookups. `socx-doctor wan-quality` shows gateway status, loss, recent gateway warnings, and Speedtest context. `socx-doctor topology` shows LLDP interface/neighbor state, host-naming audit output, and Pi AI-node discovery. `socx-doctor why-slow` pulls together load, gateway loss, interface counters, Speedtest cache, and PF state samples. `socx tune ids` prints the repeated Suricata signatures that are safest to threshold or suppress after review.
 

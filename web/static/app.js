@@ -133,10 +133,19 @@ function renderCommandCenter(center = {}) {
   const rows = [
     `<div class="command-verdict"><span class="${modeClass}">${escapeHtml(mode)}</span><b>${escapeHtml(score)}</b></div>`,
     `<div class="command-summary" title="${escapeHtml(center.summary)}">${escapeHtml(center.summary || "Run socx autopilot for a fresh verdict")}</div>`,
+    row([
+      "score",
+      `net ${safe(center.scores?.network, "--")} sec ${safe(center.scores?.security, "--")}`,
+      `ai ${safe(center.scores?.ai, "--")} sens ${safe(center.scores?.sensors, "--")}`,
+    ], "command-row"),
     row(["speed", speedLine(center.direct), speedLine(center.vpn)], "command-row"),
   ];
   (center.vpn_paths || []).slice(0, 3).forEach((path) => rows.push(row(["path", speedLine(path), ""], "command-row")));
-  rows.push(row(["history", `${safe(center.history_count, 0)} samples`, "socx history show"], "command-row"));
+  rows.push(row([
+    "history",
+    `${safe(center.history_count, 0)} samples ${safe(center.history_trend?.label, "")}`,
+    `avg score ${safe(center.history_trend?.score_avg, "--")}`,
+  ], "command-row"));
   (center.actions || []).slice(0, 4).forEach((action, idx) => {
     rows.push(row([idx === 0 ? "next" : "", action, ""], "command-row action"));
   });

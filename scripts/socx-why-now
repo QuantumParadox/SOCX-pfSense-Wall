@@ -1,0 +1,79 @@
+#!/bin/sh
+# Plain-English explanation of the current SOCX state.
+
+env_get() {
+    key="$1"; file="$2"
+    [ -f "$file" ] || return
+    sed -n "s/^$key=//p" "$file" 2>/dev/null | tail -1
+}
+
+age_file() {
+    [ -f "$1" ] || { echo "?"; return; }
+    now="$(date +%s)"
+    mod="$(stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0)"
+    echo $((now - mod))
+}
+
+auto=/tmp/socx-autopilot.env
+[ -x /usr/local/bin/socx-doctor ] && /usr/local/bin/socx-doctor autopilot >/dev/null 2>&1 || true
+
+mode="$(env_get mode "$auto")"
+score="$(env_get score "$auto")"
+net="$(env_get network_score "$auto")"
+sec="$(env_get security_score "$auto")"
+ai="$(env_get ai_score "$auto")"
+sen="$(env_get sensor_score "$auto")"
+summary="$(env_get summary "$auto")"
+actions="$(env_get actions "$auto")"
+direct_down="$(env_get download_mbps /tmp/socx-speedtest-direct.env)"
+direct_up="$(env_get upload_mbps /tmp/socx-speedtest-direct.env)"
+direct_ping="$(env_get ping_ms /tmp/socx-speedtest-direct.env)"
+vpn_down="$(env_get download_mbps /tmp/socx-speedtest-vpn.env)"
+vpn_up="$(env_get upload_mbps /tmp/socx-speedtest-vpn.env)"
+vpn_ping="$(env_get ping_ms /tmp/socx-speedtest-vpn.env)"
+roles="$(env_get roles /tmp/socx-pi-llm-analysis.env)"
+ai_sev="$(env_get severity /tmp/socx-pi-llm-analysis.env)"
+
+cat <<EOF
+SOCX WHY NOW
+
+Verdict: ${mode:-UNKNOWN} score ${score:-?}/100
+Breakdown: network ${net:-?}, security ${sec:-?}, AI ${ai:-?}, sensors ${sen:-?}
+
+What this means:
+EOF
+
+case "${mode:-UNKNOWN}" in
+    NORMAL)
+        echo "The wall sees normal operating conditions. WAN/VPN/sensors look usable and the security feed is routine background noise."
+        ;;
+    WATCH|COOLDOWN)
+        echo "SOCX sees something worth watching, but not enough to treat as an incident. Keep the wall up and watch for repeated patterns."
+        ;;
+    "VPN DEGRADED")
+        echo "VPN path health or VPN Speedtest performance is weaker than expected. WAN may still be fine, so direct traffic and VPN traffic should be judged separately."
+        ;;
+    "WAN DEGRADED")
+        echo "The WAN gateway or WAN quality checks look unhealthy. This can affect all traffic, including VPNs and Speedtest results."
+        ;;
+    "SECURITY WATCH")
+        echo "Firewall, DNSBL, IDS, or AI signals are busier than normal. This usually means scan noise or filtering activity, but it deserves review."
+        ;;
+    INCIDENT|INVESTIGATE)
+        echo "SOCX thinks the signal level is high enough to investigate. Preserve evidence before making changes."
+        ;;
+    *)
+        echo "SOCX does not have enough fresh data for a confident explanation yet."
+        ;;
+esac
+
+echo
+echo "Evidence:"
+echo "- Autopilot summary: ${summary:-not available}"
+echo "- DIRECT Speedtest: ${direct_down:-?}/${direct_up:-?} Mbps ${direct_ping:-?}ms age $(age_file /tmp/socx-speedtest-direct.env)s"
+echo "- VPN Speedtest: ${vpn_down:-?}/${vpn_up:-?} Mbps ${vpn_ping:-?}ms age $(age_file /tmp/socx-speedtest-vpn.env)s"
+echo "- Pi AI: severity ${ai_sev:-unknown}, roles ${roles:-?}, age $(age_file /tmp/socx-pi-llm-analysis.env)s"
+
+echo
+echo "Recommended next actions:"
+printf '%s\n' "${actions:-keep monitoring;}" | tr ';' '\n' | sed '/^[[:space:]]*$/d;s/^/- /'

@@ -17,6 +17,10 @@ run_choice() {
         12|report) exec sh -c 'ls -1t /root/socx-reports/socx-*.txt 2>/dev/null | head -1 | xargs -r tail -120' ;;
         13|timeline) exec socx timeline ;;
         14|explain) exec socx explain-screen ;;
+        15|why-now|why) exec socx why-now ;;
+        16|history) exec socx history trend ;;
+        17|notify) exec socx notify rules ;;
+        18|hosts|labels) exec socx hosts suggest ;;
         q|quit|exit) exit 0 ;;
         *) echo "Unknown choice: $1" >&2; exit 2 ;;
     esac
@@ -43,6 +47,10 @@ SOCX COMMAND CENTER
 12. Show latest report
 13. Incident timeline
 14. Explain current screen
+15. Why now?
+16. History trend
+17. Run notification rules
+18. Host label suggestions
  q. Quit
 EOF
 printf '\nSelect: '

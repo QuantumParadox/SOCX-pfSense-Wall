@@ -15,6 +15,13 @@ append)
     ts="$(date +%s)"
     auto_mode="$(env_get mode /tmp/socx-autopilot.env)"
     auto_score="$(env_get score /tmp/socx-autopilot.env)"
+    network_score="$(env_get network_score /tmp/socx-autopilot.env)"
+    security_score="$(env_get security_score /tmp/socx-autopilot.env)"
+    ai_score="$(env_get ai_score /tmp/socx-autopilot.env)"
+    sensor_score="$(env_get sensor_score /tmp/socx-autopilot.env)"
+    fw_recent="$(env_get fw_recent /tmp/socx-autopilot.env)"
+    dnsbl_recent="$(env_get dnsbl_recent /tmp/socx-autopilot.env)"
+    ids_recent="$(env_get ids_recent /tmp/socx-autopilot.env)"
     direct_down="$(env_get download_mbps /tmp/socx-speedtest-direct.env)"
     direct_up="$(env_get upload_mbps /tmp/socx-speedtest-direct.env)"
     vpn_down="$(env_get download_mbps /tmp/socx-speedtest-vpn.env)"
@@ -22,8 +29,8 @@ append)
     vpn_ping="$(env_get ping_ms /tmp/socx-speedtest-vpn.env)"
     ups_watts="$(env_get watts /tmp/socx-ups-cache.env)"
     ups_load="$(env_get load /tmp/socx-ups-cache.env)"
-    printf '{"ts":%s,"mode":"%s","score":%s,"direct_down":%s,"direct_up":%s,"vpn_down":%s,"vpn_up":%s,"vpn_ping":%s,"ups_watts":%s,"ups_load":%s}\n' \
-        "$ts" "${auto_mode:-UNKNOWN}" "${auto_score:-0}" "${direct_down:-0}" "${direct_up:-0}" "${vpn_down:-0}" "${vpn_up:-0}" "${vpn_ping:-0}" "${ups_watts:-0}" "${ups_load:-0}" >> "$OUT"
+    printf '{"ts":%s,"mode":"%s","score":%s,"network_score":%s,"security_score":%s,"ai_score":%s,"sensor_score":%s,"fw_recent":%s,"dnsbl_recent":%s,"ids_recent":%s,"direct_down":%s,"direct_up":%s,"vpn_down":%s,"vpn_up":%s,"vpn_ping":%s,"ups_watts":%s,"ups_load":%s}\n' \
+        "$ts" "${auto_mode:-UNKNOWN}" "${auto_score:-0}" "${network_score:-0}" "${security_score:-0}" "${ai_score:-0}" "${sensor_score:-0}" "${fw_recent:-0}" "${dnsbl_recent:-0}" "${ids_recent:-0}" "${direct_down:-0}" "${direct_up:-0}" "${vpn_down:-0}" "${vpn_up:-0}" "${vpn_ping:-0}" "${ups_watts:-0}" "${ups_load:-0}" >> "$OUT"
     lines="$(wc -l "$OUT" 2>/dev/null | awk '{print $1}')"
     keep="${SOCX_HISTORY_KEEP_LINES:-5000}"
     if [ "${lines:-0}" -gt "$keep" ] 2>/dev/null; then
@@ -34,8 +41,71 @@ append)
 show|tail)
     tail -${2:-40} "$OUT" 2>/dev/null || echo "no SOCX history yet"
     ;;
+trend|summary)
+    count="${2:-24}"
+    if [ ! -f "$OUT" ]; then
+        echo "no SOCX history yet"
+        exit 0
+    fi
+    tail -"$count" "$OUT" | awk '
+        BEGIN { n=0 }
+        {
+            n++
+            line=$0
+            score=field(line,"score")
+            net=field(line,"network_score")
+            sec=field(line,"security_score")
+            ai=field(line,"ai_score")
+            sen=field(line,"sensor_score")
+            dd=field(line,"direct_down")
+            du=field(line,"direct_up")
+            vd=field(line,"vpn_down")
+            vu=field(line,"vpn_up")
+            ups=field(line,"ups_watts")
+            fw=field(line,"fw_recent")
+            dns=field(line,"dnsbl_recent")
+            ids=field(line,"ids_recent")
+            s+=score
+            if (net > 0) { ns+=net; nn++ }
+            if (sec > 0) { ss+=sec; sn++ }
+            if (ai > 0) { ais+=ai; an++ }
+            if (sen > 0) { sens+=sen; sen_n++ }
+            dds+=dd; dus+=du; vds+=vd; vus+=vu; upss+=ups; fws+=fw; dnss+=dns; idss+=ids
+            if (n==1) { first=score; firstdd=dd; firstvd=vd }
+            last=score; lastdd=dd; lastvd=vd
+        }
+        END {
+            if (n==0) { print "no SOCX history yet"; exit }
+            printf "SOCX history trend last %d samples\n", n
+            printf "score avg %.0f now %.0f trend %s\n", s/n, last, arrow(last-first)
+            printf "breakdown avg net %.0f security %.0f ai %.0f sensors %.0f\n", safeavg(ns,nn), safeavg(ss,sn), safeavg(ais,an), safeavg(sens,sen_n)
+            printf "direct avg %.0f/%.0f Mbps trend %s\n", dds/n, dus/n, arrow(lastdd-firstdd)
+            printf "vpn avg %.0f/%.0f Mbps trend %s\n", vds/n, vus/n, arrow(lastvd-firstvd)
+            printf "events avg FW %.0f DNSBL %.0f IDS %.0f | UPS avg %.0f W\n", fws/n, dnss/n, idss/n, upss/n
+        }
+        function field(line,key, arr,i,item,kv,n) {
+            n=split(line,arr,",")
+            for (i=1; i<=n; i++) {
+                item=arr[i]
+                gsub(/[{}"]/,"",item)
+                split(item,kv,":")
+                if (kv[1] == key) return kv[2]+0
+            }
+            return 0
+        }
+        function arrow(delta) {
+            if (delta > 2) return "up"
+            if (delta < -2) return "down"
+            return "stable"
+        }
+        function safeavg(total,count) {
+            if (count < 1) return 0
+            return total/count
+        }
+        '
+    ;;
 *)
-    echo "Usage: socx-history [append|show]" >&2
+    echo "Usage: socx-history [append|show|trend]" >&2
     exit 2
     ;;
 esac

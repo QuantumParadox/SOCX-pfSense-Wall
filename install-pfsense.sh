@@ -26,6 +26,9 @@ install -m 0755 "$ROOT/scripts/socx-repair" /usr/local/bin/socx-repair
 install -m 0755 "$ROOT/scripts/socx-explain-screen" /usr/local/bin/socx-explain-screen
 install -m 0755 "$ROOT/scripts/socx-history" /usr/local/bin/socx-history
 install -m 0755 "$ROOT/scripts/socx-notify" /usr/local/bin/socx-notify
+install -m 0755 "$ROOT/scripts/socx-why-now" /usr/local/bin/socx-why-now
+install -m 0755 "$ROOT/scripts/socx-mode" /usr/local/bin/socx-mode
+install -m 0755 "$ROOT/scripts/socx-host-labels" /usr/local/bin/socx-host-labels
 install -m 0755 "$ROOT/scripts/socx-doctor" /usr/local/bin/socx-doctor
 install -m 0755 "$ROOT/scripts/socx-ai-explain" /usr/local/bin/socx-ai-explain
 install -m 0755 "$ROOT/scripts/socx-miranda-bridge" /usr/local/bin/socx-miranda-bridge

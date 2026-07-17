@@ -1,0 +1,54 @@
+#!/bin/sh
+# Suggest friendly host labels from DHCP, ARP, and common SOCX device hints.
+
+OUT="${SOCX_HOSTS_CONFIG:-/usr/local/etc/socx_hosts.conf}"
+
+candidate_names() {
+    awk '
+        /lease / { ip=$2 }
+        /client-hostname / {
+            name=$2; gsub(/[";]/,"",name)
+            if (ip != "" && name != "") print ip "=" name
+        }' /var/dhcpd/var/db/dhcpd.leases 2>/dev/null
+    arp -an 2>/dev/null | awk '
+        match($0, /\(([0-9.]+)\)/) {
+            ip=substr($0,RSTART+1,RLENGTH-2)
+            if (ip ~ /^192\.168\.1\./) print ip "=LAN-" substr(ip, match(ip, /[0-9]+$/))
+        }'
+    [ -f /tmp/socx-pi-discovery.env ] && {
+        ip="$(sed -n 's/^ip=//p' /tmp/socx-pi-discovery.env | tail -1)"
+        [ -n "$ip" ] && echo "$ip=Pi5-AI"
+    }
+}
+
+case "${1:-suggest}" in
+    suggest)
+        echo "SOCX host label suggestions"
+        candidate_names | sort -u | while IFS='=' read -r ip name; do
+            [ -n "$ip" ] && [ -n "$name" ] || continue
+            if grep -q "^$ip=" "$OUT" 2>/dev/null; then
+                continue
+            fi
+            printf '%s=%s\n' "$ip" "$name"
+        done
+        ;;
+    apply)
+        tmp="/tmp/socx-host-labels.$$"
+        candidate_names | sort -u > "$tmp"
+        touch "$OUT"
+        added=0
+        while IFS='=' read -r ip name; do
+            [ -n "$ip" ] && [ -n "$name" ] || continue
+            if ! grep -q "^$ip=" "$OUT" 2>/dev/null; then
+                printf '%s=%s\n' "$ip" "$name" >> "$OUT"
+                added=$((added + 1))
+            fi
+        done < "$tmp"
+        rm -f "$tmp"
+        echo "added $added labels to $OUT"
+        ;;
+    *)
+        echo "Usage: socx-host-labels [suggest|apply]" >&2
+        exit 2
+        ;;
+esac

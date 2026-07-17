@@ -3,6 +3,10 @@
 ## v0.1.46
 
 - Polished the Modern Wall without changing the successful btop-style layout.
+- Added v0.3 autonomy helpers: `socx why-now`, `socx history trend`, `socx notify rules`, `socx mode`, and `socx hosts suggest/apply`.
+- Split Autopilot into four operator scores: network, security, AI, and sensors.
+- Added before/after repair snapshots in `/tmp/socx-repair-report.txt`.
+- Expanded the browser Command Center with score breakdown and history trend fields.
 - Added SOCX history samples with `socx history`; `socx autopilot` now appends compact Autopilot, UPS, and DIRECT/VPN Speedtest trend data to `/var/db/socx_history.jsonl`.
 - Added optional `socx notify` webhook support for operator alerts when `SOCX_NOTIFY_WEBHOOK_URL` is configured.
 - Added a browser Command Center card plus `/api/command-center` for Autopilot verdict, Speedtest path truth, history count, and recommended SOCX commands.

@@ -6,6 +6,35 @@ TITLE="${1:-SOCX}"
 MESSAGE="${2:-$(cat 2>/dev/null)}"
 MODE="${SOCX_NOTIFY_MODE:-manual}"
 
+env_get() {
+    key="$1"; file="$2"
+    [ -f "$file" ] || return
+    sed -n "s/^$key=//p" "$file" 2>/dev/null | tail -1
+}
+
+if [ "$TITLE" = "rules" ]; then
+    [ -x /usr/local/bin/socx-doctor ] && /usr/local/bin/socx-doctor autopilot >/dev/null 2>&1 || true
+    auto=/tmp/socx-autopilot.env
+    mode="$(env_get mode "$auto")"
+    score="$(env_get score "$auto")"
+    summary="$(env_get summary "$auto")"
+    ids="$(env_get ids_recent "$auto")"
+    sensor="$(env_get sensor_score "$auto")"
+    note=""
+    case "$mode" in
+        INCIDENT|INVESTIGATE|"WAN DEGRADED"|"VPN DEGRADED"|"SECURITY WATCH") note="SOCX ${mode:-UNKNOWN} score=${score:-?}: ${summary:-review wall}" ;;
+    esac
+    [ "${ids:-0}" -gt "${SOCX_NOTIFY_IDS_THRESHOLD:-0}" ] 2>/dev/null && note="${note}${note:+ | }IDS alerts ${ids}"
+    [ "${sensor:-100}" -lt "${SOCX_NOTIFY_SENSOR_MIN:-70}" ] 2>/dev/null && note="${note}${note:+ | }sensor score ${sensor}"
+    if [ -z "$note" ]; then
+        echo "notification rules quiet: mode=${mode:-UNKNOWN} score=${score:-?}"
+        exit 0
+    fi
+    TITLE="SOCX ${mode:-WATCH}"
+    MESSAGE="$note"
+    MODE="rules"
+fi
+
 if [ -z "$WEBHOOK" ]; then
     echo "notification skipped: SOCX_NOTIFY_WEBHOOK_URL not set"
     exit 0

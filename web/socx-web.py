@@ -458,14 +458,42 @@ class SocxCollector:
         return {
             "mode": mode,
             "score": score,
+            "scores": {
+                "network": auto.get("network_score", ""),
+                "security": auto.get("security_score", ""),
+                "ai": auto.get("ai_score", ""),
+                "sensors": auto.get("sensor_score", ""),
+            },
             "summary": summary,
             "updated": auto.get("updated") or auto.get("ts") or "",
             "direct": self.speedtest_summary("DIRECT", direct),
             "vpn": self.speedtest_summary("VPN", vpn),
             "vpn_paths": named_paths,
             "history_count": len(history_rows),
+            "history_trend": self.history_trend(history_rows),
             "history": history_rows,
             "actions": actions[:5],
+        }
+
+    def history_trend(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        if not rows:
+            return {"label": "no history", "score_avg": "", "direct_avg": "", "vpn_avg": ""}
+        def avg(key: str) -> float:
+            vals = [float(row.get(key, 0) or 0) for row in rows]
+            return sum(vals) / max(1, len(vals))
+        first = float(rows[0].get("score", 0) or 0)
+        last = float(rows[-1].get("score", 0) or 0)
+        if last - first > 2:
+            label = "rising"
+        elif first - last > 2:
+            label = "falling"
+        else:
+            label = "stable"
+        return {
+            "label": label,
+            "score_avg": round(avg("score")),
+            "direct_avg": round(avg("direct_down")),
+            "vpn_avg": round(avg("vpn_down")),
         }
 
     def speedtest_summary(self, label: str, data: dict[str, str]) -> dict[str, Any]:
@@ -770,6 +798,7 @@ class SocxCollector:
             "command_center": {
                 "mode": "WATCH",
                 "score": "82",
+                "scores": {"network": "94", "security": "76", "ai": "100", "sensors": "96"},
                 "summary": "WAN healthy, VPN paths mixed, DNSBL routine.",
                 "direct": {"label": "DIRECT", "status": "OK", "down": "3223", "up": "2372", "ping": "9", "age_sec": 900},
                 "vpn": {"label": "VPN", "status": "OK", "down": "740", "up": "510", "ping": "52", "age_sec": 980},
@@ -778,6 +807,7 @@ class SocxCollector:
                     {"label": "RCN-DE", "status": "OK", "down": "740", "up": "510", "ping": "52", "age_sec": 980},
                 ],
                 "history_count": 8,
+                "history_trend": {"label": "stable", "score_avg": 82, "direct_avg": 3223, "vpn_avg": 740},
                 "history": [],
                 "actions": ["socx status", "socx timeline 60", "socx repair", "socx explain-screen"],
             },

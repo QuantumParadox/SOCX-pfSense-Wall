@@ -3,6 +3,22 @@
 
 ok=0
 warn=0
+REPORT="${SOCX_REPAIR_REPORT:-/tmp/socx-repair-report.txt}"
+
+snapshot() {
+    label="$1"
+    {
+        echo "[$label] $(date)"
+        if tmux has-session -t socx 2>/dev/null; then echo "wall=running"; else echo "wall=missing"; fi
+        pgrep -f socx-ups-cache >/dev/null 2>&1 && echo "ups_cache=running" || echo "ups_cache=missing"
+        pgrep -f socx-speedtest-cache >/dev/null 2>&1 && echo "speedtest_cache=running" || echo "speedtest_cache=missing"
+        pgrep -f socx-packet-radar-cache >/dev/null 2>&1 && echo "packet_radar=running" || echo "packet_radar=missing"
+        pgrep -f vnstatd >/dev/null 2>&1 && echo "vnstatd=running" || echo "vnstatd=missing"
+        pgrep -f lldpd >/dev/null 2>&1 && echo "lldpd=running" || echo "lldpd=missing"
+        [ -f /tmp/socx-autopilot.env ] && sed -n 's/^\(mode\|score\|summary\)=/\1=/p' /tmp/socx-autopilot.env
+        echo
+    } >> "$REPORT"
+}
 
 mark() {
     level="$1"; shift
@@ -33,6 +49,8 @@ restart_helper() {
 echo "SOCX repair"
 echo "generated $(date)"
 echo
+: > "$REPORT"
+snapshot before
 
 if command -v tmux >/dev/null 2>&1; then
     if tmux has-session -t socx 2>/dev/null; then
@@ -66,4 +84,6 @@ fi
 [ -x /usr/local/bin/socx-doctor ] && /usr/local/bin/socx-doctor status
 
 echo
+snapshot after
 printf 'repair summary OK=%d WARN=%d\n' "$ok" "$warn"
+echo "repair report: $REPORT"
