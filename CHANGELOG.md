@@ -3,6 +3,10 @@
 ## v0.1.46
 
 - Polished the Modern Wall without changing the successful btop-style layout.
+- Added WAN quality scoring from live gateway/dpinger status, including latency/loss/status events separate from Speedtest.
+- Expanded LLDP topology events to show neighbor/interface summaries when switch advertisements are visible.
+- Enriched Pi 3-LLM events with Pi discovery IP/service/age so SOCX can show whether the AI node is reachable and fresh.
+- Added `socx-doctor wan-quality` and `socx-doctor topology` for gateway quality, LLDP, host naming, and Pi AI-node checks.
 - Split Speedtest into `CLIENT` truth and `ROUTER` diagnostic caches so bad pfSense CLI tests no longer overwrite known-good browser Speedtest.net results.
 - Added `socx speedtest import ...`, Speedtest source labels, 2G/2G baseline comparison, and Event Feed warnings when router-side CLI tests under-report versus the client result.
 - Set scheduled Speedtest runs to a six-hour default cadence.

@@ -64,6 +64,8 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds `socx-incident`, a short operator command that runs the capture and prints the newest bundle path plus a quick manifest. `socx incident quick` captures the same core evidence with a shorter packet sample.
 - Adds `socx-report`, `socx-report-cron`, `socx-hosts-audit`, `socx-explain`, and `socx-miranda-bridge` for scheduled reports, device naming, label explanations, and MIRANDA/local-AI export.
 - Can surface LLDP and Service Watchdog health in the rotating Event Feed when those pfSense packages are configured.
+- Adds WAN quality events from gateway/dpinger latency, loss, and status, separate from bandwidth-only Speedtest results.
+- Shows LLDP topology summaries such as interface-to-switch neighbor hints when the connected switch advertises LLDP.
 - Adds a rotating SOCX health score based on WAN, VPN, UPS, RAM, CPU, Speedtest freshness, IDS, DNSBL, and firewall scan pressure.
 - Shows truthful VPN gateway/interface health in the top status strip, including `VPN UP 3/3`, `VPN PARTIAL 1/3`, `VPN DOWN 0/3`, `VPN N/A`, or `VPN UNKNOWN` plus `DATA LIVE`/`DATA STALE`.
 - Adds a background Speedtest cache for scheduled Frontier/VPN path checks without blocking the 500 ms wall renderer.
@@ -339,7 +341,7 @@ socx-doctor why-blocked samsungcloudsolution.net
 
 Reports are written to `/root/socx-reports/` and include firewall blocks, DNSBL samples, IDS samples, VPN/gateway status, Speedtest cache, UPS cache, top PF states, Service Watchdog data, unknown ports, and a host audit.
 
-`socx-doctor` is the operator troubleshooting command. It checks the wall, VPN/dpinger gateway health, DNSBL false-positive candidates, Suricata routine-vs-high-signal noise, Traffic Totals/vnStat, log pressure, and targeted “why was this blocked?” lookups. `socx-doctor why-slow` pulls together load, gateway loss, interface counters, Speedtest cache, and PF state samples. `socx tune ids` prints the repeated Suricata signatures that are safest to threshold or suppress after review.
+`socx-doctor` is the operator troubleshooting command. It checks the wall, VPN/dpinger gateway health, DNSBL false-positive candidates, Suricata routine-vs-high-signal noise, Traffic Totals/vnStat, log pressure, topology, and targeted “why was this blocked?” lookups. `socx-doctor wan-quality` shows gateway status, loss, recent gateway warnings, and Speedtest context. `socx-doctor topology` shows LLDP interface/neighbor state, host-naming audit output, and Pi AI-node discovery. `socx-doctor why-slow` pulls together load, gateway loss, interface counters, Speedtest cache, and PF state samples. `socx tune ids` prints the repeated Suricata signatures that are safest to threshold or suppress after review.
 
 MIRANDA/local-AI bridge:
 

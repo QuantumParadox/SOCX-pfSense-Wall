@@ -90,6 +90,106 @@ doctor_gateways() {
     finish
 }
 
+doctor_wan_quality() {
+    header "wan quality"
+    table="$(gateway_table)"
+    if [ -n "$table" ]; then
+        mark INFO "gateway status:"
+        printf '%s\n' "$table" | awk 'NR==1 || NF {print "      " $0}'
+        wan="$(printf '%s\n' "$table" | awk 'NR>1 && toupper($1) ~ /WAN/ {print; exit}')"
+        [ -n "$wan" ] || wan="$(printf '%s\n' "$table" | awk 'NR>1 && NF {print; exit}')"
+        if [ -n "$wan" ]; then
+            name="$(printf '%s\n' "$wan" | awk '{print $1}')"
+            loss="$(printf '%s\n' "$wan" | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9.]+%$/){print $i; exit}}')"
+            status="$(printf '%s\n' "$wan" | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9.]+%$/){print $(i+1); exit}}')"
+            [ -n "$status" ] || status="$(printf '%s\n' "$wan" | awk '{print $NF}')"
+            case "$(printf '%s' "$status" | tr '[:upper:]' '[:lower:]')" in
+                *online*) mark OK "primary gateway ${name:-WAN} online loss=${loss:-?}" ;;
+                *pending*|*unknown*) mark WARN "primary gateway ${name:-WAN} status=${status:-unknown} loss=${loss:-?}" ;;
+                *) mark FAIL "primary gateway ${name:-WAN} status=${status:-unknown} loss=${loss:-?}" ;;
+            esac
+        else
+            mark WARN "no gateway rows parsed"
+        fi
+    else
+        mark WARN "gatewaystatus unavailable"
+    fi
+
+    if [ -f /var/log/gateways.log ]; then
+        bad="$(tail -300 /var/log/gateways.log 2>/dev/null | grep -Ei 'sendto error| alarm | down | pending | unknown | packet loss|100% loss' | tail -8 || true)"
+        if [ -n "$bad" ]; then
+            mark WARN "recent gateway quality warnings:"
+            printf '%s\n' "$bad" | sed 's/^/      /'
+        else
+            mark OK "no recent gateway quality warnings"
+        fi
+    fi
+
+    if [ -f /tmp/socx-speedtest-cache.env ]; then
+        status="$(sed -n 's/^status=//p' /tmp/socx-speedtest-cache.env | tail -1)"
+        mode="$(sed -n 's/^mode=//p' /tmp/socx-speedtest-cache.env | tail -1)"
+        down="$(sed -n 's/^download_mbps=//p' /tmp/socx-speedtest-cache.env | tail -1)"
+        up="$(sed -n 's/^upload_mbps=//p' /tmp/socx-speedtest-cache.env | tail -1)"
+        ping="$(sed -n 's/^ping_ms=//p' /tmp/socx-speedtest-cache.env | tail -1)"
+        age="$(age_file /tmp/socx-speedtest-cache.env)"
+        mark INFO "speedtest ${mode:-auto} status=${status:-unknown} ${down:-?}/${up:-?}Mbps ping=${ping:-?}ms age=${age:-?}s"
+    else
+        mark WARN "speedtest cache missing"
+    fi
+    finish
+}
+
+doctor_topology() {
+    header "topology"
+    if command -v lldpcli >/dev/null 2>&1; then
+        cfg="$(lldpcli show configuration 2>/dev/null || true)"
+        pattern="$(printf '%s\n' "$cfg" | sed -n 's/.*Interface pattern: //p' | head -1)"
+        mgmt="$(printf '%s\n' "$cfg" | sed -n 's/.*Pattern for management addresses: //p' | head -1)"
+        [ -n "$pattern" ] && mark OK "LLDP interfaces: $pattern" || mark WARN "LLDP interface pattern unavailable"
+        [ -n "$mgmt" ] && mark OK "LLDP management address: $mgmt" || mark WARN "LLDP management address unavailable"
+    else
+        mark WARN "lldpcli command missing"
+    fi
+    if command -v lldpctl >/dev/null 2>&1; then
+        neighbors="$(lldpctl 2>/dev/null || true)"
+        count="$(printf '%s\n' "$neighbors" | grep -c '^[[:space:]]*Interface:' || true)"
+        if [ "$count" -gt 0 ] 2>/dev/null; then
+            mark OK "LLDP neighbors visible: $count"
+            printf '%s\n' "$neighbors" |
+                awk '
+                  /^[[:space:]]*Interface:/ {iface=$2; gsub(/,/, "", iface)}
+                  /^[[:space:]]*SysName:/ {sys=$2}
+                  /^[[:space:]]*PortID:/ {port=$0; sub(/^[[:space:]]*PortID:[[:space:]]*/, "", port)}
+                  iface != "" && (sys != "" || port != "") {print "      " iface " -> " (sys != "" ? sys : "neighbor") " " port; iface=""; sys=""; port=""}
+                ' | head -8
+        else
+            mark WARN "LLDP is running but no neighbors are visible; enable LLDP on switch/ONT side if supported"
+        fi
+    fi
+
+    if command -v socx-hosts-audit >/dev/null 2>&1; then
+        mark INFO "host naming audit:"
+        socx-hosts-audit 2>/dev/null | sed 's/^/      /' | head -35
+    else
+        mark WARN "socx-hosts-audit command missing"
+    fi
+
+    if [ -f /tmp/socx-pi-discovery.env ]; then
+        dip="$(sed -n 's/^ip=//p' /tmp/socx-pi-discovery.env | tail -1)"
+        dstatus="$(sed -n 's/^status=//p' /tmp/socx-pi-discovery.env | tail -1)"
+        dservice="$(sed -n 's/^service=//p' /tmp/socx-pi-discovery.env | tail -1)"
+        dage="$(age_file /tmp/socx-pi-discovery.env)"
+        case "$dstatus" in
+            ok) mark OK "Pi AI node discovered: ${dip:-?} service=${dservice:-?} age=${dage:-?}s" ;;
+            found-no-llm) mark WARN "Pi candidate found: ${dip:-?} service=${dservice:-?}, but 3-LLM port is not up" ;;
+            *) mark WARN "Pi discovery status=${dstatus:-unknown} ip=${dip:-?} age=${dage:-?}s" ;;
+        esac
+    else
+        mark WARN "Pi discovery cache missing; run socx pi-discover"
+    fi
+    finish
+}
+
 domain_family() {
     d="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
     case "$d" in
@@ -496,6 +596,8 @@ doctor_all() {
 case "$cmd" in
     all|"") doctor_all ;;
     gateways|gateway|dpinger) doctor_gateways ;;
+    wan-quality|quality|wan) doctor_wan_quality ;;
+    topology|lldp|devices) doctor_topology ;;
     dnsbl|dns) doctor_dnsbl ;;
     dnsbl-review|review-dnsbl) doctor_dnsbl_review ;;
     ids|suricata) doctor_ids ;;
@@ -506,7 +608,7 @@ case "$cmd" in
     logs|pressure|cpu) doctor_logs ;;
     why-blocked|why) doctor_why "$arg" ;;
     *)
-        echo "Usage: socx-doctor [all|gateways|dnsbl|dnsbl-review|ids|tune-ids|vnstat|why-slow|pi-llm|logs|why-blocked <term>]" >&2
+        echo "Usage: socx-doctor [all|gateways|wan-quality|topology|dnsbl|dnsbl-review|ids|tune-ids|vnstat|why-slow|pi-llm|logs|why-blocked <term>]" >&2
         exit 2
         ;;
 esac

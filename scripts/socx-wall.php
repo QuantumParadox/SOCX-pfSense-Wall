@@ -686,6 +686,7 @@ function collect_live_frame(array &$state, array $hosts): array
     $ups = collect_ups_metrics($state, $now);
     $vpnStatus = collect_vpn_status($state, $now);
     $speedtest = collect_speedtest_metrics($state, $now);
+    $wanQuality = collect_wan_quality($state, $now);
     $mirandaInsight = collect_miranda_insight($now);
     update_speedtest_history($state, $speedtest, $now);
     update_metric_histories($state, $now, $wan, $lan, $pf);
@@ -699,6 +700,7 @@ function collect_live_frame(array &$state, array $hosts): array
         'ups' => $ups,
         'vpn_status' => $vpnStatus,
         'speedtest' => $speedtest,
+        'wan_quality' => $wanQuality,
         'procs' => $procs,
         'ifwan' => $ifwan,
         'iflan' => $iflan,
@@ -732,7 +734,7 @@ function collect_live_frame(array &$state, array $hosts): array
     }
     $packets = packet_radar_merge(packet_radar_from_cache(), packets_from_events($packetEvents ?: $events));
     $pulse = threat_pulse_from_events($events, $packets, $hosts, $state);
-    $wanHealth = wan_health_score($wan, $vpnStatus, $speedtest, $pulse);
+    $wanHealth = wan_health_score($wan, $vpnStatus, $speedtest, $pulse, $wanQuality);
     $wanTraffic = (float)(($wan['rx'] ?? 0) + ($wan['tx'] ?? 0));
     $trends = update_metric_trends($state, [
         'cpu' => (float)$cpu['used'],
@@ -748,6 +750,10 @@ function collect_live_frame(array &$state, array $hosts): array
         $events[] = $scanSummary;
     }
     $events[] = wan_health_event($wanHealth);
+    $qualityEvent = wan_quality_event($wanQuality);
+    if ($qualityEvent !== null) {
+        $events[] = $qualityEvent;
+    }
     $speedHistoryEvent = speedtest_history_event(speedtest_history_summary($state['speedtest_history'] ?? [], $now));
     if ($speedHistoryEvent !== null) {
         $events[] = $speedHistoryEvent;
@@ -3518,7 +3524,7 @@ function speedtest_history_summary(array $history, float $now): array
     return ['count' => $count, 'avg_down' => $avgDown, 'avg_up' => $avgUp, 'avg_ping' => $avgPing, 'trend' => $trend];
 }
 
-function wan_health_score(array $wan, array $vpn, array $speedtest, array $pulse): array
+function wan_health_score(array $wan, array $vpn, array $speedtest, array $pulse, array $quality = []): array
 {
     $score = 100;
     $reasons = [];
@@ -3541,6 +3547,14 @@ function wan_health_score(array $wan, array $vpn, array $speedtest, array $pulse
     } elseif (empty($speedtest['fresh'])) {
         $score -= 6;
         $reasons[] = 'speedtest stale';
+    }
+    $qualityScore = isset($quality['score']) && is_numeric($quality['score']) ? (int)$quality['score'] : 100;
+    if ($qualityScore < 60) {
+        $score -= 18;
+        $reasons[] = 'gateway degraded';
+    } elseif ($qualityScore < 85) {
+        $score -= 8;
+        $reasons[] = 'gateway watch';
     }
     if ((int)($pulse['fw_drops_min'] ?? 0) > 60) {
         $score -= 8;
@@ -3692,6 +3706,230 @@ function wan_health_event(array $health): array
         $score,
         $label,
         $reason !== '' ? ' | ' . $reason : ''));
+}
+
+function collect_wan_quality(array &$state, float $now): array
+{
+    $ttl = max(2.0, min(15.0, (float)(getenv('SOCX_WAN_QUALITY_TTL_SECONDS') ?: 5.0)));
+    $cached = $state['wan_quality_cache'] ?? null;
+    if (is_array($cached) && isset($cached['checked_at']) && ($now - (float)$cached['checked_at']) < $ttl) {
+        $cached['age_seconds'] = max(0.0, $now - (float)$cached['checked_at']);
+        $cached['from_cache'] = true;
+        return $cached;
+    }
+
+    $rows = collect_wan_gateway_rows();
+    $best = select_primary_wan_gateway($rows);
+    if ($best === null) {
+        $quality = [
+            'status' => 'unknown',
+            'score' => 72,
+            'label' => 'unknown',
+            'name' => '',
+            'latency_ms' => gateway_latency_ms(),
+            'loss_pct' => null,
+            'reason' => 'gateway status unavailable',
+            'checked_at' => $now,
+            'age_seconds' => 0.0,
+            'from_cache' => false,
+        ];
+        $state['wan_quality_cache'] = $quality;
+        return $quality;
+    }
+
+    $latency = gateway_latency_from_row($best);
+    $loss = gateway_loss_from_row($best);
+    $status = strtolower((string)($best['status'] ?? 'unknown'));
+    $score = 100;
+    $reasons = [];
+    if (preg_match('/down|offline|alarm|loss|unknown|pending/i', $status)) {
+        $score -= 45;
+        $reasons[] = $status;
+    }
+    if ($loss !== null) {
+        if ($loss >= 10.0) {
+            $score -= 35;
+            $reasons[] = sprintf('loss %.0f%%', $loss);
+        } elseif ($loss >= 1.0) {
+            $score -= 15;
+            $reasons[] = sprintf('loss %.1f%%', $loss);
+        }
+    }
+    if ($latency !== null) {
+        if ($latency >= 100.0) {
+            $score -= 25;
+            $reasons[] = sprintf('lat %.0fms', $latency);
+        } elseif ($latency >= 40.0) {
+            $score -= 10;
+            $reasons[] = sprintf('lat %.0fms', $latency);
+        }
+    }
+    $score = max(0, min(100, $score));
+    $quality = [
+        'status' => $status !== '' ? $status : 'unknown',
+        'score' => $score,
+        'label' => $score >= 90 ? 'stable' : ($score >= 70 ? 'watch' : 'degraded'),
+        'name' => (string)($best['name'] ?? 'WAN'),
+        'latency_ms' => $latency,
+        'loss_pct' => $loss,
+        'reason' => $reasons ? implode(', ', array_slice($reasons, 0, 2)) : 'gateway clean',
+        'checked_at' => $now,
+        'age_seconds' => 0.0,
+        'from_cache' => false,
+        'raw' => (string)($best['raw'] ?? ''),
+    ];
+    $state['wan_quality_cache'] = $quality;
+    return $quality;
+}
+
+function wan_quality_event(array $quality): ?array
+{
+    if (!$quality) {
+        return null;
+    }
+    $score = isset($quality['score']) && is_numeric($quality['score']) ? (int)$quality['score'] : 0;
+    $severity = $score >= 90 ? 'INFO' : ($score >= 70 ? 'LOW' : 'WARN');
+    $lat = isset($quality['latency_ms']) && is_numeric($quality['latency_ms'])
+        ? ((float)$quality['latency_ms'] < 10.0 ? sprintf('%.1fms', (float)$quality['latency_ms']) : sprintf('%.0fms', (float)$quality['latency_ms']))
+        : '?ms';
+    $loss = isset($quality['loss_pct']) && is_numeric($quality['loss_pct'])
+        ? sprintf('%s%%', rtrim(rtrim(sprintf('%.1f', (float)$quality['loss_pct']), '0'), '.'))
+        : '?%';
+    $name = truncate_text((string)($quality['name'] ?? 'WAN'), 18);
+    return soc_event('WAN', $severity, sprintf('WAN quality %s %d%% | %s loss %s via %s',
+        (string)($quality['label'] ?? 'unknown'),
+        $score,
+        $lat,
+        $loss,
+        $name));
+}
+
+function collect_wan_gateway_rows(): array
+{
+    $rows = [];
+    foreach ([
+        '/usr/local/sbin/configctl interface gatewaystatus',
+        'configctl interface gatewaystatus',
+        '/usr/local/sbin/pfSsh.php playback gatewaystatus',
+    ] as $cmd) {
+        $out = trim(run_cmd($cmd . ' 2>/dev/null'));
+        if ($out === '') {
+            continue;
+        }
+        foreach (parse_wan_gateway_status_output($out) as $name => $row) {
+            $rows[$name] = $row;
+        }
+        if ($rows) {
+            break;
+        }
+    }
+    foreach (glob('/var/run/dpinger*.status') ?: [] as $file) {
+        $text = is_readable($file) ? trim((string)@file_get_contents($file)) : '';
+        if ($text === '') {
+            continue;
+        }
+        $name = vpn_gateway_name_from_dpinger_file($file);
+        if ($name === '') {
+            $name = basename($file);
+        }
+        $key = strtoupper(preg_replace('/[^A-Z0-9_]/i', '', $name) ?? $name);
+        $row = gateway_row_from_dpinger_status($name, $text);
+        $row['latency_ms'] = gateway_latency_from_text($text);
+        $rows[$key] = $row;
+    }
+    return $rows;
+}
+
+function parse_wan_gateway_status_output(string $raw): array
+{
+    $rows = [];
+    foreach (explode("\n", $raw) as $line) {
+        $line = trim(strip_ansi($line));
+        if ($line === '' || preg_match('/^(Name|=|-)/i', $line)) {
+            continue;
+        }
+        $parts = preg_split('/\s+/', $line) ?: [];
+        if (count($parts) < 2) {
+            continue;
+        }
+        $name = (string)$parts[0];
+        if ($name === '') {
+            continue;
+        }
+        $loss = '';
+        $status = '';
+        foreach ($parts as $idx => $part) {
+            if (preg_match('/^\d+(?:\.\d+)?%$/', $part)) {
+                $loss = $part;
+                $status = (string)($parts[$idx + 1] ?? '');
+                break;
+            }
+        }
+        if ($status === '') {
+            $status = (string)end($parts);
+        }
+        $key = strtoupper(preg_replace('/[^A-Z0-9_]/i', '', $name) ?? $name);
+        $rows[$key] = [
+            'name' => $name,
+            'status' => strtolower($status),
+            'loss' => $loss,
+            'latency_ms' => gateway_latency_from_text($line),
+            'raw' => truncate_text($line, 160),
+        ];
+    }
+    return $rows;
+}
+
+function select_primary_wan_gateway(array $rows): ?array
+{
+    if (!$rows) {
+        return null;
+    }
+    foreach ($rows as $key => $row) {
+        $hay = strtoupper((string)$key . ' ' . (string)($row['name'] ?? ''));
+        if (str_contains($hay, 'WAN')) {
+            return $row;
+        }
+    }
+    return reset($rows) ?: null;
+}
+
+function gateway_loss_from_row(array $row): ?float
+{
+    $loss = (string)($row['loss'] ?? '');
+    if (preg_match('/([0-9.]+)/', $loss, $m)) {
+        return (float)$m[1];
+    }
+    $raw = (string)($row['raw'] ?? '');
+    if (preg_match('/([0-9.]+)\s*%/', $raw, $m)) {
+        return (float)$m[1];
+    }
+    return null;
+}
+
+function gateway_latency_from_row(array $row): ?float
+{
+    if (isset($row['latency_ms']) && is_numeric($row['latency_ms'])) {
+        return (float)$row['latency_ms'];
+    }
+    return gateway_latency_from_text((string)($row['raw'] ?? ''));
+}
+
+function gateway_latency_from_text(string $text): ?float
+{
+    if (preg_match('/([0-9]+(?:\.[0-9]+)?)\s*ms/i', $text, $m)) {
+        return (float)$m[1];
+    }
+    $parts = preg_split('/\s+/', trim($text)) ?: [];
+    foreach ($parts as $part) {
+        if (preg_match('/^[0-9]+(?:\.[0-9]+)?$/', $part)) {
+            $value = (float)$part;
+            if ($value > 0 && $value < 10000) {
+                return $value;
+            }
+        }
+    }
+    return null;
 }
 
 function speedtest_age_text(array $speedtest): string
@@ -5186,21 +5424,70 @@ function lldp_status_event(): ?array
     if (!is_executable('/usr/local/sbin/lldpctl') && trim(run_cmd('command -v lldpctl 2>/dev/null')) === '') {
         return null;
     }
-    $out = trim(run_cmd('lldpctl 2>/dev/null | /usr/bin/head -80'));
-    if ($out === '') {
-        return soc_event('IFACE', 'LOW', 'LLDP enabled | waiting for switch neighbor advertisements');
+    $config = trim(run_cmd('/usr/local/sbin/lldpcli show configuration 2>/dev/null | /usr/bin/head -80'));
+    $ifacePattern = '';
+    if ($config !== '' && preg_match('/Interface pattern:\s*(.+)$/mi', $config, $m)) {
+        $ifacePattern = trim($m[1]);
     }
-    $neighbors = [];
+    $out = trim(run_cmd('/usr/local/sbin/lldpctl 2>/dev/null | /usr/bin/head -160'));
+    if ($out === '') {
+        return soc_event('IFACE', 'LOW', sprintf('LLDP enabled%s | waiting for switch advertisements',
+            $ifacePattern !== '' ? ' on ' . truncate_text($ifacePattern, 22) : ''));
+    }
+    $neighbors = lldp_neighbor_summaries($out);
+    if (!$neighbors) {
+        return soc_event('IFACE', 'LOW', sprintf('LLDP enabled%s | no neighbors visible yet',
+            $ifacePattern !== '' ? ' on ' . truncate_text($ifacePattern, 22) : ''));
+    }
+    return soc_event('IFACE', 'INFO', sprintf('LLDP topology %d neighbor%s | %s',
+        count($neighbors),
+        count($neighbors) === 1 ? '' : 's',
+        implode(' | ', array_slice($neighbors, 0, 2))));
+}
+
+function lldp_neighbor_summaries(string $out): array
+{
+    $rows = [];
+    $current = ['iface' => '', 'sys' => '', 'port' => '', 'descr' => ''];
     foreach (preg_split('/\R/', $out) ?: [] as $line) {
         if (preg_match('/^\s*Interface:\s*([^,]+),/', $line, $m)) {
-            $neighbors[] = trim($m[1]);
+            if ($current['iface'] !== '') {
+                $rows[] = lldp_neighbor_text($current);
+            }
+            $current = ['iface' => trim($m[1]), 'sys' => '', 'port' => '', 'descr' => ''];
+            continue;
+        }
+        if (preg_match('/^\s*SysName:\s*(.+)$/i', $line, $m)) {
+            $current['sys'] = trim($m[1]);
+            continue;
+        }
+        if (preg_match('/^\s*PortID:\s*(.+)$/i', $line, $m)) {
+            $current['port'] = trim($m[1]);
+            continue;
+        }
+        if (preg_match('/^\s*PortDescr:\s*(.+)$/i', $line, $m)) {
+            $current['descr'] = trim($m[1]);
         }
     }
-    $count = count(array_unique($neighbors));
-    if ($count <= 0) {
-        return soc_event('IFACE', 'LOW', 'LLDP enabled | no neighbors visible yet');
+    if ($current['iface'] !== '') {
+        $rows[] = lldp_neighbor_text($current);
     }
-    return soc_event('IFACE', 'INFO', sprintf('LLDP neighbors %d | switch topology visible', $count));
+    $rows = array_values(array_filter(array_unique($rows)));
+    return array_slice($rows, 0, 6);
+}
+
+function lldp_neighbor_text(array $row): string
+{
+    $iface = truncate_text((string)($row['iface'] ?? 'if'), 8);
+    $sys = trim((string)($row['sys'] ?? ''));
+    $port = trim((string)($row['port'] ?? ''));
+    $descr = trim((string)($row['descr'] ?? ''));
+    $right = $sys !== '' ? $sys : ($descr !== '' ? $descr : ($port !== '' ? $port : 'neighbor'));
+    if ($port !== '' && $sys !== '' && !str_contains($right, $port)) {
+        $right .= '/' . $port;
+    }
+    $right = preg_replace('/\s+/', ' ', $right) ?? $right;
+    return truncate_text($iface . '->' . $right, 34);
 }
 
 function service_watchdog_event(): ?array
@@ -5645,8 +5932,9 @@ function miranda_insight_event(array $insight): array
 function collect_pi_llm_insight(float $now): array
 {
     $file = getenv('SOCX_PI_LLM_ANALYSIS_CACHE') ?: '/tmp/socx-pi-llm-analysis.env';
+    $discovery = collect_pi_discovery_insight($now);
     if (!is_readable($file)) {
-        return ['available' => false, 'reason' => 'no Pi 3-LLM cache'];
+        return ['available' => !empty($discovery['available']), 'reason' => 'no Pi 3-LLM cache', 'discovery' => $discovery];
     }
     $data = parse_env_file($file);
     $updated = isset($data['updated']) && is_numeric($data['updated']) ? (float)$data['updated'] : 0.0;
@@ -5664,6 +5952,31 @@ function collect_pi_llm_insight(float $now): array
         'age' => $ageSeconds === null ? '' : format_age_seconds($ageSeconds),
         'confidence' => (string)($data['confidence'] ?? ''),
         'roles' => (string)($data['roles'] ?? ''),
+        'discovery' => $discovery,
+    ];
+}
+
+function collect_pi_discovery_insight(float $now): array
+{
+    $file = getenv('SOCX_PI_DISCOVERY_CACHE') ?: '/tmp/socx-pi-discovery.env';
+    if (!is_readable($file)) {
+        return ['available' => false, 'status' => 'missing', 'reason' => 'Pi discovery cache missing'];
+    }
+    $data = parse_env_file($file);
+    $updated = isset($data['updated']) && is_numeric($data['updated']) ? (float)$data['updated'] : (float)@filemtime($file);
+    $age = $updated > 0 ? max(0.0, $now - $updated) : null;
+    $maxAge = (float)(getenv('SOCX_PI_DISCOVERY_MAX_AGE') ?: 1800);
+    return [
+        'available' => true,
+        'fresh' => $age === null || $age <= $maxAge,
+        'status' => strtolower((string)($data['status'] ?? 'unknown')),
+        'ip' => (string)($data['ip'] ?? ''),
+        'service' => (string)($data['service'] ?? ''),
+        'source' => (string)($data['source'] ?? ''),
+        'url' => (string)($data['pi_llm_url'] ?? ''),
+        'age_seconds' => $age,
+        'age' => $age === null ? '' : format_age_seconds($age),
+        'reason' => (string)($data['note'] ?? ''),
     ];
 }
 
@@ -5677,11 +5990,25 @@ function pi_llm_insight_event(array $insight): array
     $age = trim((string)($insight['age'] ?? ''));
     $roles = trim((string)($insight['roles'] ?? ''));
     $conf = trim((string)($insight['confidence'] ?? ''));
+    $discovery = is_array($insight['discovery'] ?? null) ? $insight['discovery'] : [];
+    $where = '';
+    if (!empty($discovery['available'])) {
+        $ip = trim((string)($discovery['ip'] ?? ''));
+        $svc = trim((string)($discovery['service'] ?? ''));
+        $dAge = trim((string)($discovery['age'] ?? ''));
+        $where = $ip !== '' ? sprintf(' @%s%s%s', $ip, $svc !== '' ? '/' . $svc : '', $dAge !== '' ? ' seen ' . $dAge : '') : '';
+        if (empty($discovery['fresh'])) {
+            $severity = 'WARN';
+        }
+    }
     $msg = sprintf('PI 3LLM %s%s%s | %s',
         !empty($insight['fresh']) ? 'analysis' : 'analysis stale',
         $roles !== '' ? ' roles ' . $roles : '',
-        $age !== '' ? ' age ' . $age : '',
+        $age !== '' ? ' age ' . $age : $where,
         $reason !== '' ? $reason : 'SOCX analyzed');
+    if ($where !== '' && $age !== '') {
+        $msg .= $where;
+    }
     return soc_event('AI', $severity, $msg, ['confidence' => $conf]);
 }
 
