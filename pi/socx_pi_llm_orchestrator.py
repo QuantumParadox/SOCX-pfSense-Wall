@@ -604,6 +604,7 @@ def compact_payload(payload: dict[str, Any]) -> str:
             "unknown_services": str(payload.get("unknown_services", ""))[:500],
             "flow_lines": str(payload.get("flow_lines", ""))[:1800],
             "incident_mode": str(payload.get("incident_mode", ""))[:1400],
+            "pi_nodes": str(payload.get("pi_nodes", ""))[:1200],
             "top_talkers": str(payload.get("top_talkers", ""))[:700],
         },
         separators=(",", ":"),

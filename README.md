@@ -143,6 +143,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-miranda-bridge` - exports a compact JSON summary for MIRANDA or another local-AI/SOC collector.
 - `scripts/socx-pi-llm-bridge` - posts the compact SOCX summary to a Raspberry Pi 5 AI HAT+ 3-LLM orchestration endpoint and caches the verdict.
 - `scripts/socx-pi-llm-cron` - installs/removes the scheduled Pi 3-LLM export.
+- `scripts/socx-pi-nodes` - discovers Pi-class LAN nodes such as the Pi 5 AI endpoint and Pi 4 node-exporter telemetry node.
 - `scripts/socx-ai-explain` - operator command that refreshes Pi/MIRANDA analysis and prints a plain-English summary.
 - `pi/socx_pi_llm_orchestrator.py` - optional Raspberry Pi FastAPI receiver that fans SOCX evidence to three local model roles.
 - `scripts/iftopx`, `scripts/tcpdumpx`, `scripts/socx` - convenience launchers.

@@ -247,6 +247,7 @@ class SocxCollector:
         processes = self.collect_processes()
         command_center = self.collect_command_center()
         incident = self.collect_incident_light(command_center)
+        pi_nodes = self.collect_pi_nodes()
 
         packets: list[dict[str, Any]] = []
         if time.time() - self.last_event_read > 0.8:
@@ -290,6 +291,7 @@ class SocxCollector:
             "processes": processes,
             "command_center": command_center,
             "incident": incident,
+            "pi_nodes": pi_nodes,
             "flows": flows,
             "packets": packets,
             "events": list(self.events.values())[-self.event_max :],
@@ -491,6 +493,30 @@ class SocxCollector:
             "history": history_rows,
             "actions": actions[:5],
         }
+
+    def collect_pi_nodes(self) -> dict[str, Any]:
+        path = Path(os.environ.get("SOCX_PI_NODES_JSON", "/tmp/socx-pi-nodes.json"))
+        data: dict[str, Any] = {"updated": 0, "count": 0, "nodes": []}
+        try:
+            parsed = json.loads(path.read_text(errors="ignore"))
+            if isinstance(parsed, dict):
+                data.update(parsed)
+        except Exception:
+            discovery = parse_env_file(Path("/tmp/socx-pi-discovery.env"))
+            if discovery.get("ip"):
+                data["count"] = 1
+                data["nodes"] = [{
+                    "ip": discovery.get("ip", ""),
+                    "name": "RaspberryPi5",
+                    "model": "Raspberry Pi",
+                    "role": "pi-ai",
+                    "service": discovery.get("service", ""),
+                    "ports": "8095",
+                    "detail": discovery.get("note", ""),
+                }]
+        updated = float(data.get("updated") or 0)
+        data["age_sec"] = int(max(0, time.time() - updated)) if updated else None
+        return data
 
     def collect_incident_light(self, center: dict[str, Any] | None = None) -> dict[str, Any]:
         incident = self.collect_incident(center=center, sample_limit=280)
@@ -944,6 +970,15 @@ class SocxCollector:
                 "history_trend": {"label": "stable", "score_avg": 82, "direct_avg": 3223, "vpn_avg": 740},
                 "history": [],
                 "actions": ["socx status", "socx timeline 60", "socx repair", "socx explain-screen"],
+            },
+            "pi_nodes": {
+                "updated": int(time.time()),
+                "count": 2,
+                "age_sec": 0,
+                "nodes": [
+                    {"ip": "192.168.1.121", "name": "RaspberryPi5", "model": "Raspberry Pi 5", "role": "pi-5-ai", "service": "socx-3llm", "ports": "22,8095"},
+                    {"ip": "192.168.1.180", "name": "ColumbiaPi4", "model": "Raspberry Pi 4", "role": "pi-4-telemetry", "service": "node-exporter", "ports": "22,9100"},
+                ],
             },
             "incident": {
                 "verdict": "WATCH",

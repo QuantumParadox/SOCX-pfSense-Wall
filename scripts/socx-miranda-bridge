@@ -17,6 +17,7 @@ unknown="$(tail -20 /var/db/socx_unknown_services.log 2>/dev/null | sed 's/"/\\"
 flow_lines="$(pfctl -ss 2>/dev/null | tail -n +2 | head -12 | sed 's/"/\\"/g' | tr '\n' ';' | cut -c1-1800)"
 arp_lines="$(arp -an 2>/dev/null | head -32 | sed 's/"/\\"/g' | tr '\n' ';' | cut -c1-2400)"
 incident_mode="$(socx incident-mode 120 2>/dev/null | sed 's/"/\\"/g' | tr '\n' ';' | cut -c1-2400)"
+pi_nodes="$(socx pi-nodes 2>/dev/null | sed 's/"/\\"/g' | tr '\n' ';' | cut -c1-2000)"
 top_talkers="$(pfctl -ss 2>/dev/null | awk '
   /192\.168\.1\./ {
     for (i=1; i<=NF; i++) {
@@ -47,6 +48,7 @@ cat > "$OUT" <<EOF
   "flow_lines": "$flow_lines",
   "arp_lines": "$arp_lines",
   "incident_mode": "$incident_mode",
+  "pi_nodes": "$pi_nodes",
   "top_talkers": "$top_talkers",
   "recommended_prompt": "Summarize SOCX network health, likely benign noise vs items worth checking, and evidence-preserving next steps."
 }

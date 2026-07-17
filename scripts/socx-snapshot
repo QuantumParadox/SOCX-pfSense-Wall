@@ -30,12 +30,14 @@ run_save speedtest-profiles socx-doctor speedtest-profiles
 run_save topology socx-doctor topology
 run_save zeek-health socx-doctor zeek
 run_save unknown-services socx services
+run_save pi-nodes socx pi-nodes
 
 copy_if /tmp/socx-autopilot.env
 copy_if /tmp/socx-speedtest-direct.env
 copy_if /tmp/socx-speedtest-vpn.env
 copy_if /tmp/socx-ups-cache.env
 copy_if /tmp/socx-pi-discovery.env
+copy_if /tmp/socx-pi-nodes.json
 copy_if /tmp/socx-pi-llm-analysis.env
 copy_if /tmp/socx-miranda-analysis.env
 copy_if /tmp/socx-repair-report.txt

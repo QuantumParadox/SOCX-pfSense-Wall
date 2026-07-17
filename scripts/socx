@@ -89,6 +89,10 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-pi-discover "$@"
         ;;
+    pi-nodes|pis|discover-pis)
+        shift
+        exec /usr/local/bin/socx-pi-nodes "$@"
+        ;;
     explain-now|ai-explain|explain-ai)
         shift
         exec /usr/local/bin/socx-ai-explain "$@"

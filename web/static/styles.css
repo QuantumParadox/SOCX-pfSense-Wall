@@ -438,8 +438,22 @@ body {
 }
 
 .command-table {
-  height: calc(100% - 118px);
+  height: calc(100% - 174px);
   gap: 6px;
+}
+
+.pi-node-table {
+  height: 52px;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(52, 215, 242, .18);
+  gap: 3px;
+}
+
+.pi-node-table .row {
+  min-height: 22px;
+  grid-template-columns: 74px minmax(0, 1fr);
+  font-size: clamp(10px, .75vw, 13px);
 }
 
 .commander-buttons {

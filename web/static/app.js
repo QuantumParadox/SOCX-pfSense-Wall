@@ -182,6 +182,20 @@ function renderIncident(incident = {}) {
   table.innerHTML = lines.slice(0, 11).join("");
 }
 
+function renderPiNodes(piNodes = {}) {
+  const root = $("pi-nodes");
+  if (!root) return;
+  const nodes = Array.isArray(piNodes.nodes) ? piNodes.nodes : [];
+  if (!nodes.length) {
+    root.innerHTML = row(["pi", "no Pi nodes discovered yet"], "command-row");
+    return;
+  }
+  root.innerHTML = nodes.slice(0, 4).map((node) => row([
+    node.role || "pi",
+    `${node.name || node.ip} ${node.ip || ""} ${node.service || ""} ${node.ports ? `:${node.ports}` : ""}`,
+  ], "command-row")).join("");
+}
+
 function renderFlows(flows = []) {
   const root = $("flows");
   if (!root) return;
@@ -288,6 +302,7 @@ function render(state) {
 
   setText("cmd-note", `${safe(state.command_center?.mode, "autopilot")} ${safe(state.command_center?.score, "--")}`);
   renderCommandCenter(state.command_center || {});
+  renderPiNodes(state.pi_nodes || {});
   renderIncident(state.incident || {});
   renderFlows(state.flows || []);
   renderPackets(state.packets || []);

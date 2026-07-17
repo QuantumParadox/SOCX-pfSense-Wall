@@ -1,0 +1,136 @@
+#!/bin/sh
+# Discover Raspberry Pi nodes and lightweight telemetry endpoints on the LAN.
+
+OUT="${SOCX_PI_NODES_JSON:-/tmp/socx-pi-nodes.json}"
+TIMEOUT="${SOCX_PI_NODES_TIMEOUT:-1}"
+FALLBACK_IPS="${SOCX_PI_NODES_FALLBACK_IPS:-192.168.1.121 192.168.1.180}"
+
+probe_tcp() {
+    host="$1"
+    port="$2"
+    command -v nc >/dev/null 2>&1 || return 1
+    nc -z -w "$TIMEOUT" "$host" "$port" >/dev/null 2>&1
+}
+
+probe_http() {
+    url="$1"
+    command -v curl >/dev/null 2>&1 || return 1
+    curl -fsS --max-time "$TIMEOUT" "$url" >/dev/null 2>&1
+}
+
+json_escape() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g;s/"/\\"/g;s/[[:cntrl:]]//g'
+}
+
+tmp="/tmp/socx-pi-nodes.$$"
+: > "$tmp"
+
+arp -an 2>/dev/null | awk '
+  tolower($0) ~ /(b8:27:eb|dc:a6:32|e4:5f:01|d8:3a:dd|2c:cf:67)/ {
+    ip=$2; gsub(/[()]/, "", ip); mac=tolower($4); print ip "|" mac "|arp"
+  }
+' >> "$tmp" || true
+
+for ip in $FALLBACK_IPS; do
+    if ! grep -q "^$ip|" "$tmp" 2>/dev/null; then
+        mac="$(arp -an 2>/dev/null | awk -v ip="($ip)" '$2 == ip {print tolower($4); exit}')"
+        echo "$ip|${mac:-unknown}|fallback" >> "$tmp"
+    fi
+done
+
+seen="/tmp/socx-pi-nodes-seen.$$"
+: > "$seen"
+nodes="/tmp/socx-pi-nodes-list.$$"
+: > "$nodes"
+
+while IFS='|' read -r ip mac source; do
+    [ -n "$ip" ] || continue
+    grep -qx "$ip" "$seen" 2>/dev/null && continue
+    echo "$ip" >> "$seen"
+
+    ports=""
+    role="pi-candidate"
+    service="ssh"
+    status="offline"
+    name=""
+    model=""
+    detail=""
+
+    if probe_tcp "$ip" 22; then
+        status="online"
+        ports="${ports}22,"
+    fi
+    if probe_http "http://$ip:8095/health"; then
+        status="online"
+        ports="${ports}8095,"
+        role="pi-5-ai"
+        service="socx-3llm"
+        detail="SOCX Pi 3-LLM dashboard"
+    elif probe_tcp "$ip" 8095; then
+        status="online"
+        ports="${ports}8095,"
+        role="pi-ai"
+        service="socx-3llm-tcp"
+    fi
+    if probe_tcp "$ip" 11434; then
+        status="online"
+        ports="${ports}11434,"
+        [ "$role" = "pi-candidate" ] && role="pi-llm"
+        [ "$service" = "ssh" ] && service="ollama"
+    fi
+    if probe_http "http://$ip:9100/metrics"; then
+        status="online"
+        ports="${ports}9100,"
+        metrics="$(curl -fsS --max-time "$TIMEOUT" "http://$ip:9100/metrics" 2>/dev/null | head -400)"
+        uname="$(printf '%s\n' "$metrics" | sed -n 's/^node_uname_info{\([^}]*\)}.*/\1/p' | head -1)"
+        name="$(printf '%s' "$uname" | sed -n 's/.*nodename="\([^"]*\)".*/\1/p')"
+        case "$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')" in
+            *pi4*|*pi-4*|*raspberry*pi*4*) model="Raspberry Pi 4" ;;
+        esac
+        [ -n "$model" ] || model="Raspberry Pi telemetry node"
+        [ "$role" = "pi-candidate" ] && role="pi-4-telemetry"
+        [ "$service" = "ssh" ] && service="node-exporter"
+        [ -n "$detail" ] || detail="node-exporter telemetry"
+    fi
+
+    [ "$status" = "online" ] || continue
+    ports="$(printf '%s' "$ports" | sed 's/,$//')"
+    [ -n "$name" ] || {
+        case "$ip" in
+            192.168.1.121) name="RaspberryPi5" ;;
+            192.168.1.180) name="ColumbiaPi4" ;;
+            *) name="RaspberryPi" ;;
+        esac
+    }
+    [ -n "$model" ] || {
+        case "$mac" in
+            2c:cf:67:*) model="Raspberry Pi 5-class" ;;
+            e4:5f:01:*) model="Raspberry Pi 4-class" ;;
+            *) model="Raspberry Pi" ;;
+        esac
+    }
+    [ "$ip" = "192.168.1.180" ] && model="Raspberry Pi 4 Model B"
+    printf '%s|%s|%s|%s|%s|%s|%s|%s\n' "$ip" "$mac" "$name" "$model" "$role" "$service" "$ports" "$detail" >> "$nodes"
+done < "$tmp"
+
+count="$(wc -l < "$nodes" | awk '{print $1}')"
+{
+    printf '{\n'
+    printf '  "updated": %s,\n' "$(date +%s)"
+    printf '  "count": %s,\n' "${count:-0}"
+    printf '  "nodes": [\n'
+    idx=0
+    while IFS='|' read -r ip mac name model role service ports detail; do
+        idx=$((idx + 1))
+        [ "$idx" -gt 1 ] && printf ',\n'
+        printf '    {"ip":"%s","mac":"%s","name":"%s","model":"%s","role":"%s","service":"%s","ports":"%s","detail":"%s"}' \
+            "$(json_escape "$ip")" "$(json_escape "$mac")" "$(json_escape "$name")" "$(json_escape "$model")" \
+            "$(json_escape "$role")" "$(json_escape "$service")" "$(json_escape "$ports")" "$(json_escape "$detail")"
+    done < "$nodes"
+    printf '\n  ]\n}\n'
+} > "$OUT"
+
+rm -f "$tmp" "$seen" "$nodes"
+
+echo "SOCX Pi nodes written: $OUT"
+sed -n '1,120p' "$OUT"
