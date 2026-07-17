@@ -63,6 +63,9 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds an incident capture command that saves pf states, gateway/VPN state, recent logs, Packet Radar, checksums, and a short pcap into `/root/socx-incidents/`.
 - Adds `socx-incident`, a short operator command that runs the capture and prints the newest bundle path plus a quick manifest. `socx incident quick` captures the same core evidence with a shorter packet sample.
 - Adds `socx-report`, `socx-report-cron`, `socx-hosts-audit`, `socx-explain`, and `socx-miranda-bridge` for scheduled reports, device naming, label explanations, and MIRANDA/local-AI export.
+- Adds `socx history`, a compact JSONL trend recorder for Autopilot, UPS, and DIRECT/VPN Speedtest path snapshots.
+- Adds `socx notify`, an optional webhook hook for operator alerts when `SOCX_NOTIFY_WEBHOOK_URL` is configured.
+- Adds a browser Command Center card and `/api/command-center` endpoint for Autopilot verdict, Speedtest path truth, history count, and recommended SOCX commands.
 - Can surface LLDP and Service Watchdog health in the rotating Event Feed when those pfSense packages are configured.
 - Adds WAN quality events from gateway/dpinger latency, loss, and status, separate from bandwidth-only Speedtest results.
 - Adds compact `CHANGE` events when top talker, WAN quality, Speedtest source/status, Pi AI-node state, or unknown-device count changes.
@@ -112,6 +115,8 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-timeline` - compact incident timeline from recent VPN, Speedtest, firewall, DNSBL, IDS, and AI signals.
 - `scripts/socx-repair` - safe collector repair for SOCX wall helpers, vnstatd, LLDP, and Pi discovery without changing firewall policy.
 - `scripts/socx-explain-screen` - plain-English explanation of the current wall state and Autopilot mode.
+- `scripts/socx-history` - appends compact SOCX trend samples to `/var/db/socx_history.jsonl` and tails recent history.
+- `scripts/socx-notify` - optional webhook notification hook for manual or future automated alerts.
 - `scripts/socx-doctor` - live health check for wall, logs, VPN, Speedtest, UPS, reports, MIRANDA ingest, vnstatd, unknown-service noise, DNSBL review, IDS tuning, and slow-network triage.
 - `scripts/socx-miranda-bridge` - exports a compact JSON summary for MIRANDA or another local-AI/SOC collector.
 - `scripts/socx-pi-llm-bridge` - posts the compact SOCX summary to a Raspberry Pi 5 AI HAT+ 3-LLM orchestration endpoint and caches the verdict.

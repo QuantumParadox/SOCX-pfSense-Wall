@@ -430,8 +430,45 @@ body {
   white-space: nowrap;
 }
 
-.process-table .row {
-  grid-template-columns: 60px 92px 74px 72px minmax(0, 1fr);
+.command-table {
+  gap: 6px;
+}
+
+.command-verdict {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 42px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .045);
+  border: 1px solid rgba(52, 215, 242, .18);
+  font-size: clamp(18px, 1.4vw, 26px);
+  font-weight: 950;
+}
+
+.command-verdict b {
+  color: var(--cyan);
+}
+
+.command-summary {
+  min-height: 42px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--cyan);
+  color: var(--text);
+  background: rgba(52, 215, 242, .055);
+  font-size: clamp(12px, .9vw, 16px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.command-table .row {
+  grid-template-columns: 68px minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.command-table .action span:nth-child(2) {
+  color: var(--green);
+  font-weight: 900;
 }
 
 .flows-table .row {

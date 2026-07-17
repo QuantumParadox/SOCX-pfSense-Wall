@@ -14,7 +14,10 @@ case "${1:-}" in
         ;;
     autopilot|auto)
         shift
-        exec /usr/local/bin/socx-doctor autopilot "$@"
+        /usr/local/bin/socx-doctor autopilot "$@"
+        rc=$?
+        /usr/local/bin/socx-history append >/dev/null 2>&1 || true
+        exit "$rc"
         ;;
     menu|command|commands)
         shift
@@ -23,6 +26,14 @@ case "${1:-}" in
     timeline)
         shift
         exec /usr/local/bin/socx-timeline "$@"
+        ;;
+    history)
+        shift
+        exec /usr/local/bin/socx-history "$@"
+        ;;
+    notify)
+        shift
+        exec /usr/local/bin/socx-notify "$@"
         ;;
     repair|heal)
         shift

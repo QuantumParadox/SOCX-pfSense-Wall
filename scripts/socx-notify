@@ -1,0 +1,23 @@
+#!/bin/sh
+# Optional SOCX notification hook. Posts only when configured.
+
+WEBHOOK="${SOCX_NOTIFY_WEBHOOK_URL:-}"
+TITLE="${1:-SOCX}"
+MESSAGE="${2:-$(cat 2>/dev/null)}"
+MODE="${SOCX_NOTIFY_MODE:-manual}"
+
+if [ -z "$WEBHOOK" ]; then
+    echo "notification skipped: SOCX_NOTIFY_WEBHOOK_URL not set"
+    exit 0
+fi
+
+payload=$(printf '{"text":"%s: %s"}' "$(printf '%s' "$TITLE" | sed 's/"/\\"/g')" "$(printf '%s' "$MESSAGE" | sed 's/"/\\"/g')")
+if command -v fetch >/dev/null 2>&1; then
+    printf '%s' "$payload" | fetch -q -o - --method POST --header 'Content-Type: application/json' --body-file - "$WEBHOOK" >/dev/null
+elif command -v curl >/dev/null 2>&1; then
+    curl -fsS -H 'Content-Type: application/json' -d "$payload" "$WEBHOOK" >/dev/null
+else
+    echo "notification failed: fetch/curl missing" >&2
+    exit 1
+fi
+echo "notification sent mode=$MODE"

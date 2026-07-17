@@ -115,6 +115,34 @@ function renderProcesses(processes = []) {
   root.innerHTML = lines.join("");
 }
 
+function speedLine(item = {}) {
+  const status = safe(item.status, "WAIT").toUpperCase();
+  const down = item.down ? `${Number(item.down).toFixed(0)}↓` : "--↓";
+  const up = item.up ? `${Number(item.up).toFixed(0)}↑` : "--↑";
+  const ping = item.ping ? `${Number(item.ping).toFixed(0)}ms` : "--ms";
+  const age = item.age_sec ? `${Math.floor(Number(item.age_sec) / 60)}m` : "fresh";
+  return `${safe(item.label, "PATH")} ${status} ${down}/${up} ${ping} ${age}`;
+}
+
+function renderCommandCenter(center = {}) {
+  const root = $("command-center");
+  if (!root) return;
+  const mode = safe(center.mode, "UNKNOWN").toUpperCase();
+  const score = center.score !== undefined && center.score !== "" ? `${center.score}/100` : "--";
+  const modeClass = mode.includes("INCIDENT") || mode.includes("DEGRADED") ? "red" : mode.includes("WATCH") || mode.includes("INVESTIGATE") ? "yellow" : "green";
+  const rows = [
+    `<div class="command-verdict"><span class="${modeClass}">${escapeHtml(mode)}</span><b>${escapeHtml(score)}</b></div>`,
+    `<div class="command-summary" title="${escapeHtml(center.summary)}">${escapeHtml(center.summary || "Run socx autopilot for a fresh verdict")}</div>`,
+    row(["speed", speedLine(center.direct), speedLine(center.vpn)], "command-row"),
+  ];
+  (center.vpn_paths || []).slice(0, 3).forEach((path) => rows.push(row(["path", speedLine(path), ""], "command-row")));
+  rows.push(row(["history", `${safe(center.history_count, 0)} samples`, "socx history show"], "command-row"));
+  (center.actions || []).slice(0, 4).forEach((action, idx) => {
+    rows.push(row([idx === 0 ? "next" : "", action, ""], "command-row action"));
+  });
+  root.innerHTML = rows.join("");
+}
+
 function renderFlows(flows = []) {
   const root = $("flows");
   if (!root) return;
@@ -219,8 +247,8 @@ function render(state) {
   setText("ups-line", ups.linev_h);
   drawSparkline($("ups-spark"), ups.history || [], { stroke: "#ff9c43", fill: "rgba(255, 156, 67, .20)" });
 
-  setText("proc-note", cpu.process_text || "top cpu");
-  renderProcesses(state.processes || []);
+  setText("cmd-note", `${safe(state.command_center?.mode, "autopilot")} ${safe(state.command_center?.score, "--")}`);
+  renderCommandCenter(state.command_center || {});
   renderFlows(state.flows || []);
   renderPackets(state.packets || []);
   renderTicker(state.events || []);

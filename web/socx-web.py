@@ -73,6 +73,19 @@ def run_cmd(command: str, timeout: float = 1.2) -> str:
     return proc.stdout or ""
 
 
+def parse_env_file(path: Path) -> dict[str, str]:
+    data: dict[str, str] = {}
+    try:
+        for raw in path.read_text(errors="ignore").splitlines():
+            if "=" not in raw:
+                continue
+            key, value = raw.split("=", 1)
+            data[key.strip()] = value.strip().strip("'\"")
+    except Exception:
+        pass
+    return data
+
+
 def parse_size(value: str) -> int:
     match = re.match(r"\s*([0-9.]+)\s*([KMGTPE]?)(?:i?B)?\s*$", value, re.I)
     if not match:
@@ -208,6 +221,7 @@ class SocxCollector:
         net = self.collect_network()
         ups = self.collect_ups()
         processes = self.collect_processes()
+        command_center = self.collect_command_center()
 
         packets: list[dict[str, Any]] = []
         if time.time() - self.last_event_read > 0.8:
@@ -249,6 +263,7 @@ class SocxCollector:
             },
             "ups": ups | {"history": list(self.histories["ups_watts"])},
             "processes": processes,
+            "command_center": command_center,
             "flows": flows,
             "packets": packets,
             "events": list(self.events.values())[-self.event_max :],
@@ -378,14 +393,7 @@ class SocxCollector:
         }
 
     def collect_ups(self) -> dict[str, Any]:
-        data: dict[str, str] = {}
-        try:
-            for raw in self.ups_cache.read_text(errors="ignore").splitlines():
-                if "=" in raw:
-                    k, v = raw.split("=", 1)
-                    data[k.strip()] = v.strip().strip("'\"")
-        except Exception:
-            pass
+        data = parse_env_file(self.ups_cache)
         updated = float(data.get("updated", "0") or 0)
         watts = float(data.get("watts", "0") or 0)
         load = float(data.get("load", "0") or 0)
@@ -412,6 +420,70 @@ class SocxCollector:
             "avg_watts": avg,
             "age_sec": max(0, time.time() - updated) if updated else None,
             "stale": stale,
+        }
+
+    def collect_command_center(self) -> dict[str, Any]:
+        auto = parse_env_file(Path("/tmp/socx-autopilot.env"))
+        direct = parse_env_file(Path("/tmp/socx-speedtest-direct.env"))
+        vpn = parse_env_file(Path("/tmp/socx-speedtest-vpn.env"))
+        named_paths: list[dict[str, Any]] = []
+        for path in sorted(Path("/tmp").glob("socx-speedtest-vpn-*.env")):
+            data = parse_env_file(path)
+            if not data:
+                continue
+            label = data.get("profile_label") or path.stem.replace("socx-speedtest-vpn-", "").upper()
+            named_paths.append(self.speedtest_summary(label, data))
+        history_path = Path(os.environ.get("SOCX_HISTORY_FILE", "/var/db/socx_history.jsonl"))
+        history_rows: list[dict[str, Any]] = []
+        try:
+            for raw in history_path.read_text(errors="ignore").splitlines()[-8:]:
+                try:
+                    history_rows.append(json.loads(raw))
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        mode = auto.get("mode", "UNKNOWN")
+        score = auto.get("score", "0")
+        summary = auto.get("summary") or auto.get("reason") or "Run socx autopilot for a fresh verdict"
+        actions = [
+            "socx status",
+            "socx timeline 60",
+            "socx repair",
+            "socx explain-screen",
+        ]
+        if mode.upper() in {"INVESTIGATE", "INCIDENT", "SECURITY WATCH"}:
+            actions.insert(1, "socx incident quick")
+        return {
+            "mode": mode,
+            "score": score,
+            "summary": summary,
+            "updated": auto.get("updated") or auto.get("ts") or "",
+            "direct": self.speedtest_summary("DIRECT", direct),
+            "vpn": self.speedtest_summary("VPN", vpn),
+            "vpn_paths": named_paths,
+            "history_count": len(history_rows),
+            "history": history_rows,
+            "actions": actions[:5],
+        }
+
+    def speedtest_summary(self, label: str, data: dict[str, str]) -> dict[str, Any]:
+        status = data.get("status") or data.get("result_status") or ("OK" if data.get("download_mbps") else "WAIT")
+        age = 0
+        try:
+            updated = float(data.get("updated", "0") or 0)
+            age = int(max(0, time.time() - updated)) if updated else 0
+        except ValueError:
+            age = 0
+        return {
+            "label": label,
+            "status": status,
+            "down": data.get("download_mbps", ""),
+            "up": data.get("upload_mbps", ""),
+            "ping": data.get("ping_ms", ""),
+            "server": data.get("server_name") or data.get("server") or "",
+            "age_sec": age,
         }
 
     def collect_processes(self) -> list[dict[str, Any]]:
@@ -695,6 +767,20 @@ class SocxCollector:
                 {"pid": 8809, "user": "ntopng", "cpu": 4.1, "mem_pct": 2.2, "rss_h": "540MB", "command": "ntopng"},
                 {"pid": 60684, "user": "root", "cpu": 2.9, "mem_pct": 1.8, "rss_h": "472MB", "command": "tmux: server"},
             ],
+            "command_center": {
+                "mode": "WATCH",
+                "score": "82",
+                "summary": "WAN healthy, VPN paths mixed, DNSBL routine.",
+                "direct": {"label": "DIRECT", "status": "OK", "down": "3223", "up": "2372", "ping": "9", "age_sec": 900},
+                "vpn": {"label": "VPN", "status": "OK", "down": "740", "up": "510", "ping": "52", "age_sec": 980},
+                "vpn_paths": [
+                    {"label": "NYC", "status": "OK", "down": "586", "up": "753", "ping": "19", "age_sec": 980},
+                    {"label": "RCN-DE", "status": "OK", "down": "740", "up": "510", "ping": "52", "age_sec": 980},
+                ],
+                "history_count": 8,
+                "history": [],
+                "actions": ["socx status", "socx timeline 60", "socx repair", "socx explain-screen"],
+            },
             "flows": [
                 {"asset": "JupiterLXI/192.168.1.161", "peer": "EXT.155.209", "proto": "TCP", "service": "https", "port": "443", "state": "ESTABLISHED", "count": 3, "tag": "web"},
                 {"asset": "NAS-Core/192.168.1.127", "peer": "EXT.57.155", "proto": "TCP", "service": "imaps", "port": "993", "state": "ESTABLISHED", "count": 1, "tag": "mail"},
@@ -725,6 +811,9 @@ class SocxHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/state":
             self.send_json(self.collector.snapshot())
+            return
+        if parsed.path == "/api/command-center":
+            self.send_json(self.collector.snapshot().get("command_center", {}))
             return
         if parsed.path == "/api/config":
             self.send_json({"refresh_ms": int(self.collector.interval * 1000), "demo": self.collector.demo})

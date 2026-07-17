@@ -1,0 +1,41 @@
+#!/bin/sh
+# Append a compact SOCX health sample for trend/history views.
+
+OUT="${SOCX_HISTORY_FILE:-/var/db/socx_history.jsonl}"
+mkdir -p "$(dirname "$OUT")" 2>/dev/null || true
+
+env_get() {
+    key="$1"; file="$2"
+    [ -f "$file" ] || return
+    sed -n "s/^$key=//p" "$file" 2>/dev/null | tail -1 | sed 's/"/\\"/g'
+}
+
+case "${1:-append}" in
+append)
+    ts="$(date +%s)"
+    auto_mode="$(env_get mode /tmp/socx-autopilot.env)"
+    auto_score="$(env_get score /tmp/socx-autopilot.env)"
+    direct_down="$(env_get download_mbps /tmp/socx-speedtest-direct.env)"
+    direct_up="$(env_get upload_mbps /tmp/socx-speedtest-direct.env)"
+    vpn_down="$(env_get download_mbps /tmp/socx-speedtest-vpn.env)"
+    vpn_up="$(env_get upload_mbps /tmp/socx-speedtest-vpn.env)"
+    vpn_ping="$(env_get ping_ms /tmp/socx-speedtest-vpn.env)"
+    ups_watts="$(env_get watts /tmp/socx-ups-cache.env)"
+    ups_load="$(env_get load /tmp/socx-ups-cache.env)"
+    printf '{"ts":%s,"mode":"%s","score":%s,"direct_down":%s,"direct_up":%s,"vpn_down":%s,"vpn_up":%s,"vpn_ping":%s,"ups_watts":%s,"ups_load":%s}\n' \
+        "$ts" "${auto_mode:-UNKNOWN}" "${auto_score:-0}" "${direct_down:-0}" "${direct_up:-0}" "${vpn_down:-0}" "${vpn_up:-0}" "${vpn_ping:-0}" "${ups_watts:-0}" "${ups_load:-0}" >> "$OUT"
+    lines="$(wc -l "$OUT" 2>/dev/null | awk '{print $1}')"
+    keep="${SOCX_HISTORY_KEEP_LINES:-5000}"
+    if [ "${lines:-0}" -gt "$keep" ] 2>/dev/null; then
+        tail -2000 "$OUT" > "$OUT.tmp" 2>/dev/null && mv "$OUT.tmp" "$OUT"
+    fi
+    echo "$OUT"
+    ;;
+show|tail)
+    tail -${2:-40} "$OUT" 2>/dev/null || echo "no SOCX history yet"
+    ;;
+*)
+    echo "Usage: socx-history [append|show]" >&2
+    exit 2
+    ;;
+esac

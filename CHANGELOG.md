@@ -3,6 +3,9 @@
 ## v0.1.46
 
 - Polished the Modern Wall without changing the successful btop-style layout.
+- Added SOCX history samples with `socx history`; `socx autopilot` now appends compact Autopilot, UPS, and DIRECT/VPN Speedtest trend data to `/var/db/socx_history.jsonl`.
+- Added optional `socx notify` webhook support for operator alerts when `SOCX_NOTIFY_WEBHOOK_URL` is configured.
+- Added a browser Command Center card plus `/api/command-center` for Autopilot verdict, Speedtest path truth, history count, and recommended SOCX commands.
 - Added SOCX Command Center v1 with `socx menu`, `socx timeline`, `socx repair`, and `socx explain-screen` for one-place operation, timeline review, safe collector restart, and plain-English wall interpretation.
 - Added `socx status`, a one-command operator health view for wall, Speedtest, UPS, WAN/VPN, DNS, vnstatd, LLDP, reports, MIRANDA, Pi AI, and unknown-service noise.
 - Added `socx autopilot`, a read-only SOCX autonomy mode that scores WAN/VPN, Speedtest, firewall, DNSBL, IDS, Pi AI, and wall health into `NORMAL`, `WATCH`, `INVESTIGATE`, or `INCIDENT` without changing firewall rules.
