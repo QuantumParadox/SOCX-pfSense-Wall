@@ -41,6 +41,13 @@ trap 'rm -f "$tmp"' EXIT
       /client-hostname/ {name=$2; gsub(/[\";]/,"",name)}
       /}/ {if (ip!="") {print ip " " (mac==""?"-":mac) " dhcp " (name==""?"":name)}; ip=""; mac=""; name=""}
     ' /var/dhcpd/var/db/dhcpd.leases 2>/dev/null || true
+    if [ -f /tmp/socx-pi-discovery.env ]; then
+        pi_ip="$(sed -n 's/^ip=//p' /tmp/socx-pi-discovery.env | tail -1)"
+        pi_status="$(sed -n 's/^status=//p' /tmp/socx-pi-discovery.env | tail -1)"
+        if [ -n "$pi_ip" ] && [ "$pi_status" = "ok" ]; then
+            printf '%s - socx-pi Pi5-AI-Node\n' "$pi_ip"
+        fi
+    fi
 } | sort -u > "$tmp"
 
 awk -v hosts="$HOSTS_FILE" -v suggestions="$SUGGESTIONS" '
@@ -53,13 +60,28 @@ BEGIN {
 }
 {
   ip=$1; mac=$2; source=$3; name=$4
+  split(ip, oct, ".")
   label=(ip in known ? known[ip] : "")
   status=(label=="" ? "UNKNOWN" : "KNOWN")
   printf "%-15s %-17s %-8s %-7s %s\n", ip, mac, source, status, (label!=""?label:name)
+  expected=""
+  lower=tolower(name " " source)
+  if (lower ~ /(pi|raspberry|llm|socx-pi)/) expected="Pi5-AI-Node"
+  else if (lower ~ /(synology|diskstation|ds1823|nas)/) expected="Synology-DS1823xs"
+  else if (lower ~ /(netgear|ap|wireless|wlan)/) expected="WirelessAP-" oct[4]
+  else if (lower ~ /(lenovo|thinkcentre|m910)/) expected="Lenovo-M910t"
+  else if (lower ~ /(ups|apc|smartups)/) expected="APC-SmartUPS"
+  if (label!="" && expected!="" && label != expected) {
+    corrections[ip]=expected
+  }
   if (label=="" && ip ~ /^192\.168\.1\./) {
-    split(ip, oct, ".")
     if (oct[4] == "0" || oct[4] == "255") next
-    suggestion=(name!=""?name:"Device-" oct[4])
+    if (lower ~ /(pi|raspberry|llm|socx-pi)/) suggestion="Pi5-AI-Node"
+    else if (lower ~ /(synology|diskstation|ds1823|nas)/) suggestion="Synology-DS1823xs"
+    else if (lower ~ /(netgear|ap|wireless|wlan)/) suggestion="WirelessAP-" oct[4]
+    else if (lower ~ /(lenovo|thinkcentre|m910)/) suggestion="Lenovo-M910t"
+    else if (lower ~ /(ups|apc|smartups)/) suggestion="APC-SmartUPS"
+    else suggestion=(name!=""?name:"Device-" oct[4])
     gsub(/[^A-Za-z0-9_.-]/, "", suggestion)
     missing[ip]=suggestion
   }
@@ -70,6 +92,11 @@ END {
   for (ip in missing) {
     print ip "=" missing[ip]
     print ip "=" missing[ip] >> suggestions
+  }
+  print ""
+  print "Suggested corrections:"
+  for (ip in corrections) {
+    print ip "=" corrections[ip]
   }
 }' "$tmp" >> "$OUT"
 

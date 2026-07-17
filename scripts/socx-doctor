@@ -34,6 +34,24 @@ age_file() {
     echo $((now - mod))
 }
 
+recent_gateway_warnings() {
+    file="${1:-/var/log/gateways.log}"
+    max_age="${SOCX_GATEWAY_WARNING_MAX_AGE_SECONDS:-86400}"
+    [ -f "$file" ] || return 0
+    tail -500 "$file" 2>/dev/null |
+        grep -Ei 'sendto error| alarm | down | pending | unknown | packet loss|100% loss' |
+        perl -MTime::Local -ne '
+            BEGIN { $max = $ENV{SOCX_GATEWAY_WARNING_MAX_AGE_SECONDS} || 86400; $now = time; $year = (localtime($now))[5] + 1900; %mon = (Jan=>0,Feb=>1,Mar=>2,Apr=>3,May=>4,Jun=>5,Jul=>6,Aug=>7,Sep=>8,Oct=>9,Nov=>10,Dec=>11); }
+            if (/^([A-Z][a-z]{2})\s+(\d+)\s+(\d+):(\d+):(\d+)/ && exists $mon{$1}) {
+                $t = eval { timelocal($5,$4,$3,$2,$mon{$1},$year) };
+                $t -= 31536000 if defined($t) && $t > $now + 86400;
+                print if defined($t) && ($now - $t) <= $max;
+            } else {
+                print;
+            }' |
+        tail -8
+}
+
 header() {
     echo "SOCX doctor: $1"
     echo "generated $(date)"
@@ -80,7 +98,7 @@ doctor_gateways() {
         mark WARN "no dpinger processes found"
     fi
 
-    recent="$(tail -200 /var/log/gateways.log 2>/dev/null | grep -Ei 'sendto error| alarm | down | pending | unknown | packet loss|100% loss' | tail -5)"
+    recent="$(recent_gateway_warnings /var/log/gateways.log | tail -5)"
     if [ -n "$recent" ]; then
         mark WARN "recent gateway log warnings:"
         printf '%s\n' "$recent" | sed 's/^/      /'
@@ -116,7 +134,7 @@ doctor_wan_quality() {
     fi
 
     if [ -f /var/log/gateways.log ]; then
-        bad="$(tail -300 /var/log/gateways.log 2>/dev/null | grep -Ei 'sendto error| alarm | down | pending | unknown | packet loss|100% loss' | tail -8 || true)"
+        bad="$(recent_gateway_warnings /var/log/gateways.log || true)"
         if [ -n "$bad" ]; then
             mark WARN "recent gateway quality warnings:"
             printf '%s\n' "$bad" | sed 's/^/      /'

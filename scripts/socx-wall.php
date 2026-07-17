@@ -623,8 +623,35 @@ function load_host_map(string $path): array
             $map[$ip] = $name;
         }
     }
+    foreach (dynamic_host_overlays() as $ip => $name) {
+        if (env_bool('SOCX_DYNAMIC_HOST_OVERRIDES', true) || !isset($map[$ip]) || preg_match('/^Device-\d+$/', (string)$map[$ip])) {
+            $map[$ip] = $name;
+        }
+    }
     $cached = $map;
     $cachedAt = $now;
+    return $map;
+}
+
+function dynamic_host_overlays(): array
+{
+    $map = [];
+    $pi = collect_pi_discovery_insight(microtime(true));
+    if (!empty($pi['available']) && !empty($pi['ip']) && filter_var((string)$pi['ip'], FILTER_VALIDATE_IP)) {
+        $map[(string)$pi['ip']] = 'Pi5-AI-Node';
+    }
+    $upsHost = trim((string)(getenv('SOCX_UPS_SNMP_HOST') ?: ''));
+    if ($upsHost !== '' && filter_var($upsHost, FILTER_VALIDATE_IP)) {
+        $map[$upsHost] = 'APC-SmartUPS';
+    }
+    foreach (ai_lab_endpoint_checks() as $check) {
+        $host = (string)($check['host'] ?? '');
+        if (!filter_var($host, FILTER_VALIDATE_IP)) {
+            continue;
+        }
+        $label = preg_replace('/[^\w.\-]/', '', (string)($check['label'] ?? 'AI-Lab')) ?: 'AI-Lab';
+        $map[$host] = $label;
+    }
     return $map;
 }
 
@@ -757,6 +784,9 @@ function collect_live_frame(array &$state, array $hosts): array
     $speedHistoryEvent = speedtest_history_event(speedtest_history_summary($state['speedtest_history'] ?? [], $now));
     if ($speedHistoryEvent !== null) {
         $events[] = $speedHistoryEvent;
+    }
+    foreach (collect_what_changed_events($state, $flows, $wanQuality, $speedtest, collect_pi_llm_insight($now), $now) as $event) {
+        $events[] = $event;
     }
     $events[] = threat_pulse_event($pulse, $trends);
     $socxHealth = socx_health_score($wanHealth, $vpnStatus, $ups, $mem, $cpu, $speedtest, $pulse);
@@ -3804,6 +3834,85 @@ function wan_quality_event(array $quality): ?array
         $name));
 }
 
+function collect_what_changed_events(array &$state, array $flows, array $wanQuality, array $speedtest, array $piInsight, float $now): array
+{
+    $interval = max(5.0, (float)(getenv('SOCX_WHAT_CHANGED_INTERVAL_SECONDS') ?: 20.0));
+    if (($now - (float)($state['last_what_changed_at'] ?? 0.0)) < $interval) {
+        return [];
+    }
+    $state['last_what_changed_at'] = $now;
+    $events = [];
+
+    $top = first_useful_flow($flows);
+    $topKey = $top !== null ? flow_path_text($top, 44) . ' ' . service_human_label((string)($top['service'] ?? '')) : '';
+    if ($topKey !== '' && isset($state['what_top_flow']) && $topKey !== (string)$state['what_top_flow']) {
+        $events[] = soc_event('CHANGE', 'INFO', sprintf('Top flow changed: %s', truncate_text($topKey, 76)));
+    }
+    if ($topKey !== '') {
+        $state['what_top_flow'] = $topKey;
+    }
+
+    $qualityKey = (string)($wanQuality['label'] ?? '') . ':' . (string)($wanQuality['score'] ?? '');
+    if ($qualityKey !== ':' && isset($state['what_wan_quality']) && $qualityKey !== (string)$state['what_wan_quality']) {
+        $events[] = soc_event('CHANGE', 'LOW', sprintf('WAN quality changed: %s %s%% | %s',
+            (string)($wanQuality['label'] ?? 'unknown'),
+            (string)($wanQuality['score'] ?? '?'),
+            (string)($wanQuality['reason'] ?? 'watch')));
+    }
+    if ($qualityKey !== ':') {
+        $state['what_wan_quality'] = $qualityKey;
+    }
+
+    $speedKey = strtolower((string)($speedtest['status'] ?? '')) . ':' . speedtest_source_label($speedtest);
+    if ($speedKey !== ':' && isset($state['what_speedtest']) && $speedKey !== (string)$state['what_speedtest']) {
+        $events[] = soc_event('CHANGE', 'LOW', sprintf('Speedtest source/status changed: %s %s',
+            speedtest_source_label($speedtest),
+            strtoupper((string)($speedtest['status'] ?? 'unknown'))));
+    }
+    if ($speedKey !== ':') {
+        $state['what_speedtest'] = $speedKey;
+    }
+
+    $piDisc = is_array($piInsight['discovery'] ?? null) ? $piInsight['discovery'] : [];
+    $piKey = strtolower((string)($piInsight['status'] ?? 'missing')) . ':' . (string)($piInsight['roles'] ?? '') . ':' . (string)($piDisc['ip'] ?? '');
+    if ($piKey !== '::' && isset($state['what_pi']) && $piKey !== (string)$state['what_pi']) {
+        $events[] = soc_event('CHANGE', 'LOW', sprintf('Pi AI changed: %s roles %s%s',
+            strtoupper((string)($piInsight['status'] ?? 'unknown')),
+            (string)($piInsight['roles'] ?? '?'),
+            !empty($piDisc['ip']) ? ' @' . (string)$piDisc['ip'] : ''));
+    }
+    if ($piKey !== '::') {
+        $state['what_pi'] = $piKey;
+    }
+
+    $unknown = count_unknown_lan_endpoints($flows);
+    if (isset($state['what_unknown_count']) && $unknown !== (int)$state['what_unknown_count']) {
+        $severity = $unknown > (int)$state['what_unknown_count'] ? 'WARN' : 'INFO';
+        $events[] = soc_event('CHANGE', $severity, sprintf('Unknown device count changed: %d | run socx doctor topology', $unknown));
+    }
+    $state['what_unknown_count'] = $unknown;
+
+    return array_slice($events, 0, 4);
+}
+
+function count_unknown_lan_endpoints(array $flows): int
+{
+    $unknown = [];
+    foreach ($flows as $flow) {
+        foreach (['src', 'dst'] as $field) {
+            $label = (string)($flow[$field] ?? '');
+            if (!endpoint_is_lan($label)) {
+                continue;
+            }
+            $key = lan_endpoint_key($label);
+            if ($key !== '' && !str_contains($label, '/LAN.')) {
+                $unknown[$key] = true;
+            }
+        }
+    }
+    return count($unknown);
+}
+
 function collect_wan_gateway_rows(): array
 {
     $rows = [];
@@ -5354,6 +5463,10 @@ function collect_soc_command_events(array &$state, array $hosts, float $now, arr
         if ($doctor !== null) {
             $events[] = $doctor;
         }
+        $backup = backup_safety_event();
+        if ($backup !== null) {
+            $events[] = $backup;
+        }
         $state['last_command_status_at'] = $now;
     }
 
@@ -6384,6 +6497,59 @@ function disk_status_events(): array
         }
     }
     return $events;
+}
+
+function backup_safety_event(): ?array
+{
+    $config = getenv('SOCX_PFSENSE_CONFIG') ?: '/cf/conf/config.xml';
+    if (!is_readable($config)) {
+        return soc_event('BACKUP', 'WARN', 'pfSense config.xml unreadable | backup safety unknown');
+    }
+    $age = max(0, time() - (int)@filemtime($config));
+    $backupCount = 0;
+    foreach (['/cf/conf/backup/*.xml', '/cf/conf/backup/config-*.xml', '/root/socx-reports/*.txt'] as $pattern) {
+        foreach (glob($pattern) ?: [] as $file) {
+            if (is_readable($file)) {
+                $backupCount++;
+            }
+        }
+    }
+    $beText = backup_boot_environment_text();
+    $severity = $backupCount > 0 ? 'INFO' : 'LOW';
+    if ($age > 86400 * 14) {
+        $severity = 'WARN';
+    }
+    return soc_event('BACKUP', $severity, sprintf('Config age %s | backups %d%s',
+        format_age_seconds((float)$age),
+        $backupCount,
+        $beText !== '' ? ' | ' . $beText : ''));
+}
+
+function backup_boot_environment_text(): string
+{
+    foreach (['/sbin/bectl list -H 2>/dev/null', '/usr/sbin/beadm list 2>/dev/null'] as $cmd) {
+        $out = trim(run_cmd($cmd));
+        if ($out === '') {
+            continue;
+        }
+        $count = 0;
+        $active = '';
+        foreach (explode("\n", $out) as $line) {
+            $line = trim($line);
+            if ($line === '' || preg_match('/^BE\s+/i', $line)) {
+                continue;
+            }
+            $count++;
+            if (preg_match('/\b(NR|R|N)\b/', $line) && $active === '') {
+                $parts = preg_split('/\s+/', $line) ?: [];
+                $active = (string)($parts[0] ?? '');
+            }
+        }
+        if ($count > 0) {
+            return sprintf('bootenv %d%s', $count, $active !== '' ? ' active ' . truncate_text($active, 18) : '');
+        }
+    }
+    return '';
 }
 
 function wireguard_status_event(): ?array
@@ -8885,10 +9051,10 @@ function colorize_line($line, bool $color): string
     $line = color_replace('/(\[DROP\]|\[HIGH\])|\b(FW BLOCK|FIREWALL BLOCK|IPS BLOCK|DROP|REJECT|BLOCK|blocked|failed|failure|critical|CRIT|HIGH|DOWN)\b/i', $c['red'] . '$0' . $c['reset'], $line);
     $line = color_replace('/(\[WARN\]|\[MED\])|\b(DNS DENY|WARN|warning|MED|PARTIAL|UNKNOWN|WATCH|stale|rising|falling|latency|loss|scanner|suspicious|burst|high-rate|high usage|SYN|FIN|SING|MULT)\b/i', $c['yellow'] . '$0' . $c['reset'], $line);
     $line = color_replace('/(\[INFO\]|\[LOW\])/', $c['green'] . '$1' . $c['reset'], $line);
-    $line = color_replace('/(\[FW\]|\[VPN\]|\[WAN\]|\[DHCP\]|\[ARP\]|\[FLOW\]|\[RADAR\]|\[PF\]|\[UPS\]|\[SYS\]|\[DNS\]|\[IFACE\]|\[DEVICE\]|\[PULSE\]|\[SOCX\]|\[DOCTOR\]|\[AI\]|\[LAB\]|\[INTEL\]|\[TTP\]|\[DETECT\]|\[EVID\]|\[CLOUD\]|\[SRC\])/', $c['cyan'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/(\[FW\]|\[VPN\]|\[WAN\]|\[DHCP\]|\[ARP\]|\[FLOW\]|\[RADAR\]|\[PF\]|\[UPS\]|\[SYS\]|\[DNS\]|\[IFACE\]|\[DEVICE\]|\[PULSE\]|\[SOCX\]|\[DOCTOR\]|\[BACKUP\]|\[CHANGE\]|\[AI\]|\[LAB\]|\[INTEL\]|\[TTP\]|\[DETECT\]|\[EVID\]|\[CLOUD\]|\[SRC\])/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[DNSBL\]|\[IDS\]|\[IPS\])|\b(DNS BLOCK|DNS SINK|DNSBL HIT|SINKHOLE|DNSBL|Suricata|suricata|Sigma|YARA|CVE|CPE|CWE|CAPEC|CVSS|EPSS|KEV|ATT&CK|D3FEND|OpenAI|Anthropic|Gemini|xAI|Grok|NVIDIA Build|Hugging Face|Ollama|vLLM|MIRANDA|Local LLM|reputation|threat-intel|known-bad|known bad|malware|botnet|C2|abuse:high|abuse high|tor\?)\b/i', $c['purple'] . '$0' . $c['reset'], $line);
     $line = color_replace('/\b(contain|quarantine|preserve|evidence|pcap|pfctl|config\.xml|CloudTrail|AzureActivity|VPC Flow|Windows|Linux|macOS|memory)\b/i', $c['yellow'] . '$0' . $c['reset'], $line);
-    $line = color_replace('/\b(CPU|RAM|ARC|SWAP|PF|LAN|WAN|IN|OUT|VPN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|PACKET RADAR|PFTOP|LIVE STATES|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES|THREAT PULSE|SPEEDTEST|SPD|CLIENT|ROUTER|AUTO|BASE|DOCTOR|PI|Mbps|STATES|SEARCH|TRAFFIC|TCP|UDP|ICMP|DIR|APP|PATH|TYPE|STAT|STATE|LEFT|PRO|SVC|RATE|FLOW|RADAR|AGE|EXP|PROTO|TEMP|HUMID|LOAD)\b/i', $c['cyan'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/\b(CPU|RAM|ARC|SWAP|PF|LAN|WAN|IN|OUT|VPN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|PACKET RADAR|PFTOP|LIVE STATES|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES|THREAT PULSE|SPEEDTEST|SPD|CLIENT|ROUTER|AUTO|BASE|DOCTOR|BACKUP|CHANGE|PI|Mbps|STATES|SEARCH|TRAFFIC|TCP|UDP|ICMP|DIR|APP|PATH|TYPE|STAT|STATE|LEFT|PRO|SVC|RATE|FLOW|RADAR|AGE|EXP|PROTO|TEMP|HUMID|LOAD)\b/i', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/\b(tls|web|dns|dnsblk|ssh|vpn|ntp|smb|sysl|rip|snmp|ssdp|nut|olma|vllm|llm|tgi|grad|jupy|ray|mlfl|trtn|graf|oai|xai|ngc|anth|gemi|hf|rdis|metr|ping|plex|dhcp|mdns|mail|apns|gcm|team|rdp|vnc|irc|ftp|dot|mux|oth|block|p\d{1,5})\b/i', $c['blue'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[[#!.]+\])/', $c['green'] . '$1' . $c['reset'], $line);
     $line = color_replace('/([█▇▆▅▄▃▂▁▓]+)/u', $c['green'] . '$1' . $c['reset'], $line);

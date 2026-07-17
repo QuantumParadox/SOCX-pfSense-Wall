@@ -3,6 +3,10 @@
 ## v0.1.46
 
 - Polished the Modern Wall without changing the successful btop-style layout.
+- Added `CHANGE` intelligence events for top-flow, WAN-quality, Speedtest-source, Pi AI-node, and unknown-device changes.
+- Added `BACKUP` safety events for pfSense config age, backup count, and boot-environment visibility.
+- Filtered stale gateway log warnings so old dpinger noise does not keep `socx-doctor wan-quality` in WARN.
+- Improved dynamic host naming with Pi discovery overlays and smarter host-audit suggestions for Pi, Synology, AP, Lenovo, and UPS devices.
 - Added WAN quality scoring from live gateway/dpinger status, including latency/loss/status events separate from Speedtest.
 - Expanded LLDP topology events to show neighbor/interface summaries when switch advertisements are visible.
 - Enriched Pi 3-LLM events with Pi discovery IP/service/age so SOCX can show whether the AI node is reachable and fresh.

@@ -65,6 +65,8 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds `socx-report`, `socx-report-cron`, `socx-hosts-audit`, `socx-explain`, and `socx-miranda-bridge` for scheduled reports, device naming, label explanations, and MIRANDA/local-AI export.
 - Can surface LLDP and Service Watchdog health in the rotating Event Feed when those pfSense packages are configured.
 - Adds WAN quality events from gateway/dpinger latency, loss, and status, separate from bandwidth-only Speedtest results.
+- Adds compact `CHANGE` events when top talker, WAN quality, Speedtest source/status, Pi AI-node state, or unknown-device count changes.
+- Adds `BACKUP` safety events for config age, backup count, and ZFS/boot-environment visibility when available.
 - Shows LLDP topology summaries such as interface-to-switch neighbor hints when the connected switch advertises LLDP.
 - Adds a rotating SOCX health score based on WAN, VPN, UPS, RAM, CPU, Speedtest freshness, IDS, DNSBL, and firewall scan pressure.
 - Shows truthful VPN gateway/interface health in the top status strip, including `VPN UP 3/3`, `VPN PARTIAL 1/3`, `VPN DOWN 0/3`, `VPN N/A`, or `VPN UNKNOWN` plus `DATA LIVE`/`DATA STALE`.
@@ -288,7 +290,7 @@ Example:
 192.168.1.170=Metrics-Grafana
 ```
 
-When a mapping exists, SOCX renders flows as names such as `MIRANDA-Workstation/LAN.116`; when there is no mapping, it falls back to DHCP lease hostnames and then compact `LAN.x` labels. `--apply-suggestions` adds clear placeholder aliases like `Device-105`; use it when you want immediate readability, then rename those entries later.
+When a mapping exists, SOCX renders flows as names such as `MIRANDA-Workstation/LAN.116`; when there is no mapping, it falls back to DHCP lease hostnames and then compact `LAN.x` labels. SOCX also overlays fresh discovery data for the Pi AI node, UPS, and configured AI endpoints so stale labels do not win over live discovery. `--apply-suggestions` adds readable aliases such as `Pi5-AI-Node`, `Synology-DS1823xs`, `WirelessAP-117`, or `Device-105`; use it when you want immediate readability, then rename those entries later.
 
 Watchlist:
 
