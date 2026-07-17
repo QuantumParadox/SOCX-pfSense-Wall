@@ -25,8 +25,10 @@ run_save status socx status
 run_save why-now socx why-now
 run_save history-trend socx history trend 48
 run_save timeline socx timeline 120
+run_save incident-mode socx incident-mode 120
 run_save speedtest-profiles socx-doctor speedtest-profiles
 run_save topology socx-doctor topology
+run_save zeek-health socx-doctor zeek
 run_save unknown-services socx services
 
 copy_if /tmp/socx-autopilot.env

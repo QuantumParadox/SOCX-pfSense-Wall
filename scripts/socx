@@ -47,6 +47,10 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-snapshot "$@"
         ;;
+    incident-mode|incident-view)
+        shift
+        exec /usr/local/bin/socx-incident-mode "$@"
+        ;;
     mode|modes)
         shift
         exec /usr/local/bin/socx-mode "$@"

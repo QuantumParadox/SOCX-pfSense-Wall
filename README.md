@@ -74,6 +74,9 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds `/api/history` plus a tiny Command Center score sparkline in the browser wall.
 - Adds `socx notify-cron` to install/remove/status a five-minute notification-rule cron job.
 - Adds `socx-doctor php-services` to catch malformed pfSense service entries that can cause PHP service-status crash reports.
+- Adds `socx incident-mode`, a read-only incident summary of top blocked sources, ports, affected LAN hosts, DNSBL domains, IDS signal, and next actions.
+- Adds `/api/incident` and `/api/top-talkers` for browser/detail integrations.
+- Adds `socx-doctor zeek` to check Zeek process/log health and crash diagnostic folders.
 - Can surface LLDP and Service Watchdog health in the rotating Event Feed when those pfSense packages are configured.
 - Adds WAN quality events from gateway/dpinger latency, loss, and status, separate from bandwidth-only Speedtest results.
 - Adds compact `CHANGE` events when top talker, WAN quality, Speedtest source/status, Pi AI-node state, or unknown-device count changes.
@@ -129,6 +132,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-mode` - wall mode preset helper for normal, incident, speedtest, AI, UPS, and quiet-night operation.
 - `scripts/socx-host-labels` - DHCP/ARP/Pi-discovery friendly-name suggestions for `/usr/local/etc/socx_hosts.conf`.
 - `scripts/socx-snapshot` - read-only SOCX troubleshooting bundle with checksums and optional web API captures.
+- `scripts/socx-incident-mode` - read-only incident-mode summary for firewall, DNSBL, IDS, and next actions.
 - `scripts/socx-notify-cron` - scheduled notification-rule cron installer/remover/status helper.
 - `scripts/socx-doctor` - live health check for wall, logs, VPN, Speedtest, UPS, reports, MIRANDA ingest, vnstatd, unknown-service noise, DNSBL review, IDS tuning, and slow-network triage.
 - `scripts/socx-miranda-bridge` - exports a compact JSON summary for MIRANDA or another local-AI/SOC collector.
@@ -367,6 +371,7 @@ socx notify-cron status
 socx hosts suggest
 socx mode show
 socx snapshot
+socx incident-mode
 socx explain-screen
 socx-doctor
 socx-doctor gateways
@@ -377,6 +382,7 @@ socx tune ids
 socx-doctor vnstat
 socx-doctor why-slow
 socx-doctor php-services
+socx-doctor zeek
 socx-doctor logs
 socx-doctor why-blocked samsungcloudsolution.net
 ```
@@ -404,6 +410,10 @@ Reports are written to `/root/socx-reports/` and include firewall blocks, DNSBL 
 `socx notify-cron install` schedules `socx notify rules` every five minutes. Leave it uninstalled unless you have configured `SOCX_NOTIFY_WEBHOOK_URL`.
 
 `socx snapshot` builds a read-only troubleshooting bundle under `/root/socx-snapshots/` with text outputs, env caches, API captures, and checksums. This is the easiest artifact to attach when opening a GitHub issue.
+
+`socx incident-mode` is the fast “what matters right now?” view for `SECURITY WATCH` or `INCIDENT` moments. It ranks blocked sources, blocked ports, affected LAN hosts, DNSBL domains, IDS signal, and next actions.
+
+The browser backend also exposes `/api/incident` and `/api/top-talkers` for richer detail pages or future wall panels.
 
 `socx mode show` lists wall presets. To apply one for a shell session:
 

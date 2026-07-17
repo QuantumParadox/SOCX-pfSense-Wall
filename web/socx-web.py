@@ -585,6 +585,69 @@ class SocxCollector:
             }
         return list(seen.values())[:14]
 
+    def collect_top_talkers(self) -> dict[str, Any]:
+        flows = self.collect_flows()
+        assets: dict[str, int] = {}
+        peers: dict[str, int] = {}
+        services: dict[str, int] = {}
+        for item in flows:
+            count = int(item.get("count", 1) or 1)
+            assets[str(item.get("asset", "unknown"))] = assets.get(str(item.get("asset", "unknown")), 0) + count
+            peers[str(item.get("peer", "unknown"))] = peers.get(str(item.get("peer", "unknown")), 0) + count
+            services[str(item.get("service", "other"))] = services.get(str(item.get("service", "other")), 0) + count
+        rank = lambda data: [{"name": k, "count": v} for k, v in sorted(data.items(), key=lambda kv: kv[1], reverse=True)[:10]]
+        return {"assets": rank(assets), "peers": rank(peers), "services": rank(services), "flows": flows[:20]}
+
+    def collect_incident(self) -> dict[str, Any]:
+        center = self.collect_command_center()
+        filter_log = run_cmd("tail -n 1200 /var/log/filter.log 2>/dev/null | grep -Ei 'block|drop|reject' | tail -300", timeout=1.0)
+        dns_log = run_cmd("tail -n 1200 /var/log/pfblockerng/dnsbl.log /var/log/pfblockerng/dns_reply.log 2>/dev/null | tail -300", timeout=1.0)
+        ids_log = run_cmd("find /var/log/suricata -maxdepth 2 -type f \\( -name alerts.log -o -name fast.log \\) 2>/dev/null | xargs tail -400 2>/dev/null", timeout=1.0)
+
+        src_counts: dict[str, int] = {}
+        port_counts: dict[str, int] = {}
+        lan_counts: dict[str, int] = {}
+        for line in filter_log.splitlines():
+            payload = line.split(": ", 1)[1] if ": " in line else line
+            try:
+                fields = next(csv.reader([payload]))
+            except Exception:
+                continue
+            if len(fields) < 22 or fields[8] != "4":
+                continue
+            src = fields[18]
+            dst = fields[19]
+            dport = fields[21] if fields[21].isdigit() else ""
+            if re.match(r"^\d+\.\d+\.\d+\.\d+$", src):
+                src_counts[src] = src_counts.get(src, 0) + 1
+            if dport:
+                port_counts[dport] = port_counts.get(dport, 0) + 1
+            for host in (src, dst):
+                if host.startswith("192.168.1."):
+                    lan_counts[host] = lan_counts.get(host, 0) + 1
+
+        def rank(counts: dict[str, int], limit: int = 8) -> list[dict[str, Any]]:
+            return [{"name": k, "count": v} for k, v in sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:limit]]
+
+        domains: dict[str, int] = {}
+        for line in dns_log.splitlines():
+            for token in re.findall(r"([a-z0-9][a-z0-9._-]+\.[a-z][a-z0-9.-]+)", line.lower()):
+                if len(token) > 5:
+                    domains[token.strip(".")] = domains.get(token.strip("."), 0) + 1
+        ids_high = len(re.findall(r"Priority: 1|malware|trojan|ransom|command.?and.?control|c2|cnc|callback|exploit|drop", ids_log, re.I))
+        ids_routine = len(re.findall(r"SURICATA (Stream|Ethertype unknown)|Generic Protocol Command Decode|invalid ack|invalid timestamp|decoder event|HTTP unable to match response to request", ids_log, re.I))
+        return {
+            "mode": center.get("mode"),
+            "score": center.get("score"),
+            "summary": center.get("summary"),
+            "blocked_sources": rank(src_counts),
+            "blocked_ports": rank(port_counts),
+            "lan_hosts": rank(lan_counts),
+            "dnsbl_domains": [{"name": k, "count": v} for k, v in sorted(domains.items(), key=lambda kv: kv[1], reverse=True)[:8]],
+            "ids": {"high_signal": ids_high, "routine": ids_routine},
+            "actions": ["socx snapshot", "socx timeline 120", "socx-doctor dnsbl-review", "socx tune ids"],
+        }
+
     def collect_events(self) -> list[dict[str, Any]]:
         filter_log = run_cmd("tail -n 80 /var/log/filter.log 2>/dev/null", timeout=0.8)
         for line in filter_log.splitlines():
@@ -858,6 +921,12 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/history":
             rows = self.collector.collect_history(240)
             self.send_json({"count": len(rows), "trend": self.collector.history_trend(rows), "rows": rows})
+            return
+        if parsed.path == "/api/top-talkers":
+            self.send_json(self.collector.collect_top_talkers())
+            return
+        if parsed.path == "/api/incident":
+            self.send_json(self.collector.collect_incident())
             return
         if parsed.path == "/api/config":
             self.send_json({"refresh_ms": int(self.collector.interval * 1000), "demo": self.collector.demo})

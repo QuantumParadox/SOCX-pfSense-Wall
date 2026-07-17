@@ -841,6 +841,39 @@ PHP
     finish
 }
 
+doctor_zeek() {
+    header "zeek"
+    if command -v zeekctl >/dev/null 2>&1; then
+        mark OK "zeekctl installed"
+        zeekctl status 2>/dev/null | sed 's/^/      /' || true
+    else
+        mark WARN "zeekctl not found"
+    fi
+    if pgrep -f 'zeek' >/dev/null 2>&1; then
+        mark OK "Zeek process present"
+    else
+        mark WARN "Zeek process not detected"
+    fi
+    crash_count="$(find /var/spool/zeek/tmp -maxdepth 1 -type d -name '*-crash' 2>/dev/null | wc -l | awk '{print $1}')"
+    recent_count="$(find /var/spool/zeek/tmp -maxdepth 1 -type d -name '*-crash' -mtime -2 2>/dev/null | wc -l | awk '{print $1}')"
+    if [ "${recent_count:-0}" -gt 0 ] 2>/dev/null; then
+        mark WARN "Zeek has ${recent_count} crash diagnostic folder(s) from the last 48h"
+    elif [ "${crash_count:-0}" -gt 0 ] 2>/dev/null; then
+        mark WARN "Zeek has ${crash_count} older crash diagnostic folder(s); archive/clean after review"
+    else
+        mark OK "no Zeek crash diagnostic folders found"
+    fi
+    latest="$(find /var/spool/zeek/tmp -maxdepth 1 -type d -name '*-crash' 2>/dev/null | sort | tail -1)"
+    if [ -n "$latest" ]; then
+        mark INFO "latest Zeek crash folder: $latest"
+        [ -f "$latest/post-terminate.out" ] && tail -12 "$latest/post-terminate.out" 2>/dev/null | sed 's/^/      /'
+        [ -f "$latest/.crash-diag.out" ] && tail -12 "$latest/.crash-diag.out" 2>/dev/null | sed 's/^/      /'
+    fi
+    logdir="/usr/local/zeek/logs/current"
+    [ -d "$logdir" ] && mark OK "Zeek current log directory exists: $logdir" || mark WARN "Zeek current log directory missing"
+    finish
+}
+
 doctor_status() {
     header "status"
     mark INFO "operator command center: socx doctor | socx autopilot | socx why-slow | socx services"
@@ -942,6 +975,8 @@ doctor_status() {
     unknown_bytes="$(wc -c /var/db/socx_unknown_services.log 2>/dev/null | awk '{print $1}')"
     if [ "${unknown_bytes:-0}" = "0" ]; then
         mark OK "unknown-service learner clean"
+    elif [ "${unknown_bytes:-0}" -lt "${SOCX_UNKNOWN_SERVICE_WARN_BYTES:-50000}" ] 2>/dev/null; then
+        mark OK "unknown-service learner trimmed/review-only ${unknown_bytes:-?} bytes"
     else
         mark WARN "unknown-service learner has ${unknown_bytes:-?} bytes; run: socx services"
     fi
@@ -1238,10 +1273,11 @@ case "$cmd" in
     why-slow|slow) doctor_why_slow ;;
     pi-llm|llm|pi) doctor_pi_llm ;;
     php-services|service-registry|crash-report) doctor_php_services ;;
+    zeek|zeek-health) doctor_zeek ;;
     logs|pressure|cpu) doctor_logs ;;
     why-blocked|why) doctor_why "$arg" ;;
     *)
-        echo "Usage: socx-doctor [all|status|autopilot|gateways|wan-quality|speedtest-profiles|topology|dnsbl|dnsbl-review|ids|tune-ids|vnstat|unknown-services|why-slow|pi-llm|php-services|logs|why-blocked <term>]" >&2
+        echo "Usage: socx-doctor [all|status|autopilot|gateways|wan-quality|speedtest-profiles|topology|dnsbl|dnsbl-review|ids|tune-ids|vnstat|unknown-services|why-slow|pi-llm|php-services|zeek|logs|why-blocked <term>]" >&2
         exit 2
         ;;
 esac
