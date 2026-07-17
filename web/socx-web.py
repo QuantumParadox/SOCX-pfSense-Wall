@@ -267,6 +267,10 @@ class SocxCollector:
         command_center = self.collect_command_center()
         incident = self.collect_incident_light(command_center)
         pi_nodes = self.collect_pi_nodes()
+        flows = self.collect_flows()
+        threat_pulse = self.collect_threat_pulse(incident)
+        asset_watch = self.collect_asset_watch(flows, pi_nodes)
+        ai_timeline = self.collect_ai_timeline(pi_nodes, command_center)
 
         packets: list[dict[str, Any]] = []
         if time.time() - self.last_event_read > 0.8:
@@ -275,7 +279,6 @@ class SocxCollector:
         else:
             packets = self.state.get("packets", [])
 
-        flows = self.collect_flows()
         for key, value in {
             "cpu": cpu["overall"],
             "mem": mem["used_pct"],
@@ -311,6 +314,9 @@ class SocxCollector:
             "command_center": command_center,
             "incident": incident,
             "pi_nodes": pi_nodes,
+            "threat_pulse": threat_pulse,
+            "asset_watch": asset_watch,
+            "ai_timeline": ai_timeline,
             "flows": flows,
             "packets": packets,
             "events": list(self.events.values())[-self.event_max :],
@@ -739,6 +745,165 @@ class SocxCollector:
             "headline": f"{verdict}: top source {top_src}, top port {top_port}",
             "updated_ms": now_ms(),
         }
+
+    def collect_threat_pulse(self, incident: dict[str, Any]) -> dict[str, Any]:
+        counts = incident.get("counts") if isinstance(incident.get("counts"), dict) else {}
+        fw = int(counts.get("sources", 0) or 0)
+        dnsbl = int(counts.get("dnsbl", 0) or 0)
+        ids_high = int(counts.get("ids_high", 0) or 0)
+        ids = incident.get("ids") if isinstance(incident.get("ids"), dict) else {}
+        ids_routine = int(ids.get("routine", 0) or 0)
+        ports = incident.get("blocked_ports") if isinstance(incident.get("blocked_ports"), list) else []
+        domains = incident.get("dnsbl_domains") if isinstance(incident.get("dnsbl_domains"), list) else []
+        sources = incident.get("blocked_sources") if isinstance(incident.get("blocked_sources"), list) else []
+        top_port = ports[0] if ports else {}
+        top_domain = domains[0] if domains else {}
+        top_source = sources[0] if sources else {}
+        score = 100
+        score -= min(35, fw // 8)
+        score -= min(25, dnsbl // 50)
+        score -= min(30, ids_high * 12)
+        score -= min(12, ids_routine // 60)
+        score = max(0, score)
+        if ids_high > 0 or fw >= 180:
+            label = "INVESTIGATE"
+            severity = "red"
+        elif fw > 0 or dnsbl > 0 or ids_routine > 0:
+            label = "WATCH"
+            severity = "yellow"
+        else:
+            label = "QUIET"
+            severity = "green"
+        return {
+            "label": label,
+            "severity": severity,
+            "score": score,
+            "fw_blocks": fw,
+            "dnsbl_hits": dnsbl,
+            "ids_high": ids_high,
+            "ids_watch": ids_routine,
+            "top_port": top_port.get("name", "--"),
+            "top_port_count": top_port.get("count", 0),
+            "top_domain": top_domain.get("name", "--"),
+            "top_domain_count": top_domain.get("count", 0),
+            "top_source": top_source.get("name", "--"),
+            "top_source_count": top_source.get("count", 0),
+        }
+
+    def collect_asset_watch(self, flows: list[dict[str, Any]], pi_nodes: dict[str, Any]) -> dict[str, Any]:
+        audit_path = Path(os.environ.get("SOCX_HOSTS_AUDIT_OUT", "/tmp/socx-hosts-audit.txt"))
+        unknown_log = Path(os.environ.get("SOCX_UNKNOWN_SERVICES_LOG", "/var/db/socx_unknown_services.log"))
+        audit = ""
+        try:
+            audit = audit_path.read_text(errors="ignore")
+        except Exception:
+            pass
+        known_ips: set[str] = set()
+        unknown_ips: set[str] = set()
+        in_observed = False
+        for line in audit.splitlines():
+            if line.strip().lower().startswith("observed lan devices"):
+                in_observed = True
+                continue
+            if not in_observed:
+                continue
+            if line.strip().lower().startswith(("suggested additions", "suggested corrections")):
+                break
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) < 4 or not parts[0].startswith("192.168.1."):
+                continue
+            state = parts[3].upper()
+            if state == "KNOWN":
+                known_ips.add(parts[0])
+                unknown_ips.discard(parts[0])
+            elif state == "UNKNOWN" and parts[0] not in known_ips:
+                unknown_ips.add(parts[0])
+        known = len(known_ips)
+        unknown = len(unknown_ips)
+        unknown_bytes = 0
+        try:
+            unknown_bytes = unknown_log.stat().st_size
+        except Exception:
+            pass
+        top_assets: dict[str, int] = {}
+        top_services: dict[str, int] = {}
+        for flow in flows:
+            count = int(flow.get("count", 1) or 1)
+            asset = str(flow.get("asset", "unknown"))
+            svc = str(flow.get("service", "other"))
+            top_assets[asset] = top_assets.get(asset, 0) + count
+            top_services[svc] = top_services.get(svc, 0) + count
+        rank = lambda data: [{"name": k, "count": v} for k, v in sorted(data.items(), key=lambda kv: kv[1], reverse=True)[:4]]
+        pi_count = int(pi_nodes.get("count", 0) or 0)
+        pi_online = int(pi_nodes.get("online", 0) or 0)
+        top_asset = rank(top_assets)
+        top_service = rank(top_services)
+        status = "green" if unknown_bytes < 50000 and pi_online == pi_count else "yellow"
+        if pi_count and pi_online < pi_count:
+            status = "red"
+        return {
+            "status": status,
+            "known": known,
+            "unknown": unknown,
+            "unknown_bytes": unknown_bytes,
+            "unknown_h": human_bytes(unknown_bytes),
+            "pi_online": pi_online,
+            "pi_count": pi_count,
+            "top_assets": top_asset,
+            "top_services": top_service,
+            "headline": f"Pi {pi_online}/{pi_count} | unknown learner {human_bytes(unknown_bytes)}",
+        }
+
+    def collect_ai_timeline(self, pi_nodes: dict[str, Any], center: dict[str, Any]) -> dict[str, Any]:
+        rows: list[dict[str, Any]] = []
+        pi_cache = parse_env_file(Path(os.environ.get("SOCX_PI_LLM_ANALYSIS_CACHE", "/tmp/socx-pi-llm-analysis.env")))
+        miranda_cache = parse_env_file(Path(os.environ.get("SOCX_MIRANDA_ANALYSIS_CACHE", "/tmp/socx-miranda-analysis.env")))
+
+        def env_row(source: str, data: dict[str, str]) -> None:
+            if not data:
+                return
+            severity = (data.get("severity") or data.get("status") or "UNKNOWN").upper()
+            confidence = data.get("confidence") or data.get("score") or ""
+            reason = data.get("reason") or data.get("summary") or data.get("message") or "analysis cache present"
+            age = 0
+            try:
+                updated = float(data.get("updated", "0") or data.get("ts", "0") or 0)
+                age = int(max(0, time.time() - updated)) if updated else 0
+            except ValueError:
+                age = 0
+            rows.append({
+                "source": source,
+                "severity": severity,
+                "confidence": confidence,
+                "reason": reason[:180],
+                "age_sec": age,
+                "age_h": human_duration(age) if age else "fresh",
+            })
+
+        env_row("Pi AI", pi_cache)
+        env_row("MIRANDA", miranda_cache)
+        for node in (pi_nodes.get("nodes") if isinstance(pi_nodes.get("nodes"), list) else []):
+            if not isinstance(node, dict) or not node.get("autonomy_mode"):
+                continue
+            rows.append({
+                "source": node.get("name") or "Pi",
+                "severity": str(node.get("autonomy_mode") or "watch").upper(),
+                "confidence": node.get("autonomy_score", ""),
+                "reason": str(node.get("autonomy_summary") or node.get("service_h") or "AI node online")[:180],
+                "age_sec": 0,
+                "age_h": "live",
+            })
+        rows.append({
+            "source": "Autopilot",
+            "severity": str(center.get("mode") or "UNKNOWN").upper(),
+            "confidence": center.get("score", ""),
+            "reason": str(center.get("summary") or "SOCX command center ready")[:180],
+            "age_sec": 0,
+            "age_h": "live",
+        })
+        return {"rows": rows[:6], "count": len(rows)}
 
     def history_trend(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
         if not rows:
@@ -1169,10 +1334,13 @@ class SocxCollector:
             "pi_nodes": {
                 "updated": int(time.time()),
                 "count": 2,
+                "online": 2,
+                "score": 100,
+                "summary": "2/2 Pi nodes online",
                 "age_sec": 0,
                 "nodes": [
-                    {"ip": "192.168.1.121", "name": "RaspberryPi5", "model": "Raspberry Pi 5", "role": "pi-5-ai", "service": "socx-3llm", "ports": "22,8095"},
-                    {"ip": "192.168.1.180", "name": "ColumbiaPi4", "model": "Raspberry Pi 4", "role": "pi-4-telemetry", "service": "node-exporter", "ports": "22,9100"},
+                    {"ip": "192.168.1.121", "name": "RaspberryPi5", "model": "Raspberry Pi 5", "role": "pi-5-ai", "role_h": "AI 3/3", "status": "online", "service": "socx-3llm", "service_h": "socx-3llm Hailo 4 CPU 3 EXP 3/3", "temperature_h": "41C/106F", "memory_h": "9%", "load_h": "0.04", "uptime_h": "--", "autonomy_mode": "watch", "autonomy_score": 53, "autonomy_summary": "WATCH score 53 | FW 2000 DNSBL 2000 IDS watch 300", "ports": "22,8095"},
+                    {"ip": "192.168.1.180", "name": "ColumbiaPi4", "model": "Raspberry Pi 4", "role": "pi-4-telemetry", "role_h": "TELEMETRY", "status": "online", "service": "socx-sidecar", "service_h": "socx-sidecar", "temperature_h": "36C/96F", "memory_h": "12%", "load_h": "0.03", "uptime_h": "121d 12h", "ports": "22,9100"},
                 ],
             },
             "incident": {
@@ -1186,6 +1354,41 @@ class SocxCollector:
                 "ids": {"high_signal": 1, "routine": 12},
                 "actions": ["socx snapshot", "socx incident-mode 120", "socx pi-llm"],
                 "updated_ms": now_ms(),
+            },
+            "threat_pulse": {
+                "label": "WATCH",
+                "severity": "yellow",
+                "score": 82,
+                "fw_blocks": 22,
+                "dnsbl_hits": 7,
+                "ids_high": 1,
+                "ids_watch": 12,
+                "top_port": "443",
+                "top_port_count": 11,
+                "top_source": "217.142.11.40",
+                "top_source_count": 9,
+                "top_domain": "beacons.gvt2.com",
+                "top_domain_count": 7,
+            },
+            "asset_watch": {
+                "status": "green",
+                "known": 18,
+                "unknown": 2,
+                "unknown_bytes": 2048,
+                "unknown_h": "2.00KB",
+                "pi_online": 2,
+                "pi_count": 2,
+                "headline": "Pi 2/2 | unknown learner 2.00KB",
+                "top_assets": [{"name": "JupiterLXI/192.168.1.161", "count": 3}],
+                "top_services": [{"name": "https", "count": 3}],
+            },
+            "ai_timeline": {
+                "count": 3,
+                "rows": [
+                    {"source": "Pi AI", "severity": "WARN", "confidence": "91", "reason": "Routine watch, preserve incident bundle before changes", "age_h": "2m"},
+                    {"source": "MIRANDA", "severity": "WARN", "confidence": "88", "reason": "DNSBL/FW watch signals elevated", "age_h": "live"},
+                    {"source": "Autopilot", "severity": "WATCH", "confidence": "82", "reason": "WAN healthy, VPN paths mixed, DNSBL routine", "age_h": "live"},
+                ],
             },
             "flows": [
                 {"asset": "JupiterLXI/192.168.1.161", "peer": "EXT.155.209", "proto": "TCP", "service": "https", "port": "443", "state": "ESTABLISHED", "count": 3, "tag": "web"},

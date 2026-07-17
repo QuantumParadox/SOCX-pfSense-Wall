@@ -2,6 +2,10 @@
 
 ## v0.1.46
 
+- Added SOCX Browser Mission Control v0.8 strip with Threat Pulse, LAN Asset Watch, and AI Verdict Timeline panels.
+- Added browser wall controls for local ticker speed cycling and big-text mode.
+- Added backend `/api/state` objects for `threat_pulse`, `asset_watch`, and `ai_timeline` using pfSense/SOCX logs and read-only cache files.
+- Expanded LAN Asset Watch with Pi 4/Pi 5 health, unknown-service learner size, top LAN asset, top service, and observed known/unknown LAN device counts.
 - Added v0.6 Incident Cockpit for the browser wall with top blocked sources, ports, DNSBL domains, affected LAN hosts, IDS signal, and a visible incident verdict.
 - Added multi-Pi discovery with `socx pi-nodes`, including Pi 5 SOCX AI and Pi 4 node-exporter telemetry detection.
 - Added a standard-library Pi telemetry sidecar on port `8096` for richer Pi Fleet health, plus SOCX status/autopilot awareness of the Pi fleet.

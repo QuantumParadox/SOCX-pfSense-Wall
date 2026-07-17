@@ -4,6 +4,7 @@ let lastTickerText = "";
 let pollingTimer = null;
 let latestState = null;
 let clusterTick = 0;
+let tickerMode = localStorage.getItem("socxTickerMode") || "slow";
 
 const fmtPct = (v) => `${Number(v || 0).toFixed(0)}%`;
 const safe = (v, fallback = "--") => (v === undefined || v === null || v === "" ? fallback : String(v));
@@ -229,6 +230,65 @@ function renderPiNodes(piNodes = {}) {
   }).join("");
 }
 
+function metricBox(label, value, cls = "") {
+  return `<div class="metric-box ${cls}"><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`;
+}
+
+function renderThreatPulse(pulse = {}) {
+  const root = $("threat-pulse");
+  const state = $("threat-state");
+  if (state) {
+    state.textContent = `${safe(pulse.label, "--")} ${safe(pulse.score, "--")}`;
+    state.className = pulse.severity || "";
+  }
+  if (!root) return;
+  root.innerHTML = [
+    metricBox("FW blocks", safe(pulse.fw_blocks, 0), pulse.fw_blocks > 120 ? "red" : pulse.fw_blocks > 0 ? "yellow" : "green"),
+    metricBox("DNSBL", safe(pulse.dnsbl_hits, 0), pulse.dnsbl_hits > 250 ? "yellow" : "cyan"),
+    metricBox("IDS high", safe(pulse.ids_high, 0), pulse.ids_high > 0 ? "red" : "green"),
+    metricBox("IDS watch", safe(pulse.ids_watch, 0), pulse.ids_watch > 200 ? "yellow" : "cyan"),
+    metricBox("Top port", `${safe(pulse.top_port, "--")} x${safe(pulse.top_port_count, 0)}`, "cyan"),
+    metricBox("Top source", `${safe(pulse.top_source, "--")} x${safe(pulse.top_source_count, 0)}`, "purple"),
+  ].join("");
+}
+
+function renderAssetWatch(asset = {}) {
+  const root = $("asset-watch");
+  const state = $("asset-state");
+  if (state) {
+    state.textContent = safe(asset.headline, "--");
+    state.className = asset.status || "";
+  }
+  if (!root) return;
+  const topAsset = (asset.top_assets || [])[0] || {};
+  const topSvc = (asset.top_services || [])[0] || {};
+  root.innerHTML = [
+    metricBox("Pi nodes", `${safe(asset.pi_online, 0)}/${safe(asset.pi_count, 0)}`, asset.pi_online === asset.pi_count ? "green" : "red"),
+    metricBox("Unknown log", safe(asset.unknown_h, "--"), asset.unknown_bytes > 50000 ? "yellow" : "green"),
+    metricBox("Top LAN", `${safe(topAsset.name, "--")} x${safe(topAsset.count, 0)}`, "cyan"),
+    metricBox("Top app", `${safe(topSvc.name, "--")} x${safe(topSvc.count, 0)}`, "purple"),
+  ].join("");
+}
+
+function renderAiTimeline(ai = {}) {
+  const root = $("ai-timeline");
+  const state = $("ai-state");
+  const rows = Array.isArray(ai.rows) ? ai.rows : [];
+  if (state) state.textContent = `${rows.length} signals`;
+  if (!root) return;
+  root.innerHTML = rows.slice(0, 4).map((item) => {
+    const sev = String(item.severity || "").toUpperCase();
+    const cls = sev.includes("HIGH") || sev.includes("INCIDENT") ? "red" : sev.includes("WARN") || sev.includes("WATCH") ? "yellow" : "green";
+    return `
+      <div class="ai-row">
+        <span class="${cls}">${escapeHtml(item.source || "AI")}</span>
+        <b>${escapeHtml(sev || "--")}${item.confidence !== "" && item.confidence !== undefined ? ` ${escapeHtml(item.confidence)}` : ""}</b>
+        <em title="${escapeHtml(item.reason || "")}">${escapeHtml(item.reason || "--")}</em>
+      </div>
+    `;
+  }).join("");
+}
+
 function piNodeStats(node = {}) {
   const bits = [];
   if (node.temperature_c !== undefined && node.temperature_c !== null) bits.push(`${Number(node.temperature_c).toFixed(0)}C`);
@@ -373,11 +433,20 @@ function renderTicker(events = []) {
   if (text === lastTickerText) return;
   lastTickerText = text;
   ticker.innerHTML = `<span>${escapeHtml(text)}</span><span aria-hidden="true">${escapeHtml(text)}</span>`;
-  const duration = Math.max(26, Math.min(110, text.length / 3.8));
+  const divisor = tickerMode === "fast" ? 8 : tickerMode === "normal" ? 5.8 : 3.8;
+  const floor = tickerMode === "fast" ? 12 : tickerMode === "normal" ? 20 : 26;
+  const ceiling = tickerMode === "fast" ? 54 : tickerMode === "normal" ? 82 : 110;
+  const duration = Math.max(floor, Math.min(ceiling, text.length / divisor));
   document.documentElement.style.setProperty("--ticker-duration", `${duration}s`);
   ticker.style.animation = "none";
   ticker.offsetHeight;
   ticker.style.animation = "";
+}
+
+function applyWallPrefs() {
+  document.body.classList.toggle("big-wall", localStorage.getItem("socxBigWall") === "1");
+  const button = $("ticker-speed");
+  if (button) button.textContent = tickerMode;
 }
 
 function render(state) {
@@ -430,6 +499,9 @@ function render(state) {
   setText("cmd-note", `${safe(state.command_center?.mode, "autopilot")} ${safe(state.command_center?.score, "--")}`);
   renderCommandCenter(state.command_center || {});
   renderPiNodes(state.pi_nodes || {});
+  renderThreatPulse(state.threat_pulse || {});
+  renderAssetWatch(state.asset_watch || {});
+  renderAiTimeline(state.ai_timeline || {});
   renderIncident(state.incident || {});
   renderFlows(state.flows || []);
   renderPackets(state.packets || []);
@@ -548,6 +620,20 @@ $("fullscreen")?.addEventListener("click", () => {
   else document.exitFullscreen?.();
 });
 
+$("ticker-speed")?.addEventListener("click", () => {
+  tickerMode = tickerMode === "slow" ? "normal" : tickerMode === "normal" ? "fast" : "slow";
+  localStorage.setItem("socxTickerMode", tickerMode);
+  lastTickerText = "";
+  applyWallPrefs();
+  renderTicker(latestState?.events || []);
+});
+
+$("big-mode")?.addEventListener("click", () => {
+  const next = localStorage.getItem("socxBigWall") === "1" ? "0" : "1";
+  localStorage.setItem("socxBigWall", next);
+  applyWallPrefs();
+});
+
 document.querySelectorAll(".commander-buttons button").forEach((button) => {
   button.addEventListener("click", () => runCommander(button.dataset.action || ""));
 });
@@ -559,6 +645,7 @@ $("command-output-close")?.addEventListener("click", () => {
 
 setInterval(updateClock, 500);
 setInterval(() => drawCluster($("cluster-canvas"), latestState?.pi_nodes?.nodes || []), 650);
+applyWallPrefs();
 updateClock();
 connect();
 poll();

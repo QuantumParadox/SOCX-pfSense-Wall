@@ -74,6 +74,8 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds `socx snapshot-cron`, a nightly read-only evidence snapshot schedule with retention cleanup.
 - Adds `/api/history` plus a tiny Command Center score sparkline in the browser wall.
 - Adds a browser Incident Cockpit and safe Commander buttons for status, Incident Mode, snapshots, Zeek health, and Pi AI checks.
+- Adds a browser Mission Control strip with Threat Pulse, LAN Asset Watch, and AI Verdict Timeline.
+- Adds local browser controls for ticker speed and big-text wall readability mode.
 - Adds a compact Pi Fleet visualizer in the browser wall for pfSense, Pi 5 AI, Pi 4 telemetry, online count, temperature, memory, load, and service state.
 - Adds browser voice Commander support for the same fixed allowlist as the buttons: status, incident, snapshot, speedtest, Zeek, and Pi AI.
 - Adds browser Speedtest truth comparison for CLIENT, ROUTER, DIRECT, and VPN paths so router-side under-reporting is visible instead of confusing.

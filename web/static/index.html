@@ -20,6 +20,8 @@
         <span class="pill" id="health">connecting</span>
         <span class="pill accent" id="refresh">500ms</span>
         <span class="clock" id="clock">--:--:--</span>
+        <button class="icon-button text-button" id="ticker-speed" title="Ticker speed" aria-label="Ticker speed">slow</button>
+        <button class="icon-button text-button" id="big-mode" title="Big text mode" aria-label="Big text mode">big</button>
         <button class="icon-button" id="fullscreen" title="Fullscreen" aria-label="Fullscreen">⛶</button>
       </div>
     </header>
@@ -107,6 +109,30 @@
         <div class="stat-line"><span>free</span><strong id="mem-free">--</strong></div>
         <div class="stat-line"><span>ARC</span><strong id="mem-arc">--</strong></div>
         <canvas class="spark small" id="mem-spark"></canvas>
+      </section>
+
+      <section class="card mission-card threat-card">
+        <div class="card-head">
+          <h2>Threat Pulse</h2>
+          <span id="threat-state">--</span>
+        </div>
+        <div class="pulse-grid" id="threat-pulse"></div>
+      </section>
+
+      <section class="card mission-card asset-card">
+        <div class="card-head">
+          <h2>LAN Asset Watch</h2>
+          <span id="asset-state">--</span>
+        </div>
+        <div class="asset-watch" id="asset-watch"></div>
+      </section>
+
+      <section class="card mission-card ai-card">
+        <div class="card-head">
+          <h2>AI Verdict Timeline</h2>
+          <span id="ai-state">--</span>
+        </div>
+        <div class="ai-timeline" id="ai-timeline"></div>
       </section>
 
       <section class="card table-card process-card">
