@@ -180,6 +180,51 @@ doctor_wan_quality() {
     finish
 }
 
+doctor_speedtest_profiles() {
+    header "speedtest profiles"
+    direct="${SOCX_SPEEDTEST_DIRECT_CACHE_FILE:-/tmp/socx-speedtest-direct.env}"
+    vpn="${SOCX_SPEEDTEST_VPN_CACHE_FILE:-/tmp/socx-speedtest-vpn.env}"
+    active="${SOCX_SPEEDTEST_CACHE_FILE:-/tmp/socx-speedtest-cache.env}"
+    client="${SOCX_SPEEDTEST_CLIENT_CACHE_FILE:-/tmp/socx-speedtest-client.env}"
+    router="${SOCX_SPEEDTEST_ROUTER_CACHE_FILE:-/tmp/socx-speedtest-router.env}"
+    for row in "ACTIVE:$active" "DIRECT:$direct" "VPN:$vpn" "CLIENT:$client" "ROUTER:$router"; do
+        name="${row%%:*}"
+        file="${row#*:}"
+        if [ -f "$file" ]; then
+            status="$(env_value status "$file")"
+            mode="$(env_value mode "$file")"
+            down="$(env_value download_mbps "$file")"
+            up="$(env_value upload_mbps "$file")"
+            ping="$(env_value ping_ms "$file")"
+            age="$(age_file "$file")"
+            case "$status" in
+                ok) mark OK "$name ${down:-?}/${up:-?} Mbps ping=${ping:-?}ms mode=${mode:-?} age=${age:-?}s" ;;
+                running) mark WARN "$name running mode=${mode:-?} age=${age:-?}s" ;;
+                *) mark WARN "$name status=${status:-unknown} mode=${mode:-?} age=${age:-?}s" ;;
+            esac
+        else
+            mark WARN "$name cache missing: $file"
+        fi
+    done
+    if [ -f "$direct" ] && [ -f "$vpn" ]; then
+        dd="$(env_value download_mbps "$direct")"
+        du="$(env_value upload_mbps "$direct")"
+        dp="$(env_value ping_ms "$direct")"
+        vd="$(env_value download_mbps "$vpn")"
+        vu="$(env_value upload_mbps "$vpn")"
+        vp="$(env_value ping_ms "$vpn")"
+        if awk -v dd="$dd" -v du="$du" -v vd="$vd" -v vu="$vu" 'BEGIN{exit !((dd+0)>0 && (du+0)>0 && (vd+0)>0 && (vu+0)>0)}'; then
+            pct="$(awk -v dd="$dd" -v du="$du" -v vd="$vd" -v vu="$vu" 'BEGIN{printf "%.0f/%.0f", (vd/dd)*100, (vu/du)*100}')"
+            delta="$(awk -v dp="$dp" -v vp="$vp" 'BEGIN{printf "%+.0f", (vp+0)-(dp+0)}')"
+            mark INFO "VPN vs DIRECT: $pct percent throughput, latency ${delta}ms"
+        fi
+    fi
+    mark INFO "run direct: socx speedtest direct"
+    mark INFO "run VPN:    socx speedtest vpn"
+    mark INFO "import:     socx speedtest import direct|vpn <down> <up> <ping> ..."
+    finish
+}
+
 doctor_topology() {
     header "topology"
     if command -v lldpcli >/dev/null 2>&1; then
@@ -723,6 +768,20 @@ doctor_status() {
     else
         mark WARN "Speedtest cache missing; run: socx speedtest once"
     fi
+    for profile_row in "DIRECT:/tmp/socx-speedtest-direct.env" "VPN:/tmp/socx-speedtest-vpn.env"; do
+        pname="${profile_row%%:*}"
+        pfile="${profile_row#*:}"
+        if [ -f "$pfile" ]; then
+            pstatus="$(env_value status "$pfile")"
+            pdown="$(env_value download_mbps "$pfile")"
+            pup="$(env_value upload_mbps "$pfile")"
+            pping="$(env_value ping_ms "$pfile")"
+            page="$(age_file "$pfile")"
+            [ "$pstatus" = ok ] && mark OK "$pname Speedtest ${pdown:-?}/${pup:-?} Mbps ping=${pping:-?}ms age=${page:-?}s" || mark WARN "$pname Speedtest status=${pstatus:-unknown} age=${page:-?}s"
+        else
+            mark WARN "$pname Speedtest cache missing; run: socx speedtest $(printf '%s' "$pname" | tr '[:upper:]' '[:lower:]')"
+        fi
+    done
 
     ups_cache="/tmp/socx-ups-cache.env"
     [ -f "$ups_cache" ] || ups_cache="/tmp/socx-ups-cache.json"
@@ -833,6 +892,8 @@ doctor_autopilot() {
     fi
 
     spd="/tmp/socx-speedtest-cache.env"
+    spd_direct="/tmp/socx-speedtest-direct.env"
+    spd_vpn="/tmp/socx-speedtest-vpn.env"
     if [ -f "$spd" ]; then
         spd_status="$(env_value status "$spd")"
         spd_age="$(age_file "$spd")"
@@ -847,6 +908,24 @@ doctor_autopilot() {
     else
         score=$((score - 8))
         reasons="${reasons} speedtest-missing"
+    fi
+    if [ -f "$spd_direct" ] && [ -f "$spd_vpn" ]; then
+        dd="$(env_value download_mbps "$spd_direct")"
+        du="$(env_value upload_mbps "$spd_direct")"
+        dp="$(env_value ping_ms "$spd_direct")"
+        vd="$(env_value download_mbps "$spd_vpn")"
+        vu="$(env_value upload_mbps "$spd_vpn")"
+        vp="$(env_value ping_ms "$spd_vpn")"
+        if awk -v dd="$dd" -v du="$du" -v vd="$vd" -v vu="$vu" 'BEGIN{exit !((dd+0)>0 && (du+0)>0 && (vd+0)>0 && (vu+0)>0)}'; then
+            vpn_down_pct="$(awk -v dd="$dd" -v vd="$vd" 'BEGIN{printf "%.0f", (vd/dd)*100}')"
+            vpn_up_pct="$(awk -v du="$du" -v vu="$vu" 'BEGIN{printf "%.0f", (vu/du)*100}')"
+            ping_delta="$(awk -v dp="$dp" -v vp="$vp" 'BEGIN{printf "%.0f", (vp+0)-(dp+0)}')"
+            if [ "$vpn_down_pct" -lt 35 ] 2>/dev/null || [ "$vpn_up_pct" -lt 35 ] 2>/dev/null || [ "$ping_delta" -gt 80 ] 2>/dev/null; then
+                score=$((score - 10))
+                reasons="${reasons} vpn-speed"
+                actions="${actions} run socx-doctor speedtest-profiles;"
+            fi
+        fi
     fi
 
     if [ -f /tmp/socx-pi-llm-analysis.env ]; then
@@ -992,6 +1071,7 @@ case "$cmd" in
     autopilot|auto|autonomy) doctor_autopilot ;;
     gateways|gateway|dpinger) doctor_gateways ;;
     wan-quality|quality|wan) doctor_wan_quality ;;
+    speedtest-profiles|speedtests|speedtest|spd) doctor_speedtest_profiles ;;
     topology|lldp|devices) doctor_topology ;;
     dnsbl|dns) doctor_dnsbl ;;
     dnsbl-review|review-dnsbl) doctor_dnsbl_review ;;
@@ -1010,7 +1090,7 @@ case "$cmd" in
     logs|pressure|cpu) doctor_logs ;;
     why-blocked|why) doctor_why "$arg" ;;
     *)
-        echo "Usage: socx-doctor [all|status|autopilot|gateways|wan-quality|topology|dnsbl|dnsbl-review|ids|tune-ids|vnstat|unknown-services|why-slow|pi-llm|logs|why-blocked <term>]" >&2
+        echo "Usage: socx-doctor [all|status|autopilot|gateways|wan-quality|speedtest-profiles|topology|dnsbl|dnsbl-review|ids|tune-ids|vnstat|unknown-services|why-slow|pi-llm|logs|why-blocked <term>]" >&2
         exit 2
         ;;
 esac

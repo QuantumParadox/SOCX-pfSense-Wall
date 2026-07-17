@@ -587,6 +587,8 @@ Speedtest cache settings:
 SOCX_SPEEDTEST_ENABLED=true
 SOCX_SPEEDTEST_INTERVAL=6h      # 30m, 1h, 6h, or seconds
 SOCX_SPEEDTEST_SERVER_MODE=auto # frontier for fixed server, auto for nearest
+SOCX_SPEEDTEST_ROTATE_SECONDS=4 # rotate DIRECT/VPN display profiles
+SOCX_SPEEDTEST_DISPLAY_PROFILE=auto # auto, direct, or vpn
 SOCX_SPEEDTEST_FRONTIER_SERVER_ID=56485
 SOCX_SPEEDTEST_FRONTIER_SERVER_NAME=Frontier
 SOCX_SPEEDTEST_FRONTIER_SERVER_LOCATION='Secaucus, NJ'
@@ -595,31 +597,38 @@ SOCX_SPEEDTEST_BASELINE_DOWN_MBPS=2000
 SOCX_SPEEDTEST_BASELINE_UP_MBPS=2000
 ```
 
-`SOCX_SPEEDTEST_SERVER_MODE=auto` uses the Frontier Secaucus server while VPN status is down/direct, and lets Speedtest auto-select when a VPN path appears active. The wall reads the cache only; scheduled bandwidth tests run in `socx-speedtest-cache`, so the 500 ms wall renderer never blocks on a bandwidth test.
+`SOCX_SPEEDTEST_SERVER_MODE=auto` uses the Frontier Secaucus server while VPN status is down/direct, and lets Speedtest auto-select when a VPN path appears active. The wall reads the cache only; scheduled bandwidth tests run in `socx-speedtest-cache`, so the 500 ms wall renderer never blocks on a bandwidth test. SOCX does not change pfSense routing to force tests through a VPN; for the safest VPN truth, run/import a test from a client or policy-routed path that already uses that VPN.
 
-SOCX keeps Speedtest data in three small env caches:
+SOCX keeps Speedtest data in small env caches:
 
 ```text
 /tmp/socx-speedtest-cache.env         active result shown on the wall
 /tmp/socx-speedtest-client.env        browser/app Speedtest.net truth result
 /tmp/socx-speedtest-router.env        pfSense router-side CLI diagnostic result
+/tmp/socx-speedtest-direct.env        direct/Frontier non-VPN profile
+/tmp/socx-speedtest-vpn.env           VPN path profile
 ```
 
-Why separate client and router results? Some pfSense CLI Speedtest tools can under-report multi-gig fiber, choose a poor server, or fail with a zero/negative download while a browser Speedtest.net result is correct. SOCX now treats a fresh imported browser/app result as `CLIENT` truth and keeps pfSense CLI results as `ROUTER` diagnostics. The wall shows the source label, for example `SPD CLIENT:3223↓/2372↑ 9ms`, and the Speedtest card compares against the default 2G/2G baseline.
+Why separate client, router, direct, and VPN results? Some pfSense CLI Speedtest tools can under-report multi-gig fiber, choose a poor server, or fail with a zero/negative download while a browser Speedtest.net result is correct. SOCX treats a fresh imported browser/app result as `CLIENT` truth, keeps pfSense CLI results as `ROUTER` diagnostics, and keeps DIRECT/VPN profile caches separate so one path does not overwrite the other. The wall rotates profile labels such as `SPD DIRECT:3223↓/2372↑ 9ms` and `SPD VPN:840↓/620↑ 41ms`, then compares VPN throughput and latency against the direct baseline.
 
 Import a known-good Speedtest.net result from a browser or app:
 
 ```sh
 socx speedtest import 3223.30 2371.66 9 "" 56485 Frontier "Secaucus, NJ" "Frontier Communications" 203.0.113.10 "https://www.speedtest.net/result/0000000000"
+socx speedtest import direct 3223.30 2371.66 9 "" 56485 Frontier "Secaucus, NJ" "Frontier Communications" 203.0.113.10 "https://www.speedtest.net/result/0000000000"
+socx speedtest import vpn 840 620 41 "" "" "TorGuard NYC" "VPN path" "" "" ""
 ```
 
 Run a router-side diagnostic test without overwriting a fresh client result:
 
 ```sh
 socx speedtest once
+socx speedtest direct
+socx speedtest vpn
+socx-doctor speedtest-profiles
 ```
 
-If the router result is much lower than the client result, SOCX rotates a warning in the Event Feed instead of replacing the wall with the bad number. Use the router result as a pfSense/tool/path clue; use `CLIENT` as the real user-experience speed.
+If the router result is much lower than the client result, SOCX rotates a warning in the Event Feed instead of replacing the wall with the bad number. If VPN throughput falls far below DIRECT or latency jumps, SOCX rotates a VPN Speedtest warning and Autopilot can move into `WATCH` or `INVESTIGATE`. Use the router result as a pfSense/tool/path clue; use `CLIENT` or a policy-routed profile import as the real user-experience speed.
 
 Modern btop rendering defaults to Unicode/ANSI cards, block meters, and sparklines inside pfSense/tmux:
 

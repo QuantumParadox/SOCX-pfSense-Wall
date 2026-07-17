@@ -6,6 +6,7 @@
 - Added `socx status`, a one-command operator health view for wall, Speedtest, UPS, WAN/VPN, DNS, vnstatd, LLDP, reports, MIRANDA, Pi AI, and unknown-service noise.
 - Added `socx autopilot`, a read-only SOCX autonomy mode that scores WAN/VPN, Speedtest, firewall, DNSBL, IDS, Pi AI, and wall health into `NORMAL`, `WATCH`, `INVESTIGATE`, or `INCIDENT` without changing firewall rules.
 - Rotates Autopilot mode, score, summary, and suggested read-only actions through the Modern Wall Event Feed from `/tmp/socx-autopilot.env`.
+- Added DIRECT/VPN Speedtest profiles with separate caches, profile-aware imports, `socx speedtest direct`, `socx speedtest vpn`, `socx-doctor speedtest-profiles`, wall rotation, and VPN-vs-direct throughput/latency warnings.
 - Added `socx services` / `socx-doctor unknown-services` to summarize unknown ports, generate safe service-label suggestions, apply known labels, and archive/trim the learner log.
 - Expanded built-in and example service labels for MIRANDA, SOCX Web, Pi 3-LLM, Ollama/vLLM, Ray, metrics, Splunk, router APIs, Cassandra, Transmission, and common local legacy ports.
 - Reworded Pi analysis events as `SOCX AI says...` so the rotating feed reads more like an operator verdict.

@@ -1841,8 +1841,15 @@ function header_speedtest_texts($speedtest): array
 
 function speedtest_source_label(array $speedtest): string
 {
+    $profile = strtolower((string)($speedtest['profile'] ?? ''));
     $mode = strtolower((string)($speedtest['mode'] ?? ''));
     $tool = strtolower((string)($speedtest['tool'] ?? ''));
+    if ($profile === 'vpn' || str_contains($mode, 'vpn')) {
+        return 'VPN';
+    }
+    if ($profile === 'direct' || in_array($mode, ['direct', 'frontier'], true)) {
+        return 'DIRECT';
+    }
     if ($mode === 'client' || str_contains($tool, 'speedtest-net')) {
         return 'CLIENT';
     }
@@ -1855,6 +1862,8 @@ function speedtest_source_label(array $speedtest): string
 function speedtest_source_tiny(array $speedtest): string
 {
     return match (speedtest_source_label($speedtest)) {
+        'DIRECT' => 'D',
+        'VPN' => 'V',
         'CLIENT' => 'C',
         'ROUTER' => 'R',
         default => 'A',
@@ -1889,6 +1898,28 @@ function speedtest_baseline_text(array $speedtest): string
         (int)round($downPct),
         $upPct >= 0 ? '+' : '',
         (int)round($upPct));
+}
+
+function speedtest_profile_context_text(array $speedtest): string
+{
+    $source = speedtest_source_label($speedtest);
+    $compare = is_array($speedtest['profile_compare'] ?? null) ? $speedtest['profile_compare'] : [];
+    if ($source === 'VPN' && !empty($compare['available'])) {
+        return sprintf('vs DIRECT %.0f%%/%.0f%% %+dms',
+            (float)($compare['down_pct'] ?? 0),
+            (float)($compare['up_pct'] ?? 0),
+            (int)round((float)($compare['ping_delta'] ?? 0)));
+    }
+    if ($source === 'DIRECT') {
+        $vpn = is_array($speedtest['vpn'] ?? null) ? $speedtest['vpn'] : [];
+        if (strtolower((string)($vpn['status'] ?? '')) === 'ok') {
+            return sprintf('VPN %s/%sM %sms',
+                (string)($vpn['download_mbps'] ?? '?'),
+                (string)($vpn['upload_mbps'] ?? '?'),
+                (string)($vpn['ping_ms'] ?? '?'));
+        }
+    }
+    return speedtest_baseline_text($speedtest);
 }
 
 function header_data_text(array $f): string
@@ -2275,7 +2306,7 @@ function modern_speedtest_rows(array $f, array $p): array
         $fresh = !empty($speedtest['fresh']);
         $health = $fresh ? 'stable' : 'stale';
         $source = speedtest_source_label($speedtest);
-        $baseline = speedtest_baseline_text($speedtest);
+        $context = speedtest_profile_context_text($speedtest);
         $nextValue = speedtest_countdown_value_text($speedtest);
         $healthNext = trim($health . ' ' . $nextValue);
         if (cell_len($healthNext) > $w && $fresh) {
@@ -2290,7 +2321,7 @@ function modern_speedtest_rows(array $f, array $p): array
                 truncate_text(sprintf('%s D %sM', $source[0], $down !== '' ? $down : '?'), $w),
                 truncate_text(sprintf('%s U %sM', $source[0], $up !== '' ? $up : '?'), $w),
                 truncate_text(sprintf('LAT %sms', $ping !== '' ? $ping : '?'), $w),
-                truncate_text(speedtest_baseline_text($speedtest), $w),
+                truncate_text($context, $w),
             ];
         }
 
@@ -2298,7 +2329,7 @@ function modern_speedtest_rows(array $f, array $p): array
             truncate_text(sprintf('%s DOWN %sM ↓', $source, $down !== '' ? $down : '?'), $w),
             truncate_text(sprintf('%s UP   %sM ↑', $source, $up !== '' ? $up : '?'), $w),
             truncate_text(sprintf('PING %sms%s %s', $ping !== '' ? $ping : '?', $jitter !== '' ? ' J' . $jitter . 'ms' : '', $health), $w),
-            truncate_text($baseline, $w),
+            truncate_text($context, $w),
         ];
     }
 
@@ -3432,14 +3463,18 @@ function collect_speedtest_metrics(array &$state, float $now): array
     $cacheFile = getenv('SOCX_SPEEDTEST_CACHE_FILE') ?: '/tmp/socx-speedtest-cache.env';
     $clientFile = getenv('SOCX_SPEEDTEST_CLIENT_CACHE_FILE') ?: '/tmp/socx-speedtest-client.env';
     $routerFile = getenv('SOCX_SPEEDTEST_ROUTER_CACHE_FILE') ?: '/tmp/socx-speedtest-router.env';
+    $directFile = getenv('SOCX_SPEEDTEST_DIRECT_CACHE_FILE') ?: '/tmp/socx-speedtest-direct.env';
+    $vpnFile = getenv('SOCX_SPEEDTEST_VPN_CACHE_FILE') ?: '/tmp/socx-speedtest-vpn.env';
     $intervalFromEnv = (getenv('SOCX_SPEEDTEST_INTERVAL') !== false && trim((string)getenv('SOCX_SPEEDTEST_INTERVAL')) !== '')
         || (getenv('SOCX_SPEEDTEST_INTERVAL_SECONDS') !== false && trim((string)getenv('SOCX_SPEEDTEST_INTERVAL_SECONDS')) !== '');
     $activeRaw = is_readable($cacheFile) ? parse_env_file($cacheFile) : [];
     $clientRaw = is_readable($clientFile) ? parse_env_file($clientFile) : [];
     $routerRaw = is_readable($routerFile) ? parse_env_file($routerFile) : [];
+    $directRaw = is_readable($directFile) ? parse_env_file($directFile) : [];
+    $vpnRaw = is_readable($vpnFile) ? parse_env_file($vpnFile) : [];
     $interval = speedtest_interval_seconds();
     if (!$intervalFromEnv) {
-        foreach ([$activeRaw, $clientRaw, $routerRaw] as $candidate) {
+        foreach ([$activeRaw, $clientRaw, $routerRaw, $directRaw, $vpnRaw] as $candidate) {
             if (isset($candidate['interval_seconds']) && is_numeric($candidate['interval_seconds'])) {
                 $interval = (float)$candidate['interval_seconds'];
                 break;
@@ -3448,15 +3483,39 @@ function collect_speedtest_metrics(array &$state, float $now): array
     }
     $client = normalize_speedtest_cache($clientRaw, $clientFile, $interval, $now);
     $router = normalize_speedtest_cache($routerRaw, $routerFile, $interval, $now);
+    $direct = normalize_speedtest_cache($directRaw, $directFile, $interval, $now);
+    $vpn = normalize_speedtest_cache($vpnRaw, $vpnFile, $interval, $now);
     $active = normalize_speedtest_cache($activeRaw, $cacheFile, $interval, $now);
+    if (($client['status'] ?? '') === 'ok' && (($direct['status'] ?? '') !== 'ok' || (float)($client['age_seconds'] ?? 999999) <= (float)($direct['age_seconds'] ?? 999999))) {
+        $direct = $client;
+        $direct['profile'] = 'direct';
+        $direct['mode'] = (string)($direct['mode'] ?? 'client');
+    }
     $selected = $active;
-    if (($client['status'] ?? '') === 'ok' && !empty($client['fresh'])) {
+    $rotate = max(2.0, (float)(getenv('SOCX_SPEEDTEST_ROTATE_SECONDS') ?: 4.0));
+    $displayProfile = strtolower(trim((string)(getenv('SOCX_SPEEDTEST_DISPLAY_PROFILE') ?: 'auto')));
+    $vpnRenderable = (($vpn['status'] ?? '') === 'ok' || ($vpn['status'] ?? '') === 'running' || ($vpn['status'] ?? '') === 'error');
+    $directRenderable = (($direct['status'] ?? '') === 'ok' || ($direct['status'] ?? '') === 'running' || ($direct['status'] ?? '') === 'error');
+    $showVpn = $vpnRenderable
+        && (int)floor($now / $rotate) % 2 === 1;
+    if ($displayProfile === 'vpn' && $vpnRenderable) {
+        $selected = $vpn;
+    } elseif ($displayProfile === 'direct' && $directRenderable) {
+        $selected = $direct;
+    } elseif ($showVpn) {
+        $selected = $vpn;
+    } elseif (($direct['status'] ?? '') === 'ok' && !empty($direct['fresh'])) {
+        $selected = $direct;
+    } elseif (($client['status'] ?? '') === 'ok' && !empty($client['fresh'])) {
         $selected = $client;
     } elseif (($active['status'] ?? '') !== 'ok' && ($router['status'] ?? '') === 'ok') {
         $selected = $router;
     }
     $selected['client'] = $client;
     $selected['router'] = $router;
+    $selected['direct'] = $direct;
+    $selected['vpn'] = $vpn;
+    $selected['profile_compare'] = speedtest_profile_compare($direct, $vpn);
     $selected['baseline'] = speedtest_baseline();
     $selected['source_label'] = speedtest_source_label($selected);
     $selected['baseline_text'] = speedtest_baseline_text($selected);
@@ -3475,6 +3534,7 @@ function normalize_speedtest_cache(array $raw, string $cacheFile, float $interva
         'status' => $status,
         'message' => (string)($raw['message'] ?? ''),
         'mode' => (string)($raw['mode'] ?? 'auto'),
+        'profile' => (string)($raw['profile'] ?? speedtest_profile_from_cache($raw)),
         'tool' => (string)($raw['tool'] ?? ''),
         'download_mbps' => numeric_text($raw['download_mbps'] ?? ''),
         'upload_mbps' => numeric_text($raw['upload_mbps'] ?? ''),
@@ -3491,6 +3551,45 @@ function normalize_speedtest_cache(array $raw, string $cacheFile, float $interva
         'age_seconds' => $age,
         'fresh' => $fresh,
         'cache_file' => $cacheFile,
+    ];
+}
+
+function speedtest_profile_from_cache(array $raw): string
+{
+    $mode = strtolower((string)($raw['mode'] ?? ''));
+    if (in_array($mode, ['client', 'direct', 'frontier'], true)) {
+        return 'direct';
+    }
+    if (str_contains($mode, 'vpn')) {
+        return 'vpn';
+    }
+    return 'auto';
+}
+
+function speedtest_profile_compare(array $direct, array $vpn): array
+{
+    if (strtolower((string)($direct['status'] ?? '')) !== 'ok' || strtolower((string)($vpn['status'] ?? '')) !== 'ok') {
+        return ['available' => false];
+    }
+    $directDown = (float)($direct['download_mbps'] ?? 0);
+    $directUp = (float)($direct['upload_mbps'] ?? 0);
+    $vpnDown = (float)($vpn['download_mbps'] ?? 0);
+    $vpnUp = (float)($vpn['upload_mbps'] ?? 0);
+    $directPing = (float)($direct['ping_ms'] ?? 0);
+    $vpnPing = (float)($vpn['ping_ms'] ?? 0);
+    if ($directDown <= 0 || $directUp <= 0 || $vpnDown <= 0 || $vpnUp <= 0) {
+        return ['available' => false];
+    }
+    $downPct = ($vpnDown / $directDown) * 100.0;
+    $upPct = ($vpnUp / $directUp) * 100.0;
+    $pingDelta = $vpnPing > 0 && $directPing > 0 ? $vpnPing - $directPing : 0.0;
+    $severity = ($downPct < 35.0 || $upPct < 35.0 || $pingDelta > 80.0) ? 'WARN' : (($downPct < 55.0 || $upPct < 55.0 || $pingDelta > 40.0) ? 'LOW' : 'INFO');
+    return [
+        'available' => true,
+        'down_pct' => $downPct,
+        'up_pct' => $upPct,
+        'ping_delta' => $pingDelta,
+        'severity' => $severity,
     ];
 }
 
@@ -3686,6 +3785,13 @@ function speedtest_status_event(array $speedtest): ?array
                 (string)($client['upload_mbps'] ?? '?'),
                 (string)($router['download_mbps'] ?? '?'),
                 (string)($router['upload_mbps'] ?? '?')));
+        }
+        $compare = is_array($speedtest['profile_compare'] ?? null) ? $speedtest['profile_compare'] : [];
+        if (!empty($compare['available']) && speedtest_source_label($speedtest) === 'VPN') {
+            return soc_event('SPD', (string)($compare['severity'] ?? 'INFO'), sprintf('VPN Speedtest %.0f%% down / %.0f%% up of direct | latency %+dms',
+                (float)($compare['down_pct'] ?? 0),
+                (float)($compare['up_pct'] ?? 0),
+                (int)round((float)($compare['ping_delta'] ?? 0))));
         }
         $server = trim((string)($speedtest['server_name'] ?? '') . ' ' . (string)($speedtest['server_location'] ?? ''));
         $server = $server !== '' ? $server : 'auto server';
