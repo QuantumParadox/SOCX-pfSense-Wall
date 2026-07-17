@@ -56,6 +56,9 @@ fi
 if [ ! -f /usr/local/etc/socx_watchlist.conf ]; then
     install -m 0644 "$ROOT/config/socx_watchlist.conf.example" /usr/local/etc/socx_watchlist.conf
 fi
+if [ ! -f /usr/local/etc/socx_speedtest_paths.conf ]; then
+    install -m 0644 "$ROOT/config/socx_speedtest_paths.conf.example" /usr/local/etc/socx_speedtest_paths.conf
+fi
 
 echo "SOCX pfSense Wall installed."
 echo "Run: soc"

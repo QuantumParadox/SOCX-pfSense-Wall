@@ -1,0 +1,11 @@
+# SOCX named Speedtest paths.
+# Format:
+#   slug|label|profile|cache|gateway_hint|notes
+#
+# SOCX never rewrites pfSense routes for these paths. Use these labels for
+# policy-routed client imports, route-safe diagnostics, and wall/doctor display.
+
+direct|DIRECT Frontier|direct|/tmp/socx-speedtest-direct.env|WAN_DHCP|Frontier Fiber non-VPN baseline
+nyc|VPN NYC|vpn|/tmp/socx-speedtest-vpn-nyc.env|NYCVPN|TorGuard NYC VPN
+rcn-de|VPN RCN-DE|vpn|/tmp/socx-speedtest-vpn-rcn-de.env|RCNVPN|TorGuard Delaware RCN VPN
+rcn-va|VPN RCN-VA|vpn|/tmp/socx-speedtest-vpn-rcn-va.env|RCNVPN2|TorGuard Virginia RCN VPN

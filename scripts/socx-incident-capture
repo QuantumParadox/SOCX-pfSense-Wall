@@ -46,6 +46,7 @@ run_capture socx_doctor_gateways sh -c 'command -v socx-doctor >/dev/null 2>&1 &
 run_capture socx_doctor_dnsbl sh -c 'command -v socx-doctor >/dev/null 2>&1 && socx-doctor dnsbl-review || true'
 run_capture socx_doctor_ids sh -c 'command -v socx-doctor >/dev/null 2>&1 && socx-doctor ids || true'
 run_capture socx_doctor_vnstat sh -c 'command -v socx-doctor >/dev/null 2>&1 && socx-doctor vnstat || true'
+run_capture socx_doctor_speedtest_profiles sh -c 'command -v socx-doctor >/dev/null 2>&1 && socx-doctor speedtest-profiles || true'
 run_capture socx_doctor_logs sh -c 'command -v socx-doctor >/dev/null 2>&1 && socx-doctor logs || true'
 run_capture socx_wall_capture sh -c 'tmux capture-pane -pt socx:0 -S -80 2>/dev/null || true'
 
@@ -54,6 +55,10 @@ copy_if_exists /tmp/socx-wall.err socx-wall.err
 copy_if_exists /tmp/socx-wall-vpn.log socx-wall-vpn.log
 copy_if_exists /tmp/socx-speedtest-cache.json speedtest.json
 copy_if_exists /tmp/socx-speedtest-cache.env speedtest.env
+copy_if_exists /tmp/socx-speedtest-direct.env speedtest-direct.env
+copy_if_exists /tmp/socx-speedtest-vpn.env speedtest-vpn.env
+cp /tmp/socx-speedtest-vpn-*.env "$CASE"/ 2>/dev/null || true
+copy_if_exists /usr/local/etc/socx_speedtest_paths.conf speedtest-paths.conf
 copy_if_exists /tmp/socx-ups-cache.json ups.json
 copy_if_exists /tmp/socx-ups-cache.env ups.env
 copy_if_exists /tmp/socx-miranda-analysis.env miranda-analysis.env

@@ -121,6 +121,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `config/socx_hosts.conf.example` - optional friendly-name map for local LAN hosts.
 - `config/socx_ai_lab.conf.example` - optional AI/MIRANDA endpoint map for local LLMs and external model APIs.
 - `config/socx_watchlist.conf.example` - optional watchlist for important devices, services, domains, ports, and event text.
+- `config/socx_speedtest_paths.conf.example` - optional DIRECT/VPN Speedtest path labels for Frontier, NYC, RCN-DE, RCN-VA, or other policy-routed test paths.
 - `rc.d/socx` - pfSense/FreeBSD boot script for automatic detached startup.
 - `rc.d/socxweb` - optional pfSense/FreeBSD boot script for the browser dashboard service.
 
@@ -607,9 +608,14 @@ SOCX keeps Speedtest data in small env caches:
 /tmp/socx-speedtest-router.env        pfSense router-side CLI diagnostic result
 /tmp/socx-speedtest-direct.env        direct/Frontier non-VPN profile
 /tmp/socx-speedtest-vpn.env           VPN path profile
+/tmp/socx-speedtest-vpn-nyc.env       named VPN NYC profile
+/tmp/socx-speedtest-vpn-rcn-de.env    named VPN RCN Delaware profile
+/tmp/socx-speedtest-vpn-rcn-va.env    named VPN RCN Virginia profile
 ```
 
 Why separate client, router, direct, and VPN results? Some pfSense CLI Speedtest tools can under-report multi-gig fiber, choose a poor server, or fail with a zero/negative download while a browser Speedtest.net result is correct. SOCX treats a fresh imported browser/app result as `CLIENT` truth, keeps pfSense CLI results as `ROUTER` diagnostics, and keeps DIRECT/VPN profile caches separate so one path does not overwrite the other. The wall rotates profile labels such as `SPD DIRECT:3223↓/2372↑ 9ms` and `SPD VPN:840↓/620↑ 41ms`, then compares VPN throughput and latency against the direct baseline.
+
+Named path labels live in `/usr/local/etc/socx_speedtest_paths.conf`; copy the example from `config/socx_speedtest_paths.conf.example`. The default example includes `DIRECT Frontier`, `VPN NYC`, `VPN RCN-DE`, and `VPN RCN-VA`.
 
 Import a known-good Speedtest.net result from a browser or app:
 
@@ -617,6 +623,9 @@ Import a known-good Speedtest.net result from a browser or app:
 socx speedtest import 3223.30 2371.66 9 "" 56485 Frontier "Secaucus, NJ" "Frontier Communications" 203.0.113.10 "https://www.speedtest.net/result/0000000000"
 socx speedtest import direct 3223.30 2371.66 9 "" 56485 Frontier "Secaucus, NJ" "Frontier Communications" 203.0.113.10 "https://www.speedtest.net/result/0000000000"
 socx speedtest import vpn 840 620 41 "" "" "TorGuard NYC" "VPN path" "" "" ""
+socx speedtest import vpn:nyc 840 620 41 "" "" "TorGuard NYC" "VPN path" "" "" ""
+socx speedtest import vpn:rcn-de 740 510 52 "" "" "TorGuard RCN Delaware" "VPN path" "" "" ""
+socx speedtest import vpn:rcn-va 790 540 49 "" "" "TorGuard RCN Virginia" "VPN path" "" "" ""
 ```
 
 Run a router-side diagnostic test without overwriting a fresh client result:
@@ -629,6 +638,19 @@ socx-doctor speedtest-profiles
 ```
 
 If the router result is much lower than the client result, SOCX rotates a warning in the Event Feed instead of replacing the wall with the bad number. If VPN throughput falls far below DIRECT or latency jumps, SOCX rotates a VPN Speedtest warning and Autopilot can move into `WATCH` or `INVESTIGATE`. Use the router result as a pfSense/tool/path clue; use `CLIENT` or a policy-routed profile import as the real user-experience speed.
+
+Autopilot v2 uses this path data to choose more specific read-only modes:
+
+```text
+NORMAL
+WATCH
+VPN DEGRADED
+WAN DEGRADED
+SECURITY WATCH
+INCIDENT
+```
+
+The distinction matters: `VPN DEGRADED` means the direct path can be healthy while the VPN path is slow/down; `WAN DEGRADED` points at Frontier/gateway quality; `SECURITY WATCH` points at IDS, DNSBL, or firewall bursts. SOCX still does not change firewall rules automatically.
 
 Modern btop rendering defaults to Unicode/ANSI cards, block meters, and sparklines inside pfSense/tmux:
 

@@ -221,8 +221,56 @@ doctor_speedtest_profiles() {
     fi
     mark INFO "run direct: socx speedtest direct"
     mark INFO "run VPN:    socx speedtest vpn"
-    mark INFO "import:     socx speedtest import direct|vpn <down> <up> <ping> ..."
+    mark INFO "import:     socx speedtest import direct|vpn|vpn:nyc <down> <up> <ping> ..."
+    echo
+    speedtest_path_report "$direct"
     finish
+}
+
+speedtest_paths_file() {
+    if [ -n "${SOCX_SPEEDTEST_PATHS_FILE:-}" ]; then
+        echo "$SOCX_SPEEDTEST_PATHS_FILE"
+    elif [ -f /usr/local/etc/socx_speedtest_paths.conf ]; then
+        echo /usr/local/etc/socx_speedtest_paths.conf
+    elif [ -f ./config/socx_speedtest_paths.conf.example ]; then
+        echo ./config/socx_speedtest_paths.conf.example
+    else
+        echo /usr/local/etc/socx_speedtest_paths.conf
+    fi
+}
+
+speedtest_path_report() {
+    direct_file="$1"
+    paths="$(speedtest_paths_file)"
+    mark INFO "named VPN path truth:"
+    if [ ! -f "$paths" ]; then
+        mark WARN "path config missing: $paths"
+        mark INFO "copy config/socx_speedtest_paths.conf.example to /usr/local/etc/socx_speedtest_paths.conf"
+        return
+    fi
+    dd="$(env_value download_mbps "$direct_file")"
+    du="$(env_value upload_mbps "$direct_file")"
+    dp="$(env_value ping_ms "$direct_file")"
+    while IFS='|' read -r slug label profile cache gateway notes; do
+        case "$slug" in ''|\#*) continue ;; esac
+        [ -n "$cache" ] || cache="/tmp/socx-speedtest-${profile}-${slug}.env"
+        if [ -f "$cache" ]; then
+            status="$(env_value status "$cache")"
+            down="$(env_value download_mbps "$cache")"
+            up="$(env_value upload_mbps "$cache")"
+            ping="$(env_value ping_ms "$cache")"
+            age="$(age_file "$cache")"
+            if [ "$profile" = vpn ] && awk -v dd="$dd" -v du="$du" -v down="$down" -v up="$up" 'BEGIN{exit !((dd+0)>0 && (du+0)>0 && (down+0)>0 && (up+0)>0)}'; then
+                pct="$(awk -v dd="$dd" -v du="$du" -v down="$down" -v up="$up" 'BEGIN{printf "%.0f/%.0f%%", (down/dd)*100, (up/du)*100}')"
+                delta="$(awk -v dp="$dp" -v ping="$ping" 'BEGIN{printf "%+.0fms", (ping+0)-(dp+0)}')"
+                mark OK "$label ${down:-?}/${up:-?} Mbps ${ping:-?}ms | vs direct $pct $delta | age=${age:-?}s"
+            else
+                [ "$status" = ok ] && mark OK "$label ${down:-?}/${up:-?} Mbps ${ping:-?}ms | age=${age:-?}s" || mark WARN "$label status=${status:-unknown} | age=${age:-?}s"
+            fi
+        else
+            mark WARN "$label cache missing: $cache"
+        fi
+    done < "$paths"
 }
 
 doctor_topology() {
@@ -853,6 +901,7 @@ doctor_autopilot() {
     cache="${SOCX_AUTOPILOT_CACHE:-/tmp/socx-autopilot.env}"
     score=100
     mode="NORMAL"
+    class="NORMAL"
     reasons=""
     actions=""
 
@@ -869,6 +918,7 @@ doctor_autopilot() {
         vpn_line="$(printf '%s\n' "$gw" | awk 'NR>1 && $1 !~ /WAN/ {total++; if (tolower($7) ~ /online/) up++} END {if (total>0) printf "%d/%d", up, total}')"
         if [ "$wan_bad" != "0" ]; then
             score=$((score - 30))
+            class="WAN DEGRADED"
             reasons="${reasons} wan-gateway"
             actions="${actions} run socx-doctor wan-quality;"
         fi
@@ -877,10 +927,12 @@ doctor_autopilot() {
             vtot="${vpn_line#*/}"
             if [ "$vup" = "0" ] && [ "$vtot" != "0" ]; then
                 score=$((score - 20))
+                class="VPN DEGRADED"
                 reasons="${reasons} vpn-down"
                 actions="${actions} inspect VPN gateway status;"
             elif [ "$vup" != "$vtot" ]; then
                 score=$((score - 10))
+                class="VPN DEGRADED"
                 reasons="${reasons} vpn-partial"
                 actions="${actions} inspect partial VPN path;"
             fi
@@ -922,6 +974,7 @@ doctor_autopilot() {
             ping_delta="$(awk -v dp="$dp" -v vp="$vp" 'BEGIN{printf "%.0f", (vp+0)-(dp+0)}')"
             if [ "$vpn_down_pct" -lt 35 ] 2>/dev/null || [ "$vpn_up_pct" -lt 35 ] 2>/dev/null || [ "$ping_delta" -gt 80 ] 2>/dev/null; then
                 score=$((score - 10))
+                class="VPN DEGRADED"
                 reasons="${reasons} vpn-speed"
                 actions="${actions} run socx-doctor speedtest-profiles;"
             fi
@@ -952,16 +1005,19 @@ doctor_autopilot() {
 
     if [ "$ids_recent" -gt 0 ] 2>/dev/null; then
         score=$((score - 20))
+        class="SECURITY WATCH"
         reasons="${reasons} ids-high"
         actions="${actions} run socx-doctor ids;"
     fi
     if [ "$fw_recent" -gt 80 ] 2>/dev/null; then
         score=$((score - 10))
+        [ "$class" = "NORMAL" ] && class="SECURITY WATCH"
         reasons="${reasons} firewall-burst"
         actions="${actions} consider socx incident quick;"
     fi
     if [ "$dns_recent" -gt 200 ] 2>/dev/null; then
         score=$((score - 8))
+        [ "$class" = "NORMAL" ] && class="SECURITY WATCH"
         reasons="${reasons} dnsbl-burst"
         actions="${actions} run socx-doctor dnsbl-review;"
     fi
@@ -970,11 +1026,14 @@ doctor_autopilot() {
     if [ "$score" -lt 45 ]; then
         mode="INCIDENT"
     elif [ "$score" -lt 65 ]; then
-        mode="INVESTIGATE"
+        mode="$class"
+        [ "$mode" = "NORMAL" ] && mode="INVESTIGATE"
     elif [ "$score" -lt 85 ]; then
-        mode="WATCH"
+        mode="$class"
+        [ "$mode" = "NORMAL" ] && mode="WATCH"
     elif [ "$fw_recent" -gt 30 ] 2>/dev/null || [ "$dns_recent" -gt 50 ] 2>/dev/null; then
-        mode="WATCH"
+        mode="$class"
+        [ "$mode" = "NORMAL" ] && mode="WATCH"
     else
         mode="NORMAL"
     fi
@@ -985,6 +1044,7 @@ doctor_autopilot() {
     {
         echo "updated=$(date +%s)"
         echo "mode=$mode"
+        echo "class=$class"
         echo "score=$score"
         echo "fw_recent=${fw_recent:-0}"
         echo "dnsbl_recent=${dns_recent:-0}"
@@ -995,8 +1055,8 @@ doctor_autopilot() {
 
     case "$mode" in
         NORMAL) mark OK "Autopilot NORMAL score=$score | $summary" ;;
-        WATCH) mark WARN "Autopilot WATCH score=$score | $summary" ;;
-        INVESTIGATE|INCIDENT) mark WARN "Autopilot $mode score=$score | $summary" ;;
+        WATCH|COOLDOWN) mark WARN "Autopilot $mode score=$score | $summary" ;;
+        "VPN DEGRADED"|"WAN DEGRADED"|"SECURITY WATCH"|INVESTIGATE|INCIDENT) mark WARN "Autopilot $mode score=$score | $summary" ;;
         *) mark WARN "Autopilot $mode score=$score | $summary" ;;
     esac
     mark INFO "read-only actions: $actions"

@@ -27,6 +27,10 @@ clean_value() {
     printf '%s' "$1" | tr -d '\r' | sed 's/^"//; s/"$//; s/[[:cntrl:]]//g; s/[;&|`$<>]//g'
 }
 
+slug_value() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_.-]/-/g; s/--*/-/g; s/^-//; s/-$//'
+}
+
 interval_seconds() {
     value=${SOCX_SPEEDTEST_INTERVAL:-${SOCX_SPEEDTEST_INTERVAL_SECONDS:-6h}}
     case "$value" in
@@ -58,12 +62,16 @@ cache_file_is_fresh() {
 write_cache() {
     tmp="${CACHE}.$$"
     profile=$(speedtest_profile_from_mode "$3")
+    path_name=${SOCX_SPEEDTEST_PATH_NAME:-$profile}
+    path_slug=${SOCX_SPEEDTEST_PATH_SLUG:-$(slug_value "$path_name")}
     {
         printf 'updated=%s\n' "$(now_epoch)"
         printf 'status=%s\n' "$(clean_value "$1")"
         printf 'message=%s\n' "$(clean_value "$2")"
         printf 'mode=%s\n' "$(clean_value "$3")"
         printf 'profile=%s\n' "$(clean_value "$profile")"
+        printf 'path_name=%s\n' "$(clean_value "$path_name")"
+        printf 'path_slug=%s\n' "$(clean_value "$path_slug")"
         printf 'tool=%s\n' "$(clean_value "$4")"
         printf 'download_mbps=%s\n' "$(clean_value "$5")"
         printf 'upload_mbps=%s\n' "$(clean_value "$6")"
@@ -94,6 +102,7 @@ write_cache() {
         ;;
     vpn|vpn-auto)
         cp "$tmp" "$VPN_CACHE" 2>/dev/null || true
+        [ -n "$path_slug" ] && cp "$tmp" "/tmp/socx-speedtest-vpn-${path_slug}.env" 2>/dev/null || true
         cp "$tmp" "$ROUTER_CACHE" 2>/dev/null || true
         mv "$tmp" "$CACHE"
         ;;
@@ -363,8 +372,25 @@ with_lock() {
 import_result() {
     import_profile=${SOCX_SPEEDTEST_IMPORT_PROFILE:-client}
     case "${1:-}" in
-    direct|vpn|client)
+    direct|vpn|client|vpn:*|direct:*)
         import_profile=$1
+        shift
+        ;;
+    esac
+    import_path=${SOCX_SPEEDTEST_IMPORT_PATH:-}
+    case "$import_profile" in
+    vpn:*)
+        import_path=${import_profile#vpn:}
+        import_profile=vpn
+        ;;
+    direct:*)
+        import_path=${import_profile#direct:}
+        import_profile=direct
+        ;;
+    esac
+    case "${1:-}" in
+    path:*)
+        import_path=${1#path:}
         shift
         ;;
     esac
@@ -393,6 +419,11 @@ import_result() {
     direct) mode="direct"; msg="imported direct Speedtest result" ;;
     *) mode="client"; msg="imported client Speedtest result" ;;
     esac
+    if [ -n "$import_path" ]; then
+        SOCX_SPEEDTEST_PATH_NAME="$import_path"
+        SOCX_SPEEDTEST_PATH_SLUG="$(slug_value "$import_path")"
+        export SOCX_SPEEDTEST_PATH_NAME SOCX_SPEEDTEST_PATH_SLUG
+    fi
     write_cache ok "$msg" "$mode" "speedtest-net" "$down" "$up" "$ping" "$jitter" "$sid" "$sname" "$sloc" "$isp" "$ip" "$url"
 }
 

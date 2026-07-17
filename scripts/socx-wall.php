@@ -742,6 +742,10 @@ function collect_live_frame(array &$state, array $hosts): array
     if ($speedtestEvent !== null) {
         $events[] = $speedtestEvent;
     }
+    $vpnPathEvent = speedtest_named_paths_event($speedtest);
+    if ($vpnPathEvent !== null) {
+        $events[] = $vpnPathEvent;
+    }
     if (!empty($mirandaInsight['available'])) {
         $events[] = miranda_insight_event($mirandaInsight);
     }
@@ -3819,6 +3823,93 @@ function speedtest_status_event(array $speedtest): ?array
         return soc_event('WAN', 'WARN', 'Speedtest failed | check WAN/VPN path and CLI');
     }
     return null;
+}
+
+function speedtest_named_paths_event(array $speedtest): ?array
+{
+    if (!env_bool('SOCX_SPEEDTEST_PATH_EVENTS_ENABLED', true)) {
+        return null;
+    }
+    $paths = speedtest_named_paths();
+    if (!$paths) {
+        return null;
+    }
+    $direct = is_array($speedtest['direct'] ?? null) ? $speedtest['direct'] : [];
+    $directDown = (float)($direct['download_mbps'] ?? 0);
+    $directUp = (float)($direct['upload_mbps'] ?? 0);
+    $directPing = (float)($direct['ping_ms'] ?? 0);
+    $parts = [];
+    $worst = 'INFO';
+    foreach ($paths as $path) {
+        if (($path['profile'] ?? '') !== 'vpn') {
+            continue;
+        }
+        $cache = (string)($path['cache'] ?? '');
+        if ($cache === '' || !is_readable($cache)) {
+            $parts[] = (string)$path['label'] . ' wait';
+            $worst = severity_max($worst, 'LOW');
+            continue;
+        }
+        $row = normalize_speedtest_cache(parse_env_file($cache), $cache, speedtest_interval_seconds(), microtime(true));
+        if (($row['status'] ?? '') !== 'ok') {
+            $parts[] = (string)$path['label'] . ' ' . strtoupper((string)($row['status'] ?? 'wait'));
+            $worst = severity_max($worst, 'LOW');
+            continue;
+        }
+        $down = (float)($row['download_mbps'] ?? 0);
+        $up = (float)($row['upload_mbps'] ?? 0);
+        $ping = (float)($row['ping_ms'] ?? 0);
+        $pct = ($directDown > 0 && $directUp > 0) ? sprintf(' %.0f/%.0f%%', ($down / $directDown) * 100.0, ($up / $directUp) * 100.0) : '';
+        $delta = ($directPing > 0 && $ping > 0) ? sprintf(' %+dms', (int)round($ping - $directPing)) : '';
+        if (($directDown > 0 && $down < $directDown * 0.35) || ($directUp > 0 && $up < $directUp * 0.35) || ($directPing > 0 && $ping - $directPing > 80)) {
+            $worst = severity_max($worst, 'WARN');
+        }
+        $parts[] = sprintf('%s %s/%sM%s%s',
+            (string)$path['label'],
+            (string)($row['download_mbps'] ?? '?'),
+            (string)($row['upload_mbps'] ?? '?'),
+            $pct,
+            $delta);
+    }
+    if (!$parts) {
+        return null;
+    }
+    return soc_event('SPD', $worst, 'VPN PATHS ' . implode(' | ', array_slice($parts, 0, 3)));
+}
+
+function speedtest_named_paths(): array
+{
+    $file = getenv('SOCX_SPEEDTEST_PATHS_FILE') ?: '/usr/local/etc/socx_speedtest_paths.conf';
+    if (!is_readable($file)) {
+        $alt = __DIR__ . '/../config/socx_speedtest_paths.conf.example';
+        $file = is_readable($alt) ? $alt : '';
+    }
+    if ($file === '') {
+        return [];
+    }
+    $rows = [];
+    foreach (file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+        $line = trim($line);
+        if ($line === '' || str_starts_with($line, '#')) {
+            continue;
+        }
+        $parts = array_pad(explode('|', $line), 6, '');
+        $rows[] = [
+            'slug' => trim($parts[0]),
+            'label' => trim($parts[1]) !== '' ? trim($parts[1]) : trim($parts[0]),
+            'profile' => trim($parts[2]) !== '' ? trim($parts[2]) : 'vpn',
+            'cache' => trim($parts[3]) !== '' ? trim($parts[3]) : '/tmp/socx-speedtest-vpn-' . trim($parts[0]) . '.env',
+            'gateway' => trim($parts[4]),
+            'notes' => trim($parts[5]),
+        ];
+    }
+    return $rows;
+}
+
+function severity_max(string $a, string $b): string
+{
+    $rank = ['INFO' => 1, 'LOW' => 2, 'WARN' => 3, 'HIGH' => 4, 'CRIT' => 5];
+    return ($rank[$b] ?? 0) > ($rank[$a] ?? 0) ? $b : $a;
 }
 
 function speedtest_history_event(array $summary): ?array
@@ -9198,18 +9289,18 @@ function colorize_line($line, bool $color): string
     $line = color_replace('/(-{2,})/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/([+=|])/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/([┌┐└┘─│├┤┬┴┼])/', $c['cyan'] . '$1' . $c['reset'], $line);
-    $line = color_replace('/\b(VPN DOWN(?:\s+\d+\/\d+)?|VPN:DOWN(?:\s+\d+\/\d+)?|DATA STALE|STALE|DEGRADED|SPD:ERR)\b/i', $c['red'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/\b(VPN DOWN(?:\s+\d+\/\d+)?|VPN:DOWN(?:\s+\d+\/\d+)?|WAN DEGRADED|VPN DEGRADED|INCIDENT|DATA STALE|STALE|DEGRADED|SPD:ERR)\b/i', $c['red'] . '$1' . $c['reset'], $line);
     $line = color_replace('/\b(VPN PARTIAL(?:\s+\d+\/\d+)?|VPN:PARTIAL(?:\s+\d+\/\d+)?|VPN UNKNOWN|VPN:UNKNOWN|SPD:WAIT|SPD:RUN)\b/i', $c['yellow'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(VPN N\/A|VPN:N\/A|SPD:OFF)/i', $c['dim'] . '$1' . $c['reset'], $line);
     $line = color_replace('/\b(WAN UP|WAN:UP|VPN UP(?:\s+\d+\/\d+)?|VPN:UP(?:\s+\d+\/\d+)?|DNS OK|DNS:OK|UPS ONLINE|UPS PROTECTED|DATA LIVE|LIVE|PASS|ALLOW|ONLINE|HEALTHY|STABLE|OK|UP|EST)\b/i', $c['green'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[CRIT\])/', $c['crit'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[DROP\]|\[HIGH\])|\b(FW BLOCK|FIREWALL BLOCK|IPS BLOCK|DROP|REJECT|BLOCK|blocked|failed|failure|critical|CRIT|HIGH|DOWN)\b/i', $c['red'] . '$0' . $c['reset'], $line);
-    $line = color_replace('/(\[WARN\]|\[MED\])|\b(DNS DENY|WARN|warning|MED|PARTIAL|UNKNOWN|WATCH|stale|rising|falling|latency|loss|scanner|suspicious|burst|high-rate|high usage|SYN|FIN|SING|MULT)\b/i', $c['yellow'] . '$0' . $c['reset'], $line);
+    $line = color_replace('/(\[WARN\]|\[MED\])|\b(DNS DENY|WARN|warning|MED|PARTIAL|UNKNOWN|WATCH|SECURITY WATCH|stale|rising|falling|latency|loss|scanner|suspicious|burst|high-rate|high usage|SYN|FIN|SING|MULT)\b/i', $c['yellow'] . '$0' . $c['reset'], $line);
     $line = color_replace('/(\[INFO\]|\[LOW\])/', $c['green'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[FW\]|\[VPN\]|\[WAN\]|\[DHCP\]|\[ARP\]|\[FLOW\]|\[RADAR\]|\[PF\]|\[UPS\]|\[SYS\]|\[DNS\]|\[IFACE\]|\[DEVICE\]|\[PULSE\]|\[SOCX\]|\[DOCTOR\]|\[BACKUP\]|\[CHANGE\]|\[AI\]|\[AUTO\]|\[LAB\]|\[INTEL\]|\[TTP\]|\[DETECT\]|\[EVID\]|\[CLOUD\]|\[SRC\])/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[DNSBL\]|\[IDS\]|\[IPS\])|\b(DNS BLOCK|DNS SINK|DNSBL HIT|SINKHOLE|DNSBL|Suricata|suricata|Sigma|YARA|CVE|CPE|CWE|CAPEC|CVSS|EPSS|KEV|ATT&CK|D3FEND|OpenAI|Anthropic|Gemini|xAI|Grok|NVIDIA Build|Hugging Face|Ollama|vLLM|MIRANDA|Local LLM|reputation|threat-intel|known-bad|known bad|malware|botnet|C2|abuse:high|abuse high|tor\?)\b/i', $c['purple'] . '$0' . $c['reset'], $line);
     $line = color_replace('/\b(contain|quarantine|preserve|evidence|pcap|pfctl|config\.xml|CloudTrail|AzureActivity|VPC Flow|Windows|Linux|macOS|memory)\b/i', $c['yellow'] . '$0' . $c['reset'], $line);
-    $line = color_replace('/\b(CPU|RAM|ARC|SWAP|PF|LAN|WAN|IN|OUT|VPN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|PACKET RADAR|PFTOP|LIVE STATES|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES|THREAT PULSE|SPEEDTEST|SPD|CLIENT|ROUTER|AUTO|BASE|DOCTOR|BACKUP|CHANGE|PI|Mbps|STATES|SEARCH|TRAFFIC|TCP|UDP|ICMP|DIR|APP|PATH|TYPE|STAT|STATE|LEFT|PRO|SVC|RATE|FLOW|RADAR|AGE|EXP|PROTO|TEMP|HUMID|LOAD)\b/i', $c['cyan'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/\b(CPU|RAM|ARC|SWAP|PF|LAN|WAN|IN|OUT|VPN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|PACKET RADAR|PFTOP|LIVE STATES|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES|THREAT PULSE|SPEEDTEST|SPD|CLIENT|ROUTER|DIRECT|NYC|RCN-DE|RCN-VA|PATH|PATHS|AUTO|BASE|DOCTOR|BACKUP|CHANGE|PI|Mbps|STATES|SEARCH|TRAFFIC|TCP|UDP|ICMP|DIR|APP|PATH|TYPE|STAT|STATE|LEFT|PRO|SVC|RATE|FLOW|RADAR|AGE|EXP|PROTO|TEMP|HUMID|LOAD)\b/i', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/\b(tls|web|dns|dnsblk|ssh|vpn|ntp|smb|sysl|rip|snmp|ssdp|nut|olma|vllm|llm|tgi|grad|jupy|ray|mlfl|trtn|graf|oai|xai|ngc|anth|gemi|hf|rdis|metr|ping|plex|dhcp|mdns|mail|apns|gcm|team|rdp|vnc|irc|ftp|dot|mux|oth|block|p\d{1,5})\b/i', $c['blue'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[[#!.]+\])/', $c['green'] . '$1' . $c['reset'], $line);
     $line = color_replace('/([█▇▆▅▄▃▂▁▓]+)/u', $c['green'] . '$1' . $c['reset'], $line);
