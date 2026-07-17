@@ -997,6 +997,17 @@ doctor_status() {
     else
         mark WARN "Pi AI cache missing; run: socx pi-llm"
     fi
+    if command -v socx-pi-nodes >/dev/null 2>&1; then
+        socx-pi-nodes >/tmp/socx-pi-nodes.out 2>/tmp/socx-pi-nodes.err || true
+    fi
+    if [ -f /tmp/socx-pi-nodes.json ]; then
+        pi_count="$(sed -n 's/.*"count":[[:space:]]*\([0-9][0-9]*\).*/\1/p' /tmp/socx-pi-nodes.json | head -1)"
+        pi_online="$(grep -o '"status":"online"' /tmp/socx-pi-nodes.json 2>/dev/null | wc -l | awk '{print $1}')"
+        [ "${pi_online:-0}" -eq 0 ] 2>/dev/null && pi_online="$pi_count"
+        [ "${pi_count:-0}" -ge 2 ] 2>/dev/null && mark OK "Pi fleet discovered ${pi_count:-0} nodes" || mark WARN "Pi fleet has only ${pi_count:-0} node(s); run: socx pi-nodes"
+    else
+        mark WARN "Pi fleet cache missing; run: socx pi-nodes"
+    fi
 
     if [ -f /tmp/socx-miranda-analysis.env ]; then
         sev="$(env_value severity /tmp/socx-miranda-analysis.env)"
@@ -1127,6 +1138,21 @@ doctor_autopilot() {
         reasons="${reasons} ai-missing"
         actions="${actions} run socx pi-llm;"
     fi
+    if command -v socx-pi-nodes >/dev/null 2>&1; then
+        socx-pi-nodes >/tmp/socx-pi-nodes.out 2>/tmp/socx-pi-nodes.err || true
+    fi
+    if [ -f /tmp/socx-pi-nodes.json ]; then
+        pi_count="$(sed -n 's/.*"count":[[:space:]]*\([0-9][0-9]*\).*/\1/p' /tmp/socx-pi-nodes.json | head -1)"
+        if [ "${pi_count:-0}" -lt 2 ] 2>/dev/null; then
+            score=$((score - 5))
+            reasons="${reasons} pi-fleet-partial"
+            actions="${actions} run socx pi-nodes;"
+        fi
+    else
+        score=$((score - 5))
+        reasons="${reasons} pi-fleet-missing"
+        actions="${actions} run socx pi-nodes;"
+    fi
 
     fw_recent="$(tail -250 /var/log/filter.log 2>/dev/null | grep -Eic 'block|drop|reject' || true)"
     dns_recent="$(tail -1000 /var/log/pfblockerng/dnsbl.log /var/log/pfblockerng/dns_reply.log 2>/dev/null | grep -Eic 'DNSBL|sinkhole|blocked|deny' || true)"
@@ -1161,6 +1187,7 @@ doctor_autopilot() {
     [ "$dns_recent" -gt 200 ] 2>/dev/null && security_score=$((security_score - 12))
     ai_score=100
     printf '%s' "$reasons" | grep -Eq 'ai-missing|ai-cache-weak|ai-roles' && ai_score=$((ai_score - 25))
+    printf '%s' "$reasons" | grep -Eq 'pi-fleet' && ai_score=$((ai_score - 10))
     printf '%s' "$reasons" | grep -Eq 'ai-high|ai-critical|ai-crit' && ai_score=$((ai_score - 25))
     sensor_score=100
     printf '%s' "$reasons" | grep -q 'wall-errors' && sensor_score=$((sensor_score - 25))

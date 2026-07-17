@@ -4,6 +4,7 @@
 
 - Added v0.6 Incident Cockpit for the browser wall with top blocked sources, ports, DNSBL domains, affected LAN hosts, IDS signal, and a visible incident verdict.
 - Added multi-Pi discovery with `socx pi-nodes`, including Pi 5 SOCX AI and Pi 4 node-exporter telemetry detection.
+- Added a standard-library Pi telemetry sidecar on port `8096` for richer Pi Fleet health, plus SOCX status/autopilot awareness of the Pi fleet.
 - Added safe browser Commander buttons backed by `/api/commander` for status, Incident Mode, evidence snapshot, Zeek health, Speedtest profiles, and Pi AI analysis.
 - Added `socx snapshot-cron` for nightly read-only evidence snapshots with retention cleanup, and expanded snapshots with `incident.json` and `top-talkers.json`.
 - Added `socx-doctor zeek --archive-reviewed` to checksum/archive reviewed Zeek crash folders before removing them from the live Zeek tmp directory.

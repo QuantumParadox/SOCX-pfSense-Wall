@@ -60,6 +60,16 @@ while IFS='|' read -r ip mac source; do
         status="online"
         ports="${ports}22,"
     fi
+    if probe_http "http://$ip:8096/health"; then
+        status="online"
+        ports="${ports}8096,"
+        role="pi-telemetry"
+        service="socx-sidecar"
+        detail="SOCX Pi sidecar telemetry"
+        sidecar="$(curl -fsS --max-time "$TIMEOUT" "http://$ip:8096/health" 2>/dev/null)"
+        name="$(printf '%s' "$sidecar" | sed -n 's/.*"hostname":"\([^"]*\)".*/\1/p')"
+        model="$(printf '%s' "$sidecar" | sed -n 's/.*"model":"\([^"]*\)".*/\1/p')"
+    fi
     if probe_http "http://$ip:8095/health"; then
         status="online"
         ports="${ports}8095,"

@@ -197,6 +197,8 @@ class SocxCollector:
         self.seen_log_lines: OrderedDict[str, float] = OrderedDict()
         self.last_event_read = 0.0
         self.last_state_sample = 0.0
+        self.pi_fleet_checked = 0.0
+        self.pi_fleet_cache: dict[str, Any] = {"updated": 0, "count": 0, "online": 0, "score": 0, "nodes": []}
         self.ups_samples: deque[float] = deque(maxlen=120)
         self.state: dict[str, Any] = self.demo_state()
 
@@ -495,6 +497,11 @@ class SocxCollector:
         }
 
     def collect_pi_nodes(self) -> dict[str, Any]:
+        now = time.time()
+        if self.pi_fleet_cache.get("nodes") and now - self.pi_fleet_checked < env_int("SOCX_PI_FLEET_POLL_SECONDS", 5):
+            cached = dict(self.pi_fleet_cache)
+            cached["age_sec"] = int(max(0, now - float(cached.get("updated") or now)))
+            return cached
         path = Path(os.environ.get("SOCX_PI_NODES_JSON", "/tmp/socx-pi-nodes.json"))
         data: dict[str, Any] = {"updated": 0, "count": 0, "nodes": []}
         try:
@@ -514,9 +521,90 @@ class SocxCollector:
                     "ports": "8095",
                     "detail": discovery.get("note", ""),
                 }]
+        enriched = []
+        for node in data.get("nodes", []):
+            if isinstance(node, dict):
+                enriched.append(self.collect_pi_node_health(node))
+        data["nodes"] = enriched
+        data["count"] = len(enriched)
+        data["online"] = sum(1 for node in enriched if node.get("status") == "online")
+        temps = [float(node.get("temperature_c")) for node in enriched if node.get("temperature_c") is not None]
+        hot = any(temp >= 75 for temp in temps)
+        data["score"] = max(0, 100 - ((len(enriched) - int(data["online"])) * 35) - (20 if hot else 0))
+        data["summary"] = f"{data['online']}/{data['count']} Pi nodes online"
         updated = float(data.get("updated") or 0)
         data["age_sec"] = int(max(0, time.time() - updated)) if updated else None
+        self.pi_fleet_cache = data
+        self.pi_fleet_checked = now
         return data
+
+    def collect_pi_node_health(self, node: dict[str, Any]) -> dict[str, Any]:
+        ip = str(node.get("ip") or "")
+        result = dict(node)
+        result.setdefault("status", "online" if ip else "unknown")
+        if not ip:
+            return result
+        pi_ai = run_cmd(f"curl -fsS --max-time 1 http://{ip}:8095/health 2>/dev/null", timeout=1.4)
+        if pi_ai:
+            result["status"] = "online"
+            try:
+                data = json.loads(pi_ai)
+                system = data.get("system") if isinstance(data.get("system"), dict) else {}
+                result["service"] = result.get("service") or "socx-3llm"
+                result["temperature_c"] = system.get("temp_c")
+                result["load_one"] = (system.get("load") or {}).get("one") if isinstance(system.get("load"), dict) else None
+                result["memory_used_pct"] = (system.get("memory") or {}).get("used_pct") if isinstance(system.get("memory"), dict) else None
+            except Exception:
+                pass
+        sidecar = run_cmd(f"curl -fsS --max-time 1 http://{ip}:8096/health 2>/dev/null", timeout=1.4)
+        if sidecar:
+            try:
+                data = json.loads(sidecar)
+                result["status"] = "online"
+                result["service"] = "socx-sidecar" if result.get("service") == "node-exporter" else result.get("service", "socx-sidecar")
+                result["hostname"] = data.get("hostname") or result.get("name")
+                result["name"] = data.get("hostname") or result.get("name")
+                result["model"] = data.get("model") or result.get("model")
+                result["temperature_c"] = data.get("temperature_c")
+                result["load_one"] = (data.get("load") or {}).get("one")
+                result["memory_used_pct"] = (data.get("memory") or {}).get("used_pct")
+                result["uptime_seconds"] = data.get("uptime_seconds")
+                return result
+            except Exception:
+                pass
+        metrics = run_cmd(f"curl -fsS --max-time 1 http://{ip}:9100/metrics 2>/dev/null | head -900", timeout=1.4)
+        if metrics:
+            result["status"] = "online"
+            uname = re.search(r'^node_uname_info\{([^}]*)\}', metrics, re.M)
+            if uname:
+                name = re.search(r'nodename="([^"]+)"', uname.group(1))
+                if name:
+                    result["name"] = name.group(1)
+            boot = re.search(r"^node_boot_time_seconds\s+([0-9.eE+-]+)", metrics, re.M)
+            if boot:
+                try:
+                    result["uptime_seconds"] = int(max(0, time.time() - float(boot.group(1))))
+                except ValueError:
+                    pass
+            mem_total = re.search(r"^node_memory_MemTotal_bytes\s+([0-9.eE+-]+)", metrics, re.M)
+            mem_avail = re.search(r"^node_memory_MemAvailable_bytes\s+([0-9.eE+-]+)", metrics, re.M)
+            if mem_total and mem_avail:
+                try:
+                    total = float(mem_total.group(1))
+                    avail = float(mem_avail.group(1))
+                    result["memory_used_pct"] = round((1 - avail / total) * 100, 1) if total else None
+                except ValueError:
+                    pass
+            temp = re.search(r"^node_(?:thermal_zone_temp|hwmon_temp)_celsius(?:\{[^}]*\})?\s+([0-9.eE+-]+)", metrics, re.M)
+            if temp:
+                try:
+                    result["temperature_c"] = round(float(temp.group(1)), 1)
+                except ValueError:
+                    pass
+            return result
+        if result.get("status") != "online":
+            result["status"] = "offline"
+        return result
 
     def collect_incident_light(self, center: dict[str, Any] | None = None) -> dict[str, Any]:
         incident = self.collect_incident(center=center, sample_limit=280)

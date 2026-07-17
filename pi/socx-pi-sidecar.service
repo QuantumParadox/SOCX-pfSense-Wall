@@ -1,0 +1,13 @@
+[Unit]
+Description=SOCX Raspberry Pi telemetry sidecar
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/socx-pi-sidecar/socx_pi_sidecar.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

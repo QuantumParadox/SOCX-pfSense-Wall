@@ -192,8 +192,17 @@ function renderPiNodes(piNodes = {}) {
   }
   root.innerHTML = nodes.slice(0, 4).map((node) => row([
     node.role || "pi",
-    `${node.name || node.ip} ${node.ip || ""} ${node.service || ""} ${node.ports ? `:${node.ports}` : ""}`,
+    `${node.name || node.ip} ${node.ip || ""} ${node.status || "?"} ${piNodeStats(node)}`,
   ], "command-row")).join("");
+}
+
+function piNodeStats(node = {}) {
+  const bits = [];
+  if (node.temperature_c !== undefined && node.temperature_c !== null) bits.push(`${Number(node.temperature_c).toFixed(0)}C`);
+  if (node.memory_used_pct !== undefined && node.memory_used_pct !== null) bits.push(`mem ${Number(node.memory_used_pct).toFixed(0)}%`);
+  if (node.load_one !== undefined && node.load_one !== null) bits.push(`ld ${Number(node.load_one).toFixed(2)}`);
+  if (node.service) bits.push(node.service);
+  return bits.join(" ");
 }
 
 function renderFlows(flows = []) {

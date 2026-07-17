@@ -2,7 +2,9 @@
 set -eu
 
 APP_DIR="${SOCX_PI_APP_DIR:-/opt/socx-pi-llm}"
+SIDECAR_DIR="${SOCX_PI_SIDECAR_DIR:-/opt/socx-pi-sidecar}"
 SERVICE_FILE="/etc/systemd/system/socx-pi-llm.service"
+SIDECAR_SERVICE_FILE="/etc/systemd/system/socx-pi-sidecar.service"
 SRC_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -11,8 +13,11 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 install -d -m 0755 "$APP_DIR"
+install -d -m 0755 "$SIDECAR_DIR"
 install -m 0755 "$SRC_DIR/socx_pi_llm_orchestrator.py" "$APP_DIR/socx_pi_llm_orchestrator.py"
 install -m 0644 "$SRC_DIR/requirements.txt" "$APP_DIR/requirements.txt"
+[ -f "$SRC_DIR/socx_pi_sidecar.py" ] && install -m 0755 "$SRC_DIR/socx_pi_sidecar.py" "$SIDECAR_DIR/socx_pi_sidecar.py"
+[ -f "$SRC_DIR/socx-pi-sidecar.service" ] && install -m 0644 "$SRC_DIR/socx-pi-sidecar.service" "$SIDECAR_SERVICE_FILE"
 
 if command -v apt-get >/dev/null 2>&1; then
     apt-get update
@@ -61,6 +66,9 @@ EOF
 
 systemctl daemon-reload
 systemctl enable --now socx-pi-llm
+if [ -f "$SIDECAR_SERVICE_FILE" ]; then
+    systemctl enable --now socx-pi-sidecar >/dev/null 2>&1 || true
+fi
 sleep 2
 systemctl --no-pager status socx-pi-llm || true
 curl -fsS http://127.0.0.1:8095/health || true
