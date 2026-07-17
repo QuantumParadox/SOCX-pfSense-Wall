@@ -70,6 +70,8 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds four-part Autopilot scoring for network, security, AI, and sensor health.
 - Adds `socx mode` presets for normal, incident, speedtest, AI, UPS, and quiet-night viewing.
 - Adds `socx hosts suggest/apply` to reduce `LAN.x` and unknown labels using DHCP, ARP, and Pi discovery hints.
+- Adds friendly app/domain labels across the browser wall and terminal wall when SOCX has DNS/log evidence, including streaming, Apple/iCloud, Hugging Face, Civitai, IBM Quantum, OpenAI/Claude/Grok, NVIDIA AI, Ollama, vLLM, and common cloud/CDN services.
+- Keeps app/service enrichment local by default: raw IP-only `pftop`/`tcpdump` flows are labeled from local host maps, ports, DNS/DNSBL logs, and safe built-in patterns rather than automatic third-party lookups.
 - Adds `socx snapshot`, a read-only evidence bundle for status, why-now, history, timeline, Speedtest paths, topology, unknown services, and web API JSON.
 - Adds `socx snapshot-cron`, a nightly read-only evidence snapshot schedule with retention cleanup.
 - Adds `/api/history` plus a tiny Command Center score sparkline in the browser wall.
@@ -106,6 +108,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Shows prominent NUT/APC UPS watts/load/battery/runtime plus 60-second peak, average, and sparkline.
 - Adds `iftopx`, a readable color flow radar for live LAN/WAN traffic.
 - Adds `tcpdumpx`, a readable color packet story view that explains traffic direction, service, size, and flow.
+- `iftopx` and `tcpdumpx` use `/usr/local/etc/socx_hosts.conf` plus richer built-in service labels so terminal popups can show friendly local hosts and lab services instead of only raw `LAN.x` and unknown ports.
 - Uses narrow two-line formatting in the bottom IFTopX/TCPDumpX panes so flows and packet details stay readable on the wall display.
 - Keeps IFTopX/TCPDumpX visible in the bottom of the primary `NETX` wall.
 - Adds a SOC ticker for firewall blocks, DNS blocks, IDS-style alerts, and other useful events.

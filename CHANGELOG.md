@@ -2,6 +2,9 @@
 
 ## v0.1.46
 
+- Added safer IDS high-signal logic so routine Suricata decoder/checksum noise is counted as watch/routine instead of inflating critical IDS counts.
+- Added friendly app/domain labels for SOCX browser and terminal wall events, including Netflix, Prime Video, YouTube, Disney+, Apple/iCloud, Hugging Face, Civitai, IBM Quantum, OpenAI, Anthropic, xAI/Grok, NVIDIA AI, Ollama, vLLM, and common cloud/CDN services when DNS/log evidence is available.
+- Expanded terminal `tcpdumpx` and `iftopx` local host labeling from `/usr/local/etc/socx_hosts.conf`, plus richer lab/service port names for MIRANDA, SOCX web, Pi LLM, Ollama, vLLM, Jupyter, Ray, Gradio, Plex, metrics, and UPS/NUT.
 - Added SOCX Browser Mission Control v0.8 strip with Threat Pulse, LAN Asset Watch, and AI Verdict Timeline panels.
 - Added browser wall controls for local ticker speed cycling and big-text mode.
 - Added backend `/api/state` objects for `threat_pulse`, `asset_watch`, and `ai_timeline` using pfSense/SOCX logs and read-only cache files.

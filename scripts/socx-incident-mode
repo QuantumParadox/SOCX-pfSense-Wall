@@ -53,8 +53,8 @@ echo
 
 echo "IDS SIGNAL"
 if [ -s "$ids" ]; then
-    high="$(grep -Eic 'Priority: 1|malware|trojan|ransom|command.?and.?control|c2|cnc|callback|exploit|drop' "$ids" || true)"
-    routine="$(grep -Eic 'SURICATA (Stream|Ethertype unknown)|Generic Protocol Command Decode|invalid ack|invalid timestamp|decoder event|HTTP unable to match response to request' "$ids" || true)"
+    routine="$(grep -Eic 'SURICATA (Stream|Ethertype unknown|TCPv[46] invalid checksum|UDPv[46] invalid checksum|ICMPv[46] invalid checksum|QUIC failed decrypt)|Generic Protocol Command Decode|invalid ack|invalid timestamp|bad window|wrong seq|retransmission|decoder event|HTTP unable to match response to request|Raw pkt:' "$ids" || true)"
+    high="$(grep -Eiv 'SURICATA (Stream|Ethertype unknown|TCPv[46] invalid checksum|UDPv[46] invalid checksum|ICMPv[46] invalid checksum|QUIC failed decrypt)|Generic Protocol Command Decode|Raw pkt:|invalid ack|invalid timestamp|bad window|wrong seq|retransmission|decoder event|HTTP unable to match response to request' "$ids" | grep -Eic 'malware|trojan|ransom|command.?and.?control|c2 beacon|cnc|callback|exploit|shellcode|botnet|coinminer|credential|phish|blacklist|known.?bad' || true)"
     echo "  high_signal=${high:-0} routine_noise=${routine:-0}"
     sed -n 's/.*\[\*\*\][[:space:]]*\(\[[^]]*\][[:space:]]*\)\{0,1\}\([^[]*\)[[:space:]]*\[\*\*\].*/\2/p' "$ids" |
         sed 's/^ *//;s/ *$//' | sort | uniq -c | sort -nr | head -6 | sed 's/^/  /'

@@ -438,8 +438,8 @@ doctor_ids() {
         finish
         return
     fi
-    routine="$(grep -Eic 'SURICATA (Stream|Ethertype unknown)|Generic Protocol Command Decode|invalid ack|invalid timestamp|bad window|wrong seq|retransmission|decoder event' "$tmp" || true)"
-    high="$(grep -Eiv 'SURICATA (Stream|Ethertype unknown)|Generic Protocol Command Decode|Raw pkt:' "$tmp" | grep -Eic 'Priority: 1|malware|trojan|ransom|command.?and.?control|c2 beacon|cnc|callback|exploit|blocked|drop' || true)"
+    routine="$(grep -Eic 'SURICATA (Stream|Ethertype unknown|TCPv[46] invalid checksum|UDPv[46] invalid checksum|ICMPv[46] invalid checksum|QUIC failed decrypt)|Generic Protocol Command Decode|invalid ack|invalid timestamp|bad window|wrong seq|retransmission|decoder event|HTTP unable to match response to request|Raw pkt:' "$tmp" || true)"
+    high="$(grep -Eiv 'SURICATA (Stream|Ethertype unknown|TCPv[46] invalid checksum|UDPv[46] invalid checksum|ICMPv[46] invalid checksum|QUIC failed decrypt)|Generic Protocol Command Decode|Raw pkt:|invalid ack|invalid timestamp|bad window|wrong seq|retransmission|decoder event|HTTP unable to match response to request' "$tmp" | grep -Eic 'malware|trojan|ransom|command.?and.?control|c2 beacon|cnc|callback|exploit|shellcode|botnet|coinminer|credential|phish|blacklist|known.?bad' || true)"
     total="$(wc -l < "$tmp" | awk '{print $1}')"
     if [ "$high" -gt 0 ] 2>/dev/null; then
         mark WARN "$high high-signal IDS/IPS lines in last sample"
@@ -471,8 +471,8 @@ doctor_tune_ids() {
     fi
 
     total="$(wc -l < "$tmp" | awk '{print $1}')"
-    routine="$(grep -Eic 'SURICATA (Stream|Ethertype unknown)|Generic Protocol Command Decode|invalid ack|invalid timestamp|bad window|wrong seq|retransmission|decoder event|HTTP unable to match response to request' "$tmp" || true)"
-    high="$(grep -Eiv 'SURICATA (Stream|Ethertype unknown)|Generic Protocol Command Decode|Raw pkt:|HTTP unable to match response to request' "$tmp" | grep -Eic 'Priority: 1|malware|trojan|ransom|command.?and.?control|c2 beacon|cnc|callback|exploit|blocked|drop' || true)"
+    routine="$(grep -Eic 'SURICATA (Stream|Ethertype unknown|TCPv[46] invalid checksum|UDPv[46] invalid checksum|ICMPv[46] invalid checksum|QUIC failed decrypt)|Generic Protocol Command Decode|invalid ack|invalid timestamp|bad window|wrong seq|retransmission|decoder event|HTTP unable to match response to request|Raw pkt:' "$tmp" || true)"
+    high="$(grep -Eiv 'SURICATA (Stream|Ethertype unknown|TCPv[46] invalid checksum|UDPv[46] invalid checksum|ICMPv[46] invalid checksum|QUIC failed decrypt)|Generic Protocol Command Decode|Raw pkt:|invalid ack|invalid timestamp|bad window|wrong seq|retransmission|decoder event|HTTP unable to match response to request' "$tmp" | grep -Eic 'malware|trojan|ransom|command.?and.?control|c2 beacon|cnc|callback|exploit|shellcode|botnet|coinminer|credential|phish|blacklist|known.?bad' || true)"
 
     if [ "$high" -gt 0 ] 2>/dev/null; then
         mark WARN "$high high-signal alerts present; do not blanket-suppress"
@@ -1165,7 +1165,7 @@ doctor_autopilot() {
 
     fw_recent="$(tail -250 /var/log/filter.log 2>/dev/null | grep -Eic 'block|drop|reject' || true)"
     dns_recent="$(tail -1000 /var/log/pfblockerng/dnsbl.log /var/log/pfblockerng/dns_reply.log 2>/dev/null | grep -Eic 'DNSBL|sinkhole|blocked|deny' || true)"
-    ids_recent="$(find /var/log/suricata -maxdepth 2 -type f \( -name alerts.log -o -name fast.log \) 2>/dev/null | xargs tail -300 2>/dev/null | grep -Eic 'Priority: 1|malware|trojan|ransom|command.?and.?control|c2|exploit|drop' || true)"
+    ids_recent="$(find /var/log/suricata -maxdepth 2 -type f \( -name alerts.log -o -name fast.log \) 2>/dev/null | xargs tail -300 2>/dev/null | grep -Eiv 'SURICATA (Stream|Ethertype unknown|TCPv[46] invalid checksum|UDPv[46] invalid checksum|ICMPv[46] invalid checksum|QUIC failed decrypt)|Generic Protocol Command Decode|Raw pkt:|invalid ack|invalid timestamp|bad window|wrong seq|retransmission|decoder event|HTTP unable to match response to request' | grep -Eic 'malware|trojan|ransom|command.?and.?control|c2 beacon|cnc|callback|exploit|shellcode|botnet|coinminer|credential|phish|blacklist|known.?bad' || true)"
 
     if [ "$ids_recent" -gt 0 ] 2>/dev/null; then
         score=$((score - 20))

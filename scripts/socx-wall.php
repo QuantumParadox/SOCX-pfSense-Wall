@@ -6951,10 +6951,10 @@ function parse_suricata_event(string $line, array $hosts): ?array
 function suricata_event_severity(string $msg, int $priority, string $category, string $line = ''): string
 {
     $text = strtolower($msg . ' ' . $line);
-    if (preg_match('/\b(suricata stream|ethertype unknown|generic protocol command decode|invalid ack|invalid timestamp|bad window|wrong seq|retransmission|tcp segment|checksum|decoder event)\b/i', $text)) {
+    if (preg_match('/\b(suricata stream|ethertype unknown|generic protocol command decode|invalid ack|invalid timestamp|bad window|wrong seq|retransmission|tcp segment|checksum|decoder event|http unable to match response to request|raw pkt)\b/i', $text)) {
         return 'INFO';
     }
-    if (preg_match('/\b(malware|trojan|ransom|command and control|command-and-control|c2 beacon|cnc|callback|exploit kit|shellcode)\b/i', $text)) {
+    if (preg_match('/\b(malware|trojan|ransom|command and control|command-and-control|c2 beacon|cnc|callback|exploit kit|exploit attempt|shellcode|botnet|coinminer|credential|phish|blacklist|known bad|known-bad)\b/i', $text)) {
         return $priority <= 2 ? 'CRIT' : 'HIGH';
     }
     if (strtoupper($category) === 'IPS' || preg_match('/\b(drop|blocked)\b/i', $text)) {
@@ -6964,7 +6964,7 @@ function suricata_event_severity(string $msg, int $priority, string $category, s
         return $priority <= 1 ? 'HIGH' : 'WARN';
     }
     if ($priority <= 1) {
-        return 'HIGH';
+        return 'WARN';
     }
     if ($priority === 2) {
         return 'WARN';
@@ -7616,6 +7616,7 @@ function parse_dnsbl_event(string $line, array $hosts): ?array
     if (preg_match('/([A-Za-z0-9.-]+\.[A-Za-z]{2,})/', $line, $dm)) {
         $domain = $dm[1];
     }
+    $friendlyDomain = app_label_from_text($domain) ?: $domain;
     $verdict = stripos($line, 'sink') !== false ? 'SINKHOLE' : 'DNSBL HIT';
     $src = endpoint_label($ipm[1], '', $hosts);
     return [
@@ -7623,7 +7624,8 @@ function parse_dnsbl_event(string $line, array $hosts): ?array
         'proto' => 'DNS',
         'dir' => 'OUT',
         'src' => $src,
-        'dst' => $domain,
+        'dst' => $friendlyDomain,
+        'raw_dst' => $domain,
         'service' => 'dnsbl',
         'size' => '0B',
         'bytes' => 0,
@@ -7632,7 +7634,7 @@ function parse_dnsbl_event(string $line, array $hosts): ?array
         'category' => 'DNSBL',
         'severity' => 'LOW',
         'context' => ['dnsbl', 'known-bad'],
-        'ticker' => sprintf('[DNSBL][LOW] %s DNS blocked %s', compact_endpoint_label($src, true), $domain),
+        'ticker' => sprintf('[DNSBL][LOW] %s DNS blocked %s', compact_endpoint_label($src, true), compact_domain_label($domain, 18)),
     ];
 }
 
@@ -8583,6 +8585,15 @@ function service_short(string $service): string
     $service = strtolower(trim($service));
     return match (true) {
         $service === '' => '?',
+        str_contains($service, 'netflix') => 'nflx',
+        str_contains($service, 'prime') => 'prim',
+        str_contains($service, 'youtube') => 'ytub',
+        str_contains($service, 'disney') => 'dis+',
+        str_contains($service, 'hulu') => 'hulu',
+        str_contains($service, 'apple') || str_contains($service, 'icloud') => 'appl',
+        str_contains($service, 'hugging') => 'hf',
+        str_contains($service, 'civit') => 'civt',
+        str_contains($service, 'ibm quantum') => 'qisk',
         str_contains($service, 'https') => 'tls',
         str_contains($service, 'http') => 'web',
         $service === 'dns', $service === 'dnsbl' => 'dns',
@@ -8668,6 +8679,14 @@ function service_human_label(string $service): string
         'anth' => 'Anthropic',
         'gemi' => 'Gemini',
         'hf' => 'Hugging Face',
+        'civt' => 'Civitai',
+        'qisk' => 'IBM Quantum',
+        'nflx' => 'Netflix',
+        'prim' => 'Prime Video',
+        'ytub' => 'YouTube',
+        'dis+' => 'Disney+',
+        'hulu' => 'Hulu',
+        'appl' => 'Apple/iCloud',
         'rdis' => 'Redis',
         'metr' => 'metrics',
         'ping' => 'ping',
@@ -8689,6 +8708,42 @@ function service_human_label(string $service): string
         'mux' => 'TCP mux',
         'oth', '?' => 'other service',
         default => preg_match('/^p(\d+)/', $short, $m) ? 'port ' . $m[1] : strtoupper($short),
+    };
+}
+
+function app_label_from_text(string $text): string
+{
+    $text = strtolower($text);
+    return match (true) {
+        preg_match('/netflix|nflxvideo/', $text) === 1 => 'Netflix',
+        preg_match('/primevideo|amazonvideo|aiv-cdn|atv-ps|media-amazon/', $text) === 1 => 'Prime Video',
+        preg_match('/youtube|googlevideo|ytimg/', $text) === 1 => 'YouTube',
+        preg_match('/disney|disneyplus|dssott/', $text) === 1 => 'Disney+',
+        str_contains($text, 'hulu') => 'Hulu',
+        preg_match('/max\.com|hbomax|hbo/', $text) === 1 => 'Max',
+        preg_match('/peacocktv|peacock/', $text) === 1 => 'Peacock',
+        preg_match('/paramountplus|cbsivideo|cbsaavideo/', $text) === 1 => 'Paramount+',
+        str_contains($text, 'roku') => 'Roku',
+        str_contains($text, 'plex') => 'Plex',
+        preg_match('/apple|icloud|mzstatic|itunes|aaplimg|appldnld|tv\.apple/', $text) === 1 => 'Apple/iCloud',
+        preg_match('/huggingface|hf\.co/', $text) === 1 => 'Hugging Face',
+        str_contains($text, 'civitai') => 'Civitai',
+        preg_match('/quantum-computing\.ibm|cloud\.ibm|ibm\.com/', $text) === 1 => 'IBM Quantum',
+        preg_match('/openai|chatgpt/', $text) === 1 => 'OpenAI',
+        preg_match('/anthropic|claude/', $text) === 1 => 'Anthropic',
+        preg_match('/x\.ai|grok/', $text) === 1 => 'xAI/Grok',
+        preg_match('/nvidia|build\.nvidia/', $text) === 1 => 'NVIDIA AI',
+        str_contains($text, 'ollama') => 'Ollama',
+        str_contains($text, 'vllm') => 'vLLM',
+        preg_match('/googleapis|gstatic|googleusercontent/', $text) === 1 => 'Google APIs',
+        preg_match('/doubleclick|googlesyndication|googleadservices/', $text) === 1 => 'Google Ads',
+        preg_match('/microsoft|windowsupdate|office365|live\.com|msn\.com|azure/', $text) === 1 => 'Microsoft',
+        preg_match('/amazonaws|cloudfront/', $text) === 1 => 'AWS/CloudFront',
+        preg_match('/facebook|fbcdn|instagram|whatsapp/', $text) === 1 => 'Meta',
+        str_contains($text, 'discord') => 'Discord',
+        str_contains($text, 'spotify') => 'Spotify',
+        preg_match('/steam|steampowered/', $text) === 1 => 'Steam',
+        default => '',
     };
 }
 
@@ -8813,6 +8868,10 @@ function compact_domain_label(string $domain, int $width): string
     $domain = trim(preg_replace('/:\d+$/', '', $domain) ?? $domain);
     if ($domain === '' || $width <= 0) {
         return '';
+    }
+    $app = app_label_from_text($domain);
+    if ($app !== '') {
+        return truncate_modern_text($app, $width);
     }
     if (cell_len($domain) <= $width) {
         return $domain;

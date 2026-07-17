@@ -8,6 +8,7 @@ binmode STDOUT, ':encoding(UTF-8)';
 
 my $no_color = $ENV{'NO_COLOR'} || $ENV{'SOCX_NO_COLOR'};
 my $width = ($ENV{'SOCX_WIDTH'} && $ENV{'SOCX_WIDTH'} =~ /^\d+$/) ? int($ENV{'SOCX_WIDTH'}) : 0;
+my %host_labels = load_host_labels();
 my %C = (
     reset   => "\e[0m",
     dim     => "\e[38;5;245m",
@@ -66,6 +67,11 @@ sub endpoint_narrow {
 sub endpoint_label {
     my ($text, $narrow) = @_;
     $text =~ s/^\s+|\s+$//g;
+    if ($host_labels{$text}) {
+        my $base = $text =~ /^192\.168\.1\.(\d+)$/ ? "LAN.$1" : endpoint_narrow($text, 12);
+        my $label = "$host_labels{$text}/$base";
+        return $narrow ? endpoint_narrow($host_labels{$text}, 14) : $label;
+    }
     return 'pfSense' if $text eq '192.168.1.1';
     return 'BCAST' if $text eq '192.168.1.255' || $text eq '255.255.255.255';
     return 'mDNS' if $text eq '224.0.0.251';
@@ -83,6 +89,28 @@ sub endpoint_label {
         return "EXT.$1.$2";
     }
     return $text;
+}
+
+sub load_host_labels {
+    my %labels;
+    my @files;
+    push @files, $ENV{'SOCX_HOSTS_CONFIG'} if $ENV{'SOCX_HOSTS_CONFIG'};
+    push @files, '/usr/local/etc/socx_hosts.conf', '/root/socx_hosts.conf';
+    for my $file (@files) {
+        next if !$file || !-r $file;
+        open my $fh, '<', $file or next;
+        while (my $line = <$fh>) {
+            chomp $line;
+            $line =~ s/^\s+|\s+$//g;
+            next if $line eq '' || $line =~ /^#/ || $line !~ /=/;
+            my ($ip, $name) = split /\s*=\s*/, $line, 2;
+            next if !$ip || !$name;
+            $name =~ s/[^A-Za-z0-9._+-]/-/g;
+            $labels{$ip} = substr($name, 0, 18);
+        }
+        close $fh;
+    }
+    return %labels;
 }
 
 sub flow_sides {

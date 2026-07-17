@@ -180,10 +180,79 @@ def service_name(port: str) -> str:
         "4500": "ipsec-nat",
         "5223": "apple-push",
         "5228": "gcm",
+        "5230": "gcm",
         "5938": "teamviewer",
+        "6379": "redis",
+        "7860": "gradio",
+        "8000": "vllm",
+        "8001": "vllm",
+        "8002": "vllm",
+        "8086": "influx",
+        "8089": "splunk",
+        "8093": "miranda",
+        "8094": "socx-web",
+        "8095": "pi-llm",
+        "8265": "ray",
         "8886": "iot-cloud",
+        "8888": "jupyter",
+        "8889": "jupyter",
+        "9090": "metrics",
+        "9100": "node-exporter",
+        "10001": "ray",
+        "11434": "ollama",
+        "11435": "llm",
+        "19090": "triton",
     }
     return services.get(str(port), f"port {port}" if port else "other")
+
+
+def app_label(text: str) -> str:
+    value = text.lower()
+    patterns = [
+        (r"netflix|nflxvideo", "Netflix"),
+        (r"primevideo|amazonvideo|aiv-cdn|atv-ps|media-amazon", "Prime Video"),
+        (r"youtube|googlevideo|ytimg", "YouTube"),
+        (r"disney|disneyplus|dssott", "Disney+"),
+        (r"hulu", "Hulu"),
+        (r"max\.com|hbomax|hbo", "Max"),
+        (r"peacocktv|peacock", "Peacock"),
+        (r"paramountplus|cbsivideo|cbsaavideo", "Paramount+"),
+        (r"roku", "Roku"),
+        (r"plex", "Plex"),
+        (r"apple|icloud|mzstatic|itunes|aaplimg|appldnld|tv\.apple", "Apple/iCloud"),
+        (r"apns", "Apple Push"),
+        (r"huggingface|hf\.co", "Hugging Face"),
+        (r"civitai", "Civitai"),
+        (r"quantum-computing\.ibm|cloud\.ibm|ibm\.com", "IBM Quantum"),
+        (r"openai|chatgpt", "OpenAI"),
+        (r"anthropic|claude", "Anthropic"),
+        (r"x\.ai|grok", "xAI/Grok"),
+        (r"nvidia|build\.nvidia", "NVIDIA AI"),
+        (r"ollama", "Ollama"),
+        (r"vllm", "vLLM"),
+        (r"googleapis|gstatic|googleusercontent", "Google APIs"),
+        (r"doubleclick|googlesyndication|googleadservices", "Google Ads"),
+        (r"microsoft|windowsupdate|office365|live\.com|msn\.com|azure", "Microsoft"),
+        (r"amazonaws|cloudfront", "AWS/CloudFront"),
+        (r"facebook|fbcdn|instagram|whatsapp", "Meta"),
+        (r"discord", "Discord"),
+        (r"spotify", "Spotify"),
+        (r"steam|steampowered", "Steam"),
+    ]
+    for pattern, label in patterns:
+        if re.search(pattern, value):
+            return label
+    return ""
+
+
+def is_routine_ids(text: str) -> bool:
+    return bool(re.search(r"SURICATA (Stream|Ethertype unknown|TCPv[46] invalid checksum|UDPv[46] invalid checksum|ICMPv[46] invalid checksum|QUIC failed decrypt)|Generic Protocol Command Decode|invalid ack|invalid timestamp|bad window|wrong seq|retransmission|decoder event|HTTP unable to match response to request|Raw pkt:", text, re.I))
+
+
+def is_high_signal_ids(text: str) -> bool:
+    if is_routine_ids(text):
+        return False
+    return bool(re.search(r"malware|trojan|ransom|command.?and.?control|c2 beacon|cnc|callback|exploit|shellcode|botnet|coinminer|credential|phish|blacklist|known.?bad", text, re.I))
 
 
 class SocxCollector:
@@ -1016,7 +1085,7 @@ class SocxCollector:
                 "asset": self.pretty_host(src),
                 "peer": self.pretty_host(dst),
                 "proto": proto,
-                "service": service_name(port),
+                "service": app_label(dst) or service_name(port),
                 "port": port,
                 "state": "ESTABLISHED" if "ESTABLISHED" in line else "ACTIVE",
                 "count": 1,
@@ -1074,8 +1143,9 @@ class SocxCollector:
             for token in re.findall(r"([a-z0-9][a-z0-9._-]+\.[a-z][a-z0-9.-]+)", line.lower()):
                 if len(token) > 5:
                     domains[token.strip(".")] = domains.get(token.strip("."), 0) + 1
-        ids_high = len(re.findall(r"Priority: 1|malware|trojan|ransom|command.?and.?control|c2|cnc|callback|exploit|drop", ids_log, re.I))
-        ids_routine = len(re.findall(r"SURICATA (Stream|Ethertype unknown)|Generic Protocol Command Decode|invalid ack|invalid timestamp|decoder event|HTTP unable to match response to request", ids_log, re.I))
+        ids_lines = [line for line in ids_log.splitlines() if line.strip()]
+        ids_high = sum(1 for line in ids_lines if is_high_signal_ids(line))
+        ids_routine = sum(1 for line in ids_lines if is_routine_ids(line))
         return {
             "mode": center.get("mode"),
             "score": center.get("score"),
@@ -1084,7 +1154,7 @@ class SocxCollector:
             "blocked_sources": rank(src_counts),
             "blocked_ports": rank(port_counts),
             "lan_hosts": rank(lan_counts),
-            "dnsbl_domains": [{"name": k, "count": v} for k, v in sorted(domains.items(), key=lambda kv: kv[1], reverse=True)[:8]],
+            "dnsbl_domains": [{"name": app_label(k) or k, "raw": k, "count": v} for k, v in sorted(domains.items(), key=lambda kv: kv[1], reverse=True)[:8]],
             "ids": {"high_signal": ids_high, "routine": ids_routine},
             "actions": [
                 "socx snapshot",
@@ -1160,6 +1230,7 @@ class SocxCollector:
             dport = fields[18] if len(fields) > 18 and fields[18].isdigit() else ""
         time_match = re.search(r"(\d\d:\d\d:\d\d)", prefix)
         service = service_name(dport)
+        service = app_label(dst) or service
         severity = "MED" if action == "block" else "LOW"
         if dport in {"22", "500", "4500", "3389"} and action == "block":
             severity = "HIGH"
@@ -1193,6 +1264,9 @@ class SocxCollector:
         if not domain or not src:
             return None
         text = f"[DNSBL][LOW] {self.pretty_host(src)} -> {domain} blocked"
+        label = app_label(domain)
+        if label:
+            text = f"[DNSBL][LOW] {self.pretty_host(src)} -> {label} blocked ({domain})"
         return {"text": text, "fingerprint": f"dnsbl:{src}:{domain}"}
 
     def push_event(self, kind: str, severity: str, text: str, fingerprint: str) -> None:

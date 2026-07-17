@@ -20,6 +20,7 @@ my $mid = $width && $width < 95;
 my $wall = $width && $width <= 100;
 my $tiny_wall = $width && $width < 46;
 my $packet_count = 0;
+my %host_labels = load_host_labels();
 
 my %C = (
     reset  => "\e[0m",
@@ -58,14 +59,56 @@ sub service {
     my ($port) = @_;
     return '' if !defined $port || $port eq '';
     return 'dns'   if $port eq '53';
-    return 'web'   if $port eq '80';
-    return 'https' if $port eq '443';
+    return 'web'   if $port eq '80' || $port eq '8080' || $port eq '8081';
+    return 'tls'   if $port eq '443' || $port eq '8443' || $port eq '9443';
     return 'ntp'   if $port eq '123';
-    return 'vpn'   if $port eq '500' || $port eq '4500';
+    return 'vpn'   if $port eq '500' || $port eq '1194' || $port eq '1443' || $port eq '4500' || $port eq '51820' || $port eq '51821';
     return 'ssh'   if $port eq '22';
+    return 'mail'  if $port eq '25' || $port eq '465' || $port eq '587' || $port eq '993' || $port eq '995';
+    return 'smb'   if $port eq '137' || $port eq '138' || $port eq '139' || $port eq '445';
+    return 'snmp'  if $port eq '161';
+    return 'dot'   if $port eq '853';
     return 'mdns'  if $port eq '5353';
     return 'ssdp'  if $port eq '1900';
+    return 'plex'  if $port eq '32400' || $port eq '32412' || $port eq '32414';
+    return 'nut'   if $port eq '3493';
+    return 'apns'  if $port eq '5223';
+    return 'gcm'   if $port eq '5228' || $port eq '5229' || $port eq '5230';
+    return 'gradio' if $port eq '7860';
+    return 'miranda' if $port eq '8093';
+    return 'socx-web' if $port eq '8094';
+    return 'pi-llm' if $port eq '8095';
+    return 'ollama' if $port eq '11434';
+    return 'vllm' if $port eq '8000' || $port eq '8001' || $port eq '8002' || $port eq '8003' || $port eq '8004' || $port eq '8088';
+    return 'jupyter' if $port eq '8888' || $port eq '8889';
+    return 'ray' if $port eq '8265' || $port eq '10001';
+    return 'metrics' if $port eq '9090' || $port eq '9100';
+    return 'grafana' if $port eq '3000';
+    return 'mlflow' if $port eq '5000' || $port eq '5001';
+    return 'triton' if $port eq '19090';
     return "port $port";
+}
+
+sub load_host_labels {
+    my %labels;
+    my @files;
+    push @files, $ENV{'SOCX_HOSTS_CONFIG'} if $ENV{'SOCX_HOSTS_CONFIG'};
+    push @files, '/usr/local/etc/socx_hosts.conf', '/root/socx_hosts.conf';
+    for my $file (@files) {
+        next if !$file || !-r $file;
+        open my $fh, '<', $file or next;
+        while (my $line = <$fh>) {
+            chomp $line;
+            $line =~ s/^\s+|\s+$//g;
+            next if $line eq '' || $line =~ /^#/ || $line !~ /=/;
+            my ($ip, $name) = split /\s*=\s*/, $line, 2;
+            next if !$ip || !$name;
+            $name =~ s/[^A-Za-z0-9._+-]/-/g;
+            $labels{$ip} = substr($name, 0, 18);
+        }
+        close $fh;
+    }
+    return %labels;
 }
 
 sub split_endpoint {
@@ -80,6 +123,10 @@ sub split_endpoint {
 
 sub ip_label {
     my ($ip) = @_;
+    if ($host_labels{$ip}) {
+        my $base = $ip =~ /^192\.168\.1\.(\d+)$/ ? "LAN.$1" : $ip;
+        return "$host_labels{$ip}/$base";
+    }
     return 'WAN' if $wan_ip && $ip eq $wan_ip;
     return 'Cloudflare' if $ip eq '1.1.1.1';
     return 'Cloudflare' if $ip =~ /^162\.158\./;
@@ -303,7 +350,7 @@ sub colorize {
     $line =~ s/\b(WAN|ISP-GW|ISP\.\d+\.\d+|LAN\.\d+)\b/paint('green', $1)/ge;
     $line =~ s/\b(EXT\.\d+\.\d+|Cloudflare|GoogleDNS|Quad9|mDNS|SSDP|BCAST)\b/paint('cyan', $1)/ge;
     $line =~ s/\b(dns|mdns|ssdp|health ping)\b/paint('cyan', $1)/ge;
-    $line =~ s/\b(https|web|ssh|vpn|ntp)\b/paint('blue', $1)/ge;
+    $line =~ s/\b(tls|https|web|ssh|vpn|ntp|mail|smb|snmp|dot|plex|nut|apns|gcm|gradio|miranda|socx-web|pi-llm|ollama|vllm|jupyter|ray|metrics|grafana|mlflow|triton)\b/paint('blue', $1)/ge;
     $line =~ s/\b(new connection|connect reply|data|closing|ack)\b/paint('yellow', $1)/ge;
     $line =~ s/\b(reset|blocked|denied|unreachable|bad|error)\b/paint('red', $1)/gei;
     $line =~ s/( -> |>|: )/paint('white', $1)/ge;
