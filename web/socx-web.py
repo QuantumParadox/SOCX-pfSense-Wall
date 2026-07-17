@@ -454,6 +454,8 @@ class SocxCollector:
 
     def collect_command_center(self) -> dict[str, Any]:
         auto = parse_env_file(Path("/tmp/socx-autopilot.env"))
+        client = parse_env_file(Path("/tmp/socx-speedtest-client.env"))
+        router = parse_env_file(Path("/tmp/socx-speedtest-router.env"))
         direct = parse_env_file(Path("/tmp/socx-speedtest-direct.env"))
         vpn = parse_env_file(Path("/tmp/socx-speedtest-vpn.env"))
         named_paths: list[dict[str, Any]] = []
@@ -487,13 +489,52 @@ class SocxCollector:
             },
             "summary": summary,
             "updated": auto.get("updated") or auto.get("ts") or "",
+            "client": self.speedtest_summary("CLIENT", client),
+            "router": self.speedtest_summary("ROUTER", router),
             "direct": self.speedtest_summary("DIRECT", direct),
             "vpn": self.speedtest_summary("VPN", vpn),
+            "speed_truth": self.speedtest_truth(client, router, direct, vpn),
             "vpn_paths": named_paths,
             "history_count": len(history_rows),
             "history_trend": self.history_trend(history_rows),
             "history": history_rows,
             "actions": actions[:5],
+        }
+
+    def speedtest_truth(
+        self,
+        client: dict[str, str],
+        router: dict[str, str],
+        direct: dict[str, str],
+        vpn: dict[str, str],
+    ) -> dict[str, Any]:
+        def num(data: dict[str, str], key: str) -> float:
+            try:
+                return float(data.get(key, "") or 0)
+            except ValueError:
+                return 0.0
+        client_down = num(client, "download_mbps")
+        router_down = num(router, "download_mbps")
+        direct_down = num(direct, "download_mbps")
+        vpn_down = num(vpn, "download_mbps")
+        router_low = bool(client_down and router_down and router_down < client_down * 0.65)
+        vpn_low = bool(direct_down and vpn_down and vpn_down < direct_down * 0.45)
+        if router_low:
+            label = "router lower than client"
+        elif vpn_low:
+            label = "vpn path slower"
+        elif client_down or router_down or direct_down or vpn_down:
+            label = "speed truth normal"
+        else:
+            label = "speed truth waiting"
+        return {
+            "label": label,
+            "router_under_client": router_low,
+            "vpn_under_direct": vpn_low,
+            "client_down": round(client_down) if client_down else "",
+            "router_down": round(router_down) if router_down else "",
+            "direct_down": round(direct_down) if direct_down else "",
+            "vpn_down": round(vpn_down) if vpn_down else "",
         }
 
     def collect_pi_nodes(self) -> dict[str, Any]:

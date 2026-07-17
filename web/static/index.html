@@ -118,11 +118,18 @@
           <button data-action="status">Status</button>
           <button data-action="incident">Incident</button>
           <button data-action="snapshot">Snapshot</button>
+          <button data-action="speedtest">Speed</button>
           <button data-action="zeek">Zeek</button>
           <button data-action="pi">Pi AI</button>
+          <button data-action="voice" id="voice-command">Voice</button>
         </div>
         <canvas class="spark mini" id="cmd-spark"></canvas>
         <div class="table command-table" id="command-center"></div>
+        <div class="pi-fleet-head">
+          <span>Pi Fleet</span>
+          <b id="pi-fleet-score">--</b>
+        </div>
+        <canvas class="cluster-canvas" id="cluster-canvas"></canvas>
         <div class="table pi-node-table" id="pi-nodes"></div>
       </section>
 

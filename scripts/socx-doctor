@@ -869,8 +869,17 @@ doctor_zeek() {
         [ -f "$latest/post-terminate.out" ] && tail -12 "$latest/post-terminate.out" 2>/dev/null | sed 's/^/      /'
         [ -f "$latest/.crash-diag.out" ] && tail -12 "$latest/.crash-diag.out" 2>/dev/null | sed 's/^/      /'
     fi
-    logdir="/usr/local/zeek/logs/current"
-    [ -d "$logdir" ] && mark OK "Zeek current log directory exists: $logdir" || mark WARN "Zeek current log directory missing"
+    logbase="$(zeekctl config 2>/dev/null | awk -F' = ' 'tolower($1)=="logdir"{print $2; exit}')"
+    [ -n "$logbase" ] || logbase="/usr/local/zeek/logs"
+    if [ -d "$logbase/current" ]; then
+        mark OK "Zeek current log directory exists: $logbase/current"
+    elif find "$logbase" -maxdepth 2 \( -name conn.log -o -name notice.log -o -name weird.log \) 2>/dev/null | grep -q .; then
+        mark OK "Zeek logs present under configured logdir: $logbase"
+    elif [ -d "$logbase" ]; then
+        mark WARN "Zeek configured logdir exists but no current logs found: $logbase"
+    else
+        mark WARN "Zeek configured logdir missing: $logbase"
+    fi
     finish
 }
 

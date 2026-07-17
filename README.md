@@ -74,6 +74,9 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds `socx snapshot-cron`, a nightly read-only evidence snapshot schedule with retention cleanup.
 - Adds `/api/history` plus a tiny Command Center score sparkline in the browser wall.
 - Adds a browser Incident Cockpit and safe Commander buttons for status, Incident Mode, snapshots, Zeek health, and Pi AI checks.
+- Adds a compact Pi Fleet visualizer in the browser wall for pfSense, Pi 5 AI, Pi 4 telemetry, online count, temperature, memory, load, and service state.
+- Adds browser voice Commander support for the same fixed allowlist as the buttons: status, incident, snapshot, speedtest, Zeek, and Pi AI.
+- Adds browser Speedtest truth comparison for CLIENT, ROUTER, DIRECT, and VPN paths so router-side under-reporting is visible instead of confusing.
 - Adds `/api/commander`, a fixed allowlist endpoint for safe operator actions without arbitrary shell access.
 - Adds `socx notify-cron` to install/remove/status a five-minute notification-rule cron job.
 - Adds `socx-doctor php-services` to catch malformed pfSense service entries that can cause PHP service-status crash reports.
@@ -147,6 +150,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-ai-explain` - operator command that refreshes Pi/MIRANDA analysis and prints a plain-English summary.
 - `pi/socx_pi_llm_orchestrator.py` - optional Raspberry Pi FastAPI receiver that fans SOCX evidence to three local model roles.
 - `pi/socx_pi_sidecar.py` - lightweight standard-library Pi telemetry endpoint for Pi 4/Pi fleet health on port `8096`.
+- Browser wall Command Center - includes safe click/voice actions, Speedtest truth comparison, and the compact Pi Fleet link visualizer.
 - `scripts/iftopx`, `scripts/tcpdumpx`, `scripts/socx` - convenience launchers.
 - `scripts/socweb` - browser dashboard launcher.
 - `web/socx-web.py` - lightweight Python WebSocket/HTTP backend for the browser wall.

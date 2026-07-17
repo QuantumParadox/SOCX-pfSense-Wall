@@ -2,6 +2,8 @@ const $ = (id) => document.getElementById(id);
 
 let lastTickerText = "";
 let pollingTimer = null;
+let latestState = null;
+let clusterTick = 0;
 
 const fmtPct = (v) => `${Number(v || 0).toFixed(0)}%`;
 const safe = (v, fallback = "--") => (v === undefined || v === null || v === "" ? fallback : String(v));
@@ -137,6 +139,10 @@ function renderCommandCenter(center = {}) {
       "score",
       `net ${safe(center.scores?.network, "--")} sec ${safe(center.scores?.security, "--")} ai ${safe(center.scores?.ai, "--")} sens ${safe(center.scores?.sensors, "--")}`,
     ], "command-row"),
+    row([
+      "truth",
+      `${safe(center.speed_truth?.label, "speed truth waiting")} C/R ${safe(center.speed_truth?.client_down, "--")}/${safe(center.speed_truth?.router_down, "--")} D/V ${safe(center.speed_truth?.direct_down, "--")}/${safe(center.speed_truth?.vpn_down, "--")}`,
+    ], "command-row"),
     row(["speed", `${speedLine(center.direct)} | ${speedLine(center.vpn)}`], "command-row"),
   ];
   (center.vpn_paths || []).slice(0, 2).forEach((path) => rows.push(row(["path", speedLine(path)], "command-row")));
@@ -184,8 +190,17 @@ function renderIncident(incident = {}) {
 
 function renderPiNodes(piNodes = {}) {
   const root = $("pi-nodes");
+  const score = $("pi-fleet-score");
+  const canvas = $("cluster-canvas");
   if (!root) return;
   const nodes = Array.isArray(piNodes.nodes) ? piNodes.nodes : [];
+  if (score) {
+    const online = piNodes.online !== undefined ? piNodes.online : nodes.filter((node) => node.status === "online").length;
+    const total = piNodes.count !== undefined ? piNodes.count : nodes.length;
+    score.textContent = `${online}/${total} ${safe(piNodes.score, "--")}`;
+    score.className = Number(piNodes.score || 0) >= 85 ? "green" : Number(piNodes.score || 0) >= 50 ? "yellow" : "red";
+  }
+  drawCluster(canvas, nodes);
   if (!nodes.length) {
     root.innerHTML = row(["pi", "no Pi nodes discovered yet"], "command-row");
     return;
@@ -203,6 +218,83 @@ function piNodeStats(node = {}) {
   if (node.load_one !== undefined && node.load_one !== null) bits.push(`ld ${Number(node.load_one).toFixed(2)}`);
   if (node.service) bits.push(node.service);
   return bits.join(" ");
+}
+
+function drawCluster(canvas, nodes = []) {
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const width = Math.max(1, Math.floor(rect.width * dpr));
+  const height = Math.max(1, Math.floor(rect.height * dpr));
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, width, height);
+  clusterTick = (clusterTick + 1) % 360;
+  const cx = 56 * dpr;
+  const cy = height / 2;
+  const radius = Math.max(7 * dpr, Math.min(13 * dpr, height * .18));
+  const active = nodes.filter((node) => node.status === "online");
+
+  const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, 58 * dpr);
+  glow.addColorStop(0, "rgba(52, 215, 242, .26)");
+  glow.addColorStop(1, "rgba(52, 215, 242, 0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.strokeStyle = "rgba(52, 215, 242, .38)";
+  ctx.lineWidth = Math.max(1, 1.4 * dpr);
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius * 1.65, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.fillStyle = "#34d7f2";
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#041016";
+  ctx.font = `${Math.max(8, 9 * dpr)}px Consolas, monospace`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("FW", cx, cy);
+
+  const usable = Math.max(90 * dpr, width - 130 * dpr);
+  nodes.slice(0, 4).forEach((node, idx) => {
+    const x = 116 * dpr + (idx / Math.max(1, Math.min(3, nodes.length - 1))) * usable;
+    const phase = (clusterTick + idx * 42) * Math.PI / 180;
+    const y = cy + Math.sin(phase) * 6 * dpr;
+    const online = node.status === "online";
+    const color = online ? "#76f27d" : "#ff5c7a";
+    ctx.strokeStyle = online ? "rgba(118, 242, 125, .65)" : "rgba(255, 92, 122, .5)";
+    ctx.beginPath();
+    ctx.moveTo(cx + radius, cy);
+    ctx.lineTo(x - radius, y);
+    ctx.stroke();
+    if (online) {
+      ctx.strokeStyle = "rgba(255, 226, 103, .75)";
+      const pulse = ((clusterTick + idx * 30) % 100) / 100;
+      const px = cx + radius + (x - cx - radius * 2) * pulse;
+      const py = cy + (y - cy) * pulse;
+      ctx.beginPath();
+      ctx.arc(px, py, Math.max(1.4 * dpr, 2), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = online ? "#041016" : "#fff";
+    ctx.font = `${Math.max(8, 9 * dpr)}px Consolas, monospace`;
+    const label = (node.role || "pi").includes("5") ? "P5" : (node.role || node.name || "pi").includes("4") ? "P4" : `P${idx + 1}`;
+    ctx.fillText(label, x, y);
+  });
+
+  ctx.fillStyle = "rgba(232, 241, 242, .72)";
+  ctx.textAlign = "right";
+  ctx.font = `${Math.max(8, 10 * dpr)}px Consolas, monospace`;
+  ctx.fillText(`${active.length}/${nodes.length} online`, width - 8 * dpr, height - 9 * dpr);
 }
 
 function renderFlows(flows = []) {
@@ -265,6 +357,7 @@ function renderTicker(events = []) {
 
 function render(state) {
   if (!state) return;
+  latestState = state;
   setText("hostname", `${safe(state.hostname, "pfSense")} / ${safe(state.mode, "live")}`);
   setText("health", safe(state.status?.health, "online"));
   setText("refresh", `${safe(state.status?.refresh_ms, 500)}ms`);
@@ -318,7 +411,56 @@ function render(state) {
   renderTicker(state.events || []);
 }
 
+function commanderActionFromSpeech(text) {
+  const value = String(text || "").toLowerCase();
+  if (/(speed|bandwidth|test)/.test(value)) return "speedtest";
+  if (/(incident|watch|investigate)/.test(value)) return "incident";
+  if (/(snapshot|evidence|capture)/.test(value)) return "snapshot";
+  if (/(zeek|logs?)/.test(value)) return "zeek";
+  if (/(pi|raspberry|ai|llm)/.test(value)) return "pi";
+  if (/(status|health|doctor)/.test(value)) return "status";
+  return "";
+}
+
+function runVoiceCommand() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const output = $("command-output");
+  const title = $("command-output-title");
+  const body = $("command-output-body");
+  if (output) output.hidden = false;
+  if (!SpeechRecognition) {
+    if (title) title.textContent = "Voice unavailable";
+    if (body) body.textContent = "This browser does not expose speech recognition here. Use the Commander buttons instead.";
+    return;
+  }
+  const recognition = new SpeechRecognition();
+  recognition.lang = "en-US";
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+  if (title) title.textContent = "Listening";
+  if (body) body.textContent = "Say: status, incident, snapshot, speed test, Zeek, or Pi AI.";
+  recognition.onresult = (event) => {
+    const transcript = event.results?.[0]?.[0]?.transcript || "";
+    const action = commanderActionFromSpeech(transcript);
+    if (!action) {
+      if (title) title.textContent = "Voice command not mapped";
+      if (body) body.textContent = `Heard: ${transcript}\nAllowed: status, incident, snapshot, speedtest, zeek, pi.`;
+      return;
+    }
+    runCommander(action);
+  };
+  recognition.onerror = (event) => {
+    if (title) title.textContent = "Voice error";
+    if (body) body.textContent = event.error || "Speech recognition failed.";
+  };
+  recognition.start();
+}
+
 async function runCommander(action) {
+  if (action === "voice") {
+    runVoiceCommand();
+    return;
+  }
   const output = $("command-output");
   const title = $("command-output-title");
   const body = $("command-output-body");
@@ -391,6 +533,7 @@ $("command-output-close")?.addEventListener("click", () => {
 });
 
 setInterval(updateClock, 500);
+setInterval(() => drawCluster($("cluster-canvas"), latestState?.pi_nodes?.nodes || []), 650);
 updateClock();
 connect();
 poll();
