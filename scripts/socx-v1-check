@@ -38,7 +38,7 @@ json_count() {
     wc -l < "$file" 2>/dev/null | awk '{print $1+0}'
 }
 
-echo "SOCX v1.0 readiness gate"
+echo "SOCX release readiness gate"
 echo "generated $(date)"
 echo
 
@@ -49,6 +49,13 @@ if fetch -qo /tmp/socx-v1-state.json http://127.0.0.1:8094/api/state 2>/dev/null
     mark OK "browser API /api/state reachable"
 else
     mark FAIL "browser API /api/state unreachable"
+fi
+
+if fetch -qo /tmp/socx-v1-story.json http://127.0.0.1:8094/api/story 2>/dev/null || curl -fsS --max-time 5 http://127.0.0.1:8094/api/story >/tmp/socx-v1-story.json 2>/dev/null; then
+    story_title="$(/usr/local/bin/python3.11 -c 'import json,sys; print((json.load(open(sys.argv[1])).get("title") or ""))' /tmp/socx-v1-story.json 2>/dev/null || true)"
+    [ "$story_title" = "SOCX Daily Story" ] && mark OK "Daily Story API reachable" || mark WARN "Daily Story API returned unexpected title=${story_title:-missing}"
+else
+    mark FAIL "Daily Story API /api/story unreachable"
 fi
 
 err_size="$(wc -c /tmp/socx-wall.err 2>/dev/null | awk '{print $1+0}')"
@@ -95,6 +102,12 @@ pi_count="$(jq -r '.count // 0' /tmp/socx-pi-nodes.json 2>/dev/null || echo 0)"
 pi_roles="$(env_get roles /tmp/socx-pi-llm-analysis.env)"
 [ "$pi_roles" = "3/3" ] && mark OK "Pi 3-LLM roles online" || mark WARN "Pi 3-LLM roles=${pi_roles:-missing}"
 
+if command -v socx-story >/dev/null 2>&1 && socx story >/tmp/socx-v1-story.txt 2>&1; then
+    grep -q "SOCX Daily Story" /tmp/socx-v1-story.txt && mark OK "socx story command works" || mark WARN "socx story command output did not include title"
+else
+    mark WARN "socx story command unavailable"
+fi
+
 service_unhealthy="$(service -e 2>/dev/null | wc -l | awk '{print $1+0}')"
 [ "$service_unhealthy" -ge 0 ] && mark OK "pfSense service list readable"
 
@@ -107,9 +120,9 @@ fi
 echo
 printf 'summary OK=%d WARN=%d FAIL=%d\n' "$ok" "$warn" "$fail"
 if [ "$fail" -eq 0 ] && [ "$warn" -le "${SOCX_V1_WARN_BUDGET:-4}" ]; then
-    echo "READY FOR v1.0"
+    echo "READY FOR SOCX"
     exit 0
 fi
-echo "NOT READY FOR v1.0 - fix FAIL lines and review WARN lines"
+echo "NOT READY FOR SOCX - fix FAIL lines and review WARN lines"
 [ "$fail" -eq 0 ] || exit 1
 exit 0

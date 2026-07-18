@@ -3,6 +3,7 @@ const title = document.getElementById("detail-title");
 const subtitle = document.getElementById("detail-subtitle");
 let whyTarget = new URLSearchParams(location.search).get("target") || "";
 let bundleStatus = "";
+let storyArchiveStatus = "";
 
 const esc = (value) => String(value ?? "--").replace(/[&<>"']/g, (c) => ({
   "&": "&amp;",
@@ -17,6 +18,7 @@ const pageName = () => {
   if (path.includes("device")) return "devices";
   if (path.includes("incident")) return "incidents";
   if (path.includes("why")) return "why";
+  if (path.includes("story")) return "story";
   if (path.includes("ai")) return "ai";
   if (path.includes("health")) return "health";
   return "speedtest";
@@ -24,6 +26,20 @@ const pageName = () => {
 
 function card(label, body, tone = "") {
   return `<section class="detail-card ${tone}"><h2>${esc(label)}</h2>${body}</section>`;
+}
+
+async function archiveStory() {
+  storyArchiveStatus = "Saving story archive...";
+  await refresh();
+  try {
+    const result = await fetch("/api/story-archive", { method: "POST" }).then((r) => r.json());
+    storyArchiveStatus = result.ok
+      ? `Story archive saved\ntext: ${result.text || "--"}\njson: ${result.json || "--"}`
+      : `Story archive warning: ${result.error || "unknown"}`;
+  } catch (err) {
+    storyArchiveStatus = `Story archive error: ${err}`;
+  }
+  await refresh();
 }
 
 async function buildIncidentBundle() {
@@ -188,6 +204,44 @@ function renderHealth(state, health) {
   ].join("");
 }
 
+function renderStory(state, story) {
+  title.textContent = "SOCX DAILY STORY";
+  const glance = story.at_a_glance || {};
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    card("Today So Far", [
+      `<div class="story-title"><span>${esc(story.title || "SOCX Daily Story")}</span><b class="${story.status === "watch" ? "yellow" : "green"}">${esc(story.status || "normal")}</b></div>`,
+      `<div class="detail-reason">${esc((story.story || [])[0] || "waiting for story")}</div>`,
+      `<div class="story-actions"><button id="story-archive">Archive Story</button><a href="/api/story" target="_blank">JSON</a></div>`,
+      storyArchiveStatus ? `<pre class="why-output">${esc(storyArchiveStatus)}</pre>` : "",
+    ].join("")),
+    card("At A Glance", [
+      kv("Data Truth", glance.data_truth || "--", story.status === "watch" ? "yellow" : "green"),
+      kv("Autopilot", glance.autopilot || "--", "cyan"),
+      kv("Firewall", glance.firewall || "--", "yellow"),
+      kv("DNSBL", glance.dnsbl || "--", "purple"),
+      kv("IDS", glance.ids || "--", "cyan"),
+      kv("Pi", glance.pi || "--", "green"),
+    ].join("")),
+    card("Story Lines", table(["#", "What SOCX Saw"], (story.story || []).map((line, idx) => [idx + 1, line]))),
+    card("Recommended Next Steps", table(["#", "Action"], (story.next_steps || []).map((line, idx) => [idx + 1, line]))),
+    card("Speedtest Truth", table(["Path", "State", "Avg Down/Up", "Ping", "Samples"], [
+      ["Direct", story.speedtest?.direct?.status || "--", `${story.speedtest?.direct?.avg_down || "--"}/${story.speedtest?.direct?.avg_up || "--"}`, story.speedtest?.direct?.avg_ping || "--", story.speedtest?.direct?.samples || "--"],
+      ["VPN", story.speedtest?.vpn?.status || "--", `${story.speedtest?.vpn?.avg_down || "--"}/${story.speedtest?.vpn?.avg_up || "--"}`, story.speedtest?.vpn?.avg_ping || "--", story.speedtest?.vpn?.samples || "--"],
+    ])),
+    card("Repeated Memory", table(["Type", "Name", "Count"], [
+      ...(story.repeated_memory?.sources || []).map((x) => ["source", x.name, x.count]),
+      ...(story.repeated_memory?.ports || []).map((x) => ["port", x.name, x.count]),
+      ...(story.repeated_memory?.dnsbl || []).map((x) => ["dnsbl", x.name, x.count]),
+    ])),
+    card("AI And Changes", table(["Kind", "Severity", "Summary"], [
+      ...(story.ai || []).map((x) => [x.source || "AI", x.severity || "--", x.reason || "--"]),
+      ...(story.what_changed || []).slice(0, 4).map((x) => ["Change", x.severity || "--", `${x.title || "--"}: ${x.detail || "--"}`]),
+    ])),
+  ].join("");
+  document.getElementById("story-archive")?.addEventListener("click", archiveStory);
+}
+
 function renderSpeed(state) {
   title.textContent = "SOCX SPEEDTEST";
   const center = state.command_center || {};
@@ -275,12 +329,16 @@ async function refresh() {
   const why = page === "why"
     ? await fetch(`/api/why${whyTarget ? `?target=${encodeURIComponent(whyTarget)}` : ""}`, { cache: "no-store" }).then((r) => r.json())
     : null;
+  const story = page === "story"
+    ? await fetch("/api/story", { cache: "no-store" }).then((r) => r.json())
+    : null;
   subtitle.textContent = `${state.hostname || "pfSense"} / ${state.mode || "live"} / ${new Date().toLocaleTimeString()}`;
   if (page === "devices") renderDevices(state);
   else if (page === "incidents") renderIncidents(state);
   else if (page === "ai") renderAi(state);
   else if (page === "health") renderHealth(state, health || {});
   else if (page === "why") renderWhy(state, why || {});
+  else if (page === "story") renderStory(state, story || {});
   else renderSpeed(state);
 }
 

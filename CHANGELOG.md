@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.1.0
+
+- Added `/story`, a browser Daily Story page that turns SOCX health, firewall pressure, DNSBL, IDS, Speedtest path truth, Pi fleet, AI verdicts, repeated-event memory, and What Changed signals into a human-readable daily narrative.
+- Added `/api/story` and `/api/story-archive` for integrations and one-click preservation of the current Daily Story.
+- Added `socx story` and `socx story archive`, saving timestamped JSON and text reports under `/root/socx-stories/`.
+- Added a browser Commander Story action and fixed voice routing so “story” opens the Story workflow instead of the incident timeline.
+
 ## v1.0.0
 
 - Added `/why`, a browser operator page for explaining recent firewall/DNSBL block context by IP, domain, or port.

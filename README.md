@@ -79,6 +79,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds grouped Now Watching categories such as Streaming, AI Lab, Quantum, and Cloud inside LAN Asset Watch when local DNS/log evidence supports them.
 - Adds an Explain button in the browser Commander for a safe plain-English screen summary.
 - Adds a browser Daily SOC Brief, structured Incident Timeline, and approval-only Rule Assistant for turning live telemetry into a readable investigation story.
+- Adds a browser Daily Story page, `/api/story`, `/api/story-archive`, and `socx story` so SOCX can explain the day in plain English and preserve a timestamped narrative under `/root/socx-stories/`.
 - Adds focused browser detail pages for Speedtest, Devices, Incidents, AI, and Release Health so the main wall stays clean while deeper evidence is still available.
 - Adds Data Truth freshness scoring, a plain-English Data Truth reason, and a What Changed timeline so collector age, inactive VPN tests, Pi discovery state, UPS freshness, and meaningful state changes are visible.
 - Adds `/health` and `/api/health` for release readiness, wall error state, fixed service checks, and Pi AI role visibility.
@@ -86,7 +87,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds a browser `Bundle` action and `/api/incident-bundle` for one-click, evidence-preserving incident capture.
 - Adds `socx brief`, which writes a timestamped daily SOC summary to `/root/socx-briefs/`.
 - Adds `socx rules`, an approval-only recommendation view for firewall, DNSBL, IDS, and device-profile review. It does not change firewall rules automatically.
-- Adds `socx v1-check`, a readiness gate that verifies the terminal wall, browser API, renderer log, Speedtest paths, incident memory, Label Brain, host naming, Pi fleet, Pi 3-LLM roles, and pfSense service visibility.
+- Adds `socx v1-check`, a readiness gate that verifies the terminal wall, browser API, Daily Story, renderer log, Speedtest paths, incident memory, Label Brain, host naming, Pi fleet, Pi 3-LLM roles, and pfSense service visibility.
 - Adds `socx snapshot`, a read-only evidence bundle for status, why-now, history, timeline, Speedtest paths, topology, unknown services, and web API JSON.
 - Adds `socx snapshot-cron`, a nightly read-only evidence snapshot schedule with retention cleanup.
 - Adds `/api/history` plus a tiny Command Center score sparkline in the browser wall.
@@ -153,13 +154,14 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-incident` - short incident command that runs capture and prints the latest bundle manifest.
 - `scripts/socx-report` - daily/weekly text report generator for firewall, DNSBL, IDS, VPN, UPS, Speedtest, hosts, and unknown ports.
 - `scripts/socx-report-cron` - installs/removes a daily SOCX report cron entry with report retention cleanup.
-- `scripts/socx-v1-check` - v1 readiness gate for wall, browser API, Speedtest truth, incident memory, Label Brain, host naming, Pi fleet, Pi roles, and clean renderer logs.
+- `scripts/socx-v1-check` - readiness gate for wall, browser API, Daily Story, Speedtest truth, incident memory, Label Brain, host naming, Pi fleet, Pi roles, and clean renderer logs.
 - `scripts/socx-hosts-audit` - builds a known/unknown LAN device list from host config, ARP, DHCP leases, and PF states.
 - `scripts/socx-explain` - explains short labels such as `tls`, `dnsbl`, `nut`, `sysl`, `game`, and `unk`.
 - `scripts/socx-menu` - interactive SOCX Command Center for common operator workflows.
 - `scripts/socx-timeline` - compact incident timeline from recent VPN, Speedtest, firewall, DNSBL, IDS, and AI signals.
 - `scripts/socx-incident-memory` - rolling repeated-event memory for top scanner, top port, DNSBL domain, and IDS pressure.
 - `scripts/socx-brief` - daily SOC brief generator with Autopilot, Label Brain, timeline, Speedtest, and Pi AI context.
+- `scripts/socx-story` - Daily Story viewer and archiver for browser evidence, repeated-event memory, Speedtest path truth, and Pi AI context.
 - `scripts/socx-rule-assistant` - approval-only rule recommendation assistant for evidence-backed policy review.
 - `scripts/socx-repair` - safe collector repair for SOCX wall helpers, vnstatd, LLDP, and Pi discovery without changing firewall policy.
 - `scripts/socx-explain-screen` - plain-English explanation of the current wall state and Autopilot mode.
@@ -447,11 +449,13 @@ Reports are written to `/root/socx-reports/` and include firewall blocks, DNSBL 
 
 `socx status` is the fast operator overview. It checks the wall session, renderer errors, Speedtest cache, UPS cache, WAN/VPN gateway truth, DNS, vnstatd, LLDP tools, report/MIRANDA/Pi cron jobs, AI caches, and unknown-service learner noise. It prints `OK`, `WARN`, and `FAIL` lines with the next command to run when something needs attention.
 
-`socx v1-check` is the release/readiness gate. It should end with `READY FOR v1.0` when there are no failures and only expected warnings, such as VPN Speedtest being inactive while the VPN path is intentionally off.
+`socx v1-check` is the release/readiness gate. It should end with `READY FOR SOCX` when there are no failures and only expected warnings, such as VPN Speedtest being inactive while the VPN path is intentionally off.
 
 `socx menu` opens the SOCX Command Center. It gives quick access to status, Autopilot, Speedtest paths, VPN details, why-slow, DNSBL/IDS review, unknown services, incident capture, wall restart, collector repair, latest report, timeline, and screen explanation.
 
 `socx timeline` builds a compact last-hour timeline from Autopilot, Speedtest paths, gateway/VPN logs, firewall blocks, DNSBL, IDS/Suricata, and AI verdict caches. Use it before or after `socx incident quick` to understand what happened.
+
+`socx story` shows the Daily Story: Data Truth, Autopilot, firewall pressure, DNSBL, IDS, Speedtest path truth, Pi fleet, repeated-event memory, AI verdicts, and what changed. `socx story archive` preserves the same story as text and JSON under `/root/socx-stories/`. The browser version is available at `/story`.
 
 `socx repair` safely restarts SOCX helper collectors such as UPS cache, Speedtest cache, Packet Radar, vnstatd, LLDP, and Pi discovery. It does not change firewall policy or pfSense rules.
 

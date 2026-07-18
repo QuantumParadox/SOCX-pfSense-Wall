@@ -1094,6 +1094,55 @@ body {
   font-size: clamp(10px, .72vw, 13px);
 }
 
+.story-title {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  min-width: 0;
+}
+
+.story-title span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cyan);
+  font-size: clamp(16px, 1.1vw, 24px);
+  font-weight: 950;
+}
+
+.story-title b {
+  padding: 3px 8px;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, .24);
+  font-size: clamp(11px, .76vw, 14px);
+  text-transform: uppercase;
+}
+
+.story-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.story-actions a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(52, 215, 242, .35);
+  border-radius: 4px;
+  color: var(--cyan);
+  text-decoration: none;
+  background: rgba(52, 215, 242, .07);
+  font-weight: 850;
+}
+
 .speed-row b,
 .memory-row b {
   font-weight: 950;

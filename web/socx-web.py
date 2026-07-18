@@ -901,6 +901,127 @@ class SocxCollector:
             "updated_ms": now_ms(),
         }
 
+    def collect_daily_story(self) -> dict[str, Any]:
+        snapshot = self.snapshot()
+        truth = snapshot.get("data_truth", {}) if isinstance(snapshot, dict) else {}
+        changed = snapshot.get("what_changed", {}) if isinstance(snapshot, dict) else {}
+        incident = snapshot.get("incident", {}) if isinstance(snapshot, dict) else {}
+        memory = snapshot.get("incident_memory", {}) if isinstance(snapshot, dict) else {}
+        speed = snapshot.get("speedtest_history", {}) if isinstance(snapshot, dict) else {}
+        center = snapshot.get("command_center", {}) if isinstance(snapshot, dict) else {}
+        pi = snapshot.get("pi_nodes", {}) if isinstance(snapshot, dict) else {}
+        ai = snapshot.get("ai_timeline", {}) if isinstance(snapshot, dict) else {}
+        brain = snapshot.get("label_brain", {}) if isinstance(snapshot, dict) else {}
+        top_source = (incident.get("blocked_sources") or [{}])[0] if isinstance(incident.get("blocked_sources"), list) else {}
+        top_port = (incident.get("blocked_ports") or [{}])[0] if isinstance(incident.get("blocked_ports"), list) else {}
+        top_dns = (incident.get("dnsbl_domains") or [{}])[0] if isinstance(incident.get("dnsbl_domains"), list) else {}
+        ids = incident.get("ids") if isinstance(incident.get("ids"), dict) else {}
+        paths = speed.get("paths") if isinstance(speed.get("paths"), list) else []
+        direct = next((p for p in paths if str(p.get("path", "")).lower() == "direct"), {})
+        vpn = next((p for p in paths if str(p.get("path", "")).lower() == "vpn"), {})
+        now_watching = brain.get("now_watching") if isinstance(brain.get("now_watching"), list) else []
+        anomalies = brain.get("anomalies") if isinstance(brain.get("anomalies"), list) else []
+        ai_rows = ai.get("rows") if isinstance(ai.get("rows"), list) else []
+        changed_rows = changed.get("rows") if isinstance(changed.get("rows"), list) else []
+        memory_sources = memory.get("sources") if isinstance(memory.get("sources"), list) else []
+        memory_ports = memory.get("ports") if isinstance(memory.get("ports"), list) else []
+        story_lines = [
+            f"SOCX is {truth.get('label', 'UNKNOWN')} with data score {truth.get('score', '--')}/100.",
+            str(truth.get("reason") or "Collector freshness is still being evaluated."),
+            f"Autopilot is {str(center.get('mode') or 'UNKNOWN').upper()} score {center.get('score', '--')}/100.",
+        ]
+        if top_source.get("name"):
+            story_lines.append(f"Firewall pressure is led by {top_source.get('name')} with {top_source.get('count', 0)} sampled blocks; top port is {top_port.get('name', 'mixed')}.")
+        else:
+            story_lines.append("Firewall pressure is quiet in the current sample.")
+        if top_dns.get("name"):
+            story_lines.append(f"DNSBL activity is led by {top_dns.get('name')} x{top_dns.get('count', 0)}.")
+        if int(ids.get("high_signal", 0) or 0):
+            story_lines.append(f"IDS has {ids.get('high_signal')} high-signal alerts; preserve evidence before tuning.")
+        else:
+            story_lines.append(f"IDS signal is routine/watch level: {ids.get('watch', 0)} watch, {ids.get('routine', 0)} routine.")
+        story_lines.append(f"Pi fleet is {pi.get('online', 0)}/{pi.get('count', 0)} online; Pi AI role status is visible in the AI page.")
+        if changed_rows:
+            story_lines.append(f"Most recent meaningful change: {changed_rows[0].get('title')} - {changed_rows[0].get('detail')}.")
+        next_steps = []
+        if str(truth.get("label", "")).upper() != "LIVE":
+            next_steps.append("Open /health and review Data Truth reason.")
+        if top_source.get("name") or top_port.get("name"):
+            next_steps.append("Open /why for the top source or port before changing firewall policy.")
+        if int(ids.get("high_signal", 0) or 0):
+            next_steps.append("Build an incident bundle before IDS tuning.")
+        if not next_steps:
+            next_steps.append("Keep SOCX in watch mode and let history accumulate.")
+        return {
+            "title": "SOCX Daily Story",
+            "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "hostname": socket.gethostname(),
+            "status": "watch" if str(truth.get("tone", "")) in {"yellow", "red"} else "normal",
+            "story": story_lines,
+            "next_steps": next_steps[:5],
+            "at_a_glance": {
+                "data_truth": f"{truth.get('label', 'UNKNOWN')} {truth.get('score', '--')}/100",
+                "autopilot": f"{center.get('mode', 'UNKNOWN')} {center.get('score', '--')}/100",
+                "firewall": f"{top_source.get('name', 'none')} x{top_source.get('count', 0)}",
+                "dnsbl": f"{top_dns.get('name', 'none')} x{top_dns.get('count', 0)}",
+                "ids": f"high {ids.get('high_signal', 0)} watch {ids.get('watch', 0)}",
+                "pi": f"{pi.get('online', 0)}/{pi.get('count', 0)} online",
+            },
+            "speedtest": {
+                "direct": direct,
+                "vpn": vpn,
+                "history_count": speed.get("count", 0),
+                "truth": center.get("speed_truth", {}),
+            },
+            "repeated_memory": {
+                "sources": memory_sources[:5],
+                "ports": memory_ports[:5],
+                "dnsbl": (memory.get("dnsbl") if isinstance(memory.get("dnsbl"), list) else [])[:5],
+                "samples": memory.get("count") or memory.get("samples") or 0,
+            },
+            "now_watching": now_watching[:6],
+            "anomalies": anomalies[:6],
+            "what_changed": changed_rows[:8],
+            "ai": ai_rows[:5],
+            "updated_ms": now_ms(),
+        }
+
+    def story_text(self, story: dict[str, Any]) -> str:
+        lines = [
+            str(story.get("title") or "SOCX Daily Story"),
+            f"Generated: {story.get('generated', '')}",
+            f"Host: {story.get('hostname', '')}",
+            "",
+            "At a glance:",
+        ]
+        glance = story.get("at_a_glance") if isinstance(story.get("at_a_glance"), dict) else {}
+        for key, value in glance.items():
+            lines.append(f"- {key}: {value}")
+        lines.extend(["", "Story:"])
+        for item in story.get("story", []) if isinstance(story.get("story"), list) else []:
+            lines.append(f"- {item}")
+        lines.extend(["", "Next steps:"])
+        for item in story.get("next_steps", []) if isinstance(story.get("next_steps"), list) else []:
+            lines.append(f"- {item}")
+        lines.extend(["", "What changed:"])
+        for item in story.get("what_changed", []) if isinstance(story.get("what_changed"), list) else []:
+            lines.append(f"- {item.get('time', '')} {item.get('title', '')}: {item.get('detail', '')}")
+        return "\n".join(lines).strip() + "\n"
+
+    def create_story_archive(self) -> dict[str, Any]:
+        story = self.collect_daily_story()
+        base = Path(os.environ.get("SOCX_STORY_DIR", "/root/socx-stories"))
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        try:
+            base.mkdir(parents=True, exist_ok=True)
+            json_path = base / f"socx-story-{stamp}.json"
+            txt_path = base / f"socx-story-{stamp}.txt"
+            json_path.write_text(json.dumps(story, indent=2), encoding="utf-8")
+            txt_path.write_text(self.story_text(story), encoding="utf-8")
+            return {"ok": True, "json": str(json_path), "text": str(txt_path), "story": story}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc), "story": story}
+
     def create_incident_bundle(self) -> dict[str, Any]:
         result = run_cmd_capture(["/usr/local/bin/socx", "incident", "quick"], timeout=120.0)
         output = result.get("output", "")
@@ -2405,6 +2526,9 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/daily-brief":
             self.send_json(self.collector.snapshot().get("daily_brief", {}))
             return
+        if parsed.path == "/api/story":
+            self.send_json(self.collector.collect_daily_story())
+            return
         if parsed.path == "/api/rule-assistant":
             self.send_json(self.collector.snapshot().get("rule_assistant", {}))
             return
@@ -2428,6 +2552,9 @@ class SocxHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/api/incident-bundle":
             self.send_json(self.collector.create_incident_bundle())
+            return
+        if parsed.path == "/api/story-archive":
+            self.send_json(self.collector.create_story_archive())
             return
         if parsed.path != "/api/commander":
             self.send_error(404)
@@ -2456,6 +2583,8 @@ class SocxHandler(BaseHTTPRequestHandler):
             "status": (["/usr/local/bin/socx", "status"], 25.0, "SOCX status"),
             "explain": (["/usr/local/bin/socx", "explain-screen"], 25.0, "SOCX explanation"),
             "brief": (["/usr/local/bin/socx", "brief"], 40.0, "Daily SOC brief"),
+            "story": (["/usr/local/bin/socx", "story"], 40.0, "Daily Story"),
+            "story-archive": (["/usr/local/bin/socx", "story", "archive"], 40.0, "Daily Story archive"),
             "timeline": (["/usr/local/bin/socx", "timeline", "120"], 35.0, "Incident timeline"),
             "rules": (["/usr/local/bin/socx", "rules"], 35.0, "Rule assistant"),
             "doctor": (["/usr/local/bin/socx", "status"], 35.0, "pfSense health doctor"),
@@ -2464,13 +2593,13 @@ class SocxHandler(BaseHTTPRequestHandler):
             "lab": (["/usr/local/bin/socx", "pi-lab", "llm"], 25.0, "Pi lab experiment"),
         }
         if action not in commands:
-            return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, bundle, incident, zeek, speedtest, pi, status, explain, brief, timeline, rules, doctor, speed-history, memory, lab"}
+            return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, bundle, incident, zeek, speedtest, pi, status, explain, brief, story, timeline, rules, doctor, speed-history, memory, lab"}
         args, timeout, title = commands[action]
         result = run_cmd_capture(args, timeout=timeout)
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health", "/why"}:
+        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health", "/why", "/story"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"

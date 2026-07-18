@@ -1,0 +1,51 @@
+#!/bin/sh
+set -u
+
+BASE_URL="${SOCX_WEB_URL:-http://127.0.0.1:8094}"
+MODE="${1:-show}"
+
+exec /usr/local/bin/python3.11 - "$BASE_URL" "$MODE" <<'PY'
+import json
+import sys
+import urllib.request
+
+base = sys.argv[1].rstrip("/")
+mode = sys.argv[2]
+
+def request(path, method="GET"):
+    req = urllib.request.Request(base + path, data=(b"{}" if method == "POST" else None), method=method, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=35) as resp:
+        return json.load(resp)
+
+if mode in {"show", ""}:
+    data = request("/api/story")
+    print(data.get("title", "SOCX Daily Story"))
+    print("Generated:", data.get("generated", ""))
+    print("Host:", data.get("hostname", ""))
+    print()
+    print("At a glance:")
+    for key, value in (data.get("at_a_glance") or {}).items():
+        print(f"- {key}: {value}")
+    print()
+    print("Story:")
+    for line in data.get("story") or []:
+        print("-", line)
+    print()
+    print("Next steps:")
+    for line in data.get("next_steps") or []:
+        print("-", line)
+elif mode == "json":
+    print(json.dumps(request("/api/story"), indent=2))
+elif mode in {"archive", "save"}:
+    data = request("/api/story-archive", "POST")
+    print("story archive:", "OK" if data.get("ok") else "WARN")
+    if data.get("text"):
+        print("text:", data["text"])
+    if data.get("json"):
+        print("json:", data["json"])
+    if data.get("error"):
+        print("error:", data["error"])
+else:
+    print("Usage: socx-story [show|json|archive]", file=sys.stderr)
+    sys.exit(2)
+PY
