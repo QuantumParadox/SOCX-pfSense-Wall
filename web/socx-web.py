@@ -29,6 +29,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+from urllib.request import Request, urlopen
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -294,6 +295,7 @@ class SocxCollector:
         self.label_history_last_write = 0.0
         self.label_history_cache: dict[str, Any] = self.load_label_history()
         self.last_incident_memory_write = 0.0
+        self.kev_memory: dict[str, Any] = {"checked": 0.0, "data": {}, "error": ""}
         self.state: dict[str, Any] = self.demo_state()
 
     def load_hosts(self) -> dict[str, str]:
@@ -370,7 +372,8 @@ class SocxCollector:
         self.maybe_append_incident_memory()
         data_truth = self.collect_data_truth(command_center, pi_nodes, ups, incident_memory, label_brain)
         what_changed = self.collect_what_changed(command_center, incident, label_brain, pi_nodes, net, ups, data_truth, flows)
-        mission = self.collect_mission(command_center, incident, label_brain, pi_nodes, ai_timeline, hardware, data_truth, what_changed, flows)
+        intel = self.collect_intel_layer(incident, label_brain, flows, hardware)
+        mission = self.collect_mission(command_center, incident, label_brain, pi_nodes, ai_timeline, hardware, data_truth, what_changed, flows, intel)
 
         packets: list[dict[str, Any]] = []
         if time.time() - self.last_event_read > 0.8:
@@ -426,6 +429,7 @@ class SocxCollector:
             "incident_memory": incident_memory,
             "data_truth": data_truth,
             "what_changed": what_changed,
+            "intel": intel,
             "mission": mission,
             "flows": flows,
             "packets": packets,
@@ -973,6 +977,233 @@ class SocxCollector:
         self.release_health_checked = now
         return health
 
+    def collect_intel_layer(
+        self,
+        incident: dict[str, Any],
+        label_brain: dict[str, Any],
+        flows: list[dict[str, Any]],
+        hardware: dict[str, Any],
+    ) -> dict[str, Any]:
+        rows: list[dict[str, Any]] = []
+        counts = incident.get("counts") if isinstance(incident.get("counts"), dict) else {}
+        ids = incident.get("ids") if isinstance(incident.get("ids"), dict) else {}
+        sources = incident.get("blocked_sources") if isinstance(incident.get("blocked_sources"), list) else []
+        ports = incident.get("blocked_ports") if isinstance(incident.get("blocked_ports"), list) else []
+        dns = incident.get("dnsbl_domains") if isinstance(incident.get("dnsbl_domains"), list) else []
+        anomalies = label_brain.get("anomalies") if isinstance(label_brain.get("anomalies"), list) else []
+
+        if int(counts.get("sources", 0) or 0) or sources:
+            top = sources[0] if sources else {}
+            rows.append(self.intel_row(
+                "WAN scan pressure",
+                "P4",
+                "BTP",
+                "Network-facing reconnaissance is being blocked at the firewall.",
+                "T1595",
+                "Active Scanning",
+                "Reconnaissance",
+                "D3-NTA",
+                "Network Traffic Analysis",
+                f"top source {top.get('name', 'unknown')} x{top.get('count', 0)}; top port {(ports[0] if ports else {}).get('name', 'mixed')}",
+            ))
+        if dns:
+            top = dns[0]
+            rows.append(self.intel_row(
+                "DNSBL known-bad/reputation hit",
+                "P3",
+                "BTP",
+                "DNS/reputation filtering is active; review only if a trusted app breaks.",
+                "T1568",
+                "Dynamic Resolution",
+                "Command and Control",
+                "D3-DNSDL",
+                "DNS Denylisting",
+                f"{top.get('name', 'domain')} x{top.get('count', 0)}",
+            ))
+        if int(ids.get("high_signal", 0) or 0) > 0:
+            rows.append(self.intel_row(
+                "High-signal IDS alert",
+                "P2",
+                "TP?",
+                "IDS matched suspicious content; correlate before containment.",
+                "T1190",
+                "Exploit Public-Facing Application",
+                "Initial Access",
+                "D3-IPS",
+                "Intrusion Prevention",
+                f"{ids.get('high_signal')} high-signal IDS rows",
+            ))
+        elif int(ids.get("watch", 0) or 0) > 0:
+            rows.append(self.intel_row(
+                "Routine IDS watch volume",
+                "P4",
+                "BTP",
+                "Low-confidence IDS decoder/stream noise is present.",
+                "N/A",
+                "Routine IDS telemetry",
+                "Monitoring",
+                "D3-NTA",
+                "Network Traffic Analysis",
+                f"{ids.get('watch', 0)} routine watch rows",
+            ))
+        if anomalies:
+            rows.append(self.intel_row(
+                "Learned-normal asset drift",
+                "P3",
+                "Needs Review",
+                "A host is using a new app/service compared with the learned baseline.",
+                "T1046",
+                "Network Service Discovery",
+                "Discovery",
+                "D3-BA",
+                "Behavioral Analytics",
+                f"{len(anomalies)} asset behavior change(s)",
+            ))
+
+        kev = self.collect_kev_watch(incident, flows)
+        priority = self.intel_priority(rows, kev, hardware)
+        story = self.kill_chain_story(rows)
+        return {
+            "title": "ATT&CK / D3FEND / KEV Intelligence",
+            "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "status": priority.get("status"),
+            "priority": priority,
+            "rows": rows[:8],
+            "story": story,
+            "kev": kev,
+            "sources": [
+                {"name": "MITRE ATT&CK", "url": "https://attack.mitre.org/"},
+                {"name": "MITRE D3FEND", "url": "https://d3fend.mitre.org/"},
+                {"name": "CISA KEV", "url": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"},
+            ],
+        }
+
+    def intel_row(
+        self,
+        signal: str,
+        priority: str,
+        disposition: str,
+        summary: str,
+        attack_id: str,
+        attack_name: str,
+        tactic: str,
+        d3fend_id: str,
+        d3fend_name: str,
+        evidence: str,
+    ) -> dict[str, Any]:
+        return {
+            "signal": signal,
+            "priority": priority,
+            "disposition": disposition,
+            "summary": summary,
+            "attack": {"id": attack_id, "name": attack_name, "tactic": tactic, "url": f"https://attack.mitre.org/techniques/{attack_id}/" if attack_id.startswith("T") else ""},
+            "d3fend": {"id": d3fend_id, "name": d3fend_name, "url": "https://d3fend.mitre.org/"},
+            "evidence": evidence,
+            "confidence": "medium" if disposition in {"BTP", "Needs Review"} else "low",
+            "safe_actions": ["preserve evidence", "correlate with timeline", "human approval required for policy changes"],
+        }
+
+    def collect_kev_watch(self, incident: dict[str, Any], flows: list[dict[str, Any]]) -> dict[str, Any]:
+        cache_path = Path(os.environ.get("SOCX_KEV_CACHE", "/var/db/socx_kev_cache.json"))
+        url = os.environ.get("SOCX_KEV_URL", "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json")
+        ttl = env_int("SOCX_KEV_TTL_SECONDS", 86400)
+        data: dict[str, Any] = {}
+        fetched = False
+        now = time.time()
+        try:
+            if cache_path.exists() and now - cache_path.stat().st_mtime < ttl:
+                data = json.loads(cache_path.read_text(encoding="utf-8"))
+            elif self.kev_memory.get("data") and now - float(self.kev_memory.get("checked") or 0) < env_int("SOCX_KEV_RETRY_SECONDS", 900):
+                data = self.kev_memory.get("data") if isinstance(self.kev_memory.get("data"), dict) else {}
+            elif self.kev_memory.get("error") and now - float(self.kev_memory.get("checked") or 0) < env_int("SOCX_KEV_RETRY_SECONDS", 900):
+                raise RuntimeError(str(self.kev_memory.get("error") or "KEV refresh backoff active"))
+            else:
+                req = Request(url, headers={"User-Agent": "SOCX-pfSense-Wall/1.3"})
+                with urlopen(req, timeout=4.0) as resp:
+                    data = json.loads(resp.read().decode("utf-8", "replace"))
+                self.kev_memory = {"checked": now, "data": data, "error": ""}
+                try:
+                    cache_path.parent.mkdir(parents=True, exist_ok=True)
+                    cache_path.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
+                except OSError:
+                    pass
+                fetched = True
+        except Exception as exc:
+            self.kev_memory = {"checked": now, "data": self.kev_memory.get("data") or {}, "error": str(exc)[:160]}
+            try:
+                if cache_path.exists():
+                    data = json.loads(cache_path.read_text(encoding="utf-8"))
+            except Exception:
+                data = {}
+            if not data:
+                return {"status": "unknown", "matches": [], "count": 0, "reason": f"KEV feed unavailable: {str(exc)[:120]}", "source": url}
+
+        cves = sorted(set(re.findall(r"CVE-\d{4}-\d{4,7}", json.dumps({"incident": incident, "flows": flows})[:12000], re.I)))
+        catalog = data.get("vulnerabilities") if isinstance(data.get("vulnerabilities"), list) else []
+        by_cve = {str(item.get("cveID", "")).upper(): item for item in catalog if isinstance(item, dict)}
+        matches = []
+        for cve in cves:
+            item = by_cve.get(cve.upper())
+            if item:
+                matches.append({
+                    "cve": cve.upper(),
+                    "vendor": item.get("vendorProject"),
+                    "product": item.get("product"),
+                    "name": item.get("vulnerabilityName"),
+                    "due": item.get("dueDate"),
+                    "known_ransomware": item.get("knownRansomwareCampaignUse"),
+                })
+        age = None
+        try:
+            age = int(now - cache_path.stat().st_mtime)
+        except OSError:
+            pass
+        status = "hit" if matches else ("fresh" if age is not None and age < ttl * 2 else "stale")
+        return {
+            "status": status,
+            "matches": matches[:5],
+            "count": len(matches),
+            "observed_cves": cves[:12],
+            "catalog_count": len(catalog),
+            "fetched": fetched,
+            "age_sec": age,
+            "source": url,
+            "reason": "No observed CVEs matched CISA KEV in current SOCX evidence." if not matches else "Observed CVE is listed in CISA KEV.",
+        }
+
+    def intel_priority(self, rows: list[dict[str, Any]], kev: dict[str, Any], hardware: dict[str, Any]) -> dict[str, Any]:
+        order = {"P1": 4, "P2": 3, "P3": 2, "P4": 1}
+        highest = "P4"
+        if kev.get("matches"):
+            highest = "P1"
+        for row in rows:
+            pri = str(row.get("priority") or "P4")
+            if order.get(pri, 0) > order.get(highest, 0):
+                highest = pri
+        if highest == "P1":
+            status = "critical"
+            action = "preserve evidence and escalate before changing policy"
+        elif highest == "P2":
+            status = "investigate"
+            action = "build incident bundle and correlate IDS evidence"
+        elif highest == "P3":
+            status = "watch"
+            action = "review DNSBL/assets if repeated or user impact appears"
+        else:
+            status = "routine"
+            action = "batch routine scan noise; keep monitoring"
+        return {"level": highest, "status": status, "action": action, "read_only": True, "hardware": hardware.get("summary")}
+
+    def kill_chain_story(self, rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+        tactics = OrderedDict()
+        for row in rows:
+            attack = row.get("attack") if isinstance(row.get("attack"), dict) else {}
+            tactic = str(attack.get("tactic") or "Unmapped")
+            tactics.setdefault(tactic, []).append(str(row.get("signal") or "signal"))
+        if not tactics:
+            return [{"stage": "Observe", "summary": "No mapped ATT&CK activity in the current sample."}]
+        return [{"stage": tactic, "summary": ", ".join(signals[:3])} for tactic, signals in tactics.items()]
+
     def collect_mission(
         self,
         center: dict[str, Any],
@@ -984,7 +1215,9 @@ class SocxCollector:
         data_truth: dict[str, Any],
         what_changed: dict[str, Any],
         flows: list[dict[str, Any]],
+        intel: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        intel = intel if isinstance(intel, dict) else {}
         ids = incident.get("ids") if isinstance(incident.get("ids"), dict) else {}
         counts = incident.get("counts") if isinstance(incident.get("counts"), dict) else {}
         top_source = (incident.get("blocked_sources") or [{}])[0] if isinstance(incident.get("blocked_sources"), list) else {}
@@ -1031,6 +1264,17 @@ class SocxCollector:
             matters.append(f"Pi fleet {pi_nodes.get('online', 0)}/{pi_nodes.get('count', 0)} online; AI roles visible")
         if ai_rows:
             checks.append(f"Review AI verdict: {ai_rows[0].get('source', 'AI')} {ai_rows[0].get('severity', '--')} - {ai_rows[0].get('reason', '--')}")
+        for row in (intel.get("rows") if isinstance(intel.get("rows"), list) else [])[:2]:
+            attack = row.get("attack", {}) if isinstance(row.get("attack"), dict) else {}
+            ddef = row.get("d3fend", {}) if isinstance(row.get("d3fend"), dict) else {}
+            matters.append(f"{row.get('signal', 'Signal')} maps to ATT&CK {attack.get('id', 'N/A')} {attack.get('name', '')}".strip())
+            checks.append(f"D3FEND suggests {ddef.get('name', 'preserve evidence and monitor')} for {row.get('signal', 'signal')}")
+        kev = intel.get("kev") if isinstance(intel.get("kev"), dict) else {}
+        if kev.get("matches"):
+            matters.append(f"CISA KEV match requires priority review: {kev.get('matches')[0].get('cve')}")
+            checks.append("Preserve evidence and review exposed package/version before any upgrade or rule change")
+        elif kev.get("status") == "stale":
+            checks.append("KEV feed cache is stale; refresh internet access before relying on CVE coverage")
         if top_flow:
             app = top_flow.get("app_hint") or top_flow.get("service") or "traffic"
             noise.append(f"Top flow is {top_flow.get('asset', top_flow.get('src', '--'))} -> {top_flow.get('peer', top_flow.get('dst', '--'))} via {app}")
@@ -1051,6 +1295,7 @@ class SocxCollector:
             "what_matters": matters[:6],
             "what_to_check": checks[:6],
             "probably_noise": noise[:6],
+            "intel": intel,
             "vpn": {
                 "summary": self.vpn_mission_summary(center),
                 "paths": center.get("vpn_paths", []) if isinstance(center.get("vpn_paths"), list) else [],
@@ -2765,6 +3010,9 @@ class SocxHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/mission":
             self.send_json(self.collector.snapshot().get("mission", {}))
+            return
+        if parsed.path == "/api/intel":
+            self.send_json(self.collector.snapshot().get("intel", {}))
             return
         if parsed.path == "/api/history":
             rows = self.collector.collect_history(240)

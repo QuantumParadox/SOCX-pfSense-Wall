@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.3.0
+
+- Added a read-only ATT&CK / D3FEND / CISA KEV intelligence layer for SOCX Mission and `/api/intel`.
+- Mapped routine WAN scans, DNSBL hits, IDS watch/high-signal rows, and learned-normal drift to conservative ATT&CK context and D3FEND countermeasure names.
+- Added CISA Known Exploited Vulnerabilities feed/cache support with local backoff so failed refreshes do not slow the wall.
+- Added `socx intel` for terminal operators to print current priority, KEV status, ATT&CK/D3FEND mappings, and the kill-chain story.
+- Enriched the Pi/MIRANDA export with the SOCX intel object and updated the Pi prompt to include ATT&CK/D3FEND/KEV context.
+- Added Mission page cards for ATT&CK/D3FEND, KEV status, and the current kill-chain story.
+
 ## v1.2.0
 
 - Added SOCX Mission / Operator Intelligence: a read-only mission summary for what changed, what matters, what to check, and what is probably noise.

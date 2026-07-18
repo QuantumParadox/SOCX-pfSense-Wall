@@ -1,0 +1,39 @@
+#!/bin/sh
+set -u
+
+URL="${SOCX_WEB_URL:-http://127.0.0.1:8094}/api/intel"
+PY="${SOCX_PYTHON:-/usr/local/bin/python3.11}"
+
+if ! command -v fetch >/dev/null 2>&1; then
+    echo "SOCX intel needs fetch on pfSense." >&2
+    exit 1
+fi
+
+raw="$(fetch -qo - "$URL" 2>/tmp/socx-intel.err || true)"
+if [ -z "$raw" ]; then
+    echo "SOCX intel unavailable: $(cat /tmp/socx-intel.err 2>/dev/null | tr '\n' ' ' | cut -c1-160)" >&2
+    exit 1
+fi
+
+printf '%s' "$raw" | "$PY" -c '
+import json, sys
+d=json.load(sys.stdin)
+priority=d.get("priority") or {}
+kev=d.get("kev") or {}
+print("SOCX Intel")
+print("Priority: {} {} | action: {}".format(priority.get("level","--"), priority.get("status","--"), priority.get("action","--")))
+print("KEV: {} matches={} catalog={} age={}s".format(kev.get("status","unknown"), kev.get("count",0), kev.get("catalog_count",0), kev.get("age_sec","--")))
+rows=d.get("rows") or []
+if rows:
+    print("\nATT&CK / D3FEND")
+for row in rows[:8]:
+    atk=row.get("attack") or {}
+    df=row.get("d3fend") or {}
+    print("- [{}] {}: ATT&CK {} {} | D3FEND {}".format(row.get("priority","--"), row.get("signal","--"), atk.get("id","--"), atk.get("name",""), df.get("name","--")))
+    print("  evidence: {}".format(row.get("evidence","--")))
+story=d.get("story") or []
+if story:
+    print("\nKill Chain Story")
+for item in story[:6]:
+    print("- {}: {}".format(item.get("stage","--"), item.get("summary","--")))
+'

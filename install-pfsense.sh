@@ -46,6 +46,7 @@ install -m 0755 "$ROOT/scripts/socx-label-brain" /usr/local/bin/socx-label-brain
 install -m 0755 "$ROOT/scripts/socx-doctor" /usr/local/bin/socx-doctor
 install -m 0755 "$ROOT/scripts/socx-v1-check" /usr/local/bin/socx-v1-check
 install -m 0755 "$ROOT/scripts/socx-ai-explain" /usr/local/bin/socx-ai-explain
+install -m 0755 "$ROOT/scripts/socx-intel" /usr/local/bin/socx-intel
 install -m 0755 "$ROOT/scripts/socx-miranda-bridge" /usr/local/bin/socx-miranda-bridge
 install -m 0755 "$ROOT/scripts/socx-miranda-cron" /usr/local/bin/socx-miranda-cron
 install -m 0755 "$ROOT/scripts/socx-pi-llm-bridge" /usr/local/bin/socx-pi-llm-bridge

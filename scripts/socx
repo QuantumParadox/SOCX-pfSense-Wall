@@ -35,7 +35,7 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-brief "$@"
         ;;
-    mission|operator|intel|intelligence)
+    mission|operator|intelligence)
         shift
         exec /usr/local/bin/socx-mission "$@"
         ;;
@@ -124,6 +124,10 @@ case "${1:-}" in
     incident)
         shift
         exec /usr/local/bin/socx-incident "$@"
+        ;;
+    intel|attack|d3fend|kev)
+        shift
+        exec /usr/local/bin/socx-intel "$@"
         ;;
     pi-llm|llm)
         shift

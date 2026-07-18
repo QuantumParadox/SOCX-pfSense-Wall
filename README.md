@@ -96,6 +96,7 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds `socx hardware`, `socx stability-watch`, and `socx baseline` for thermal headroom, UPS watt trend, short/overnight stability evidence, and appliance performance baselines.
 - Adds VPN crypto headroom on the browser Speedtest page so DIRECT/VPN throughput can be read beside current CPU temperature and thermal headroom.
 - Adds SOCX Mission / Operator Intelligence through `/mission`, `/api/mission`, and `socx mission`, summarizing what changed, what matters, what to check, and what is probably noise.
+- Adds SOCX ATT&CK / D3FEND / KEV Intelligence through `/api/intel`, Mission cards, and `socx intel`. It maps current firewall/DNSBL/IDS/asset-drift evidence to conservative ATT&CK context, defensive countermeasure names, CISA KEV status, priority, disposition, and a compact kill-chain story. It is read-only and never changes pfSense policy.
 - Adds focused browser detail pages for Speedtest, Devices, Incidents, AI, and Release Health so the main wall stays clean while deeper evidence is still available.
 - Adds Data Truth freshness scoring, a plain-English Data Truth reason, and a What Changed timeline so collector age, inactive VPN tests, Pi discovery state, UPS freshness, and meaningful state changes are visible.
 - Adds `/health` and `/api/health` for release readiness, wall error state, fixed service checks, and Pi AI role visibility.
@@ -193,6 +194,7 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - `scripts/socx-snapshot` - read-only SOCX troubleshooting bundle with checksums and optional web API captures.
 - `scripts/socx-snapshot-cron` - installs/removes/status a nightly read-only evidence snapshot cron entry.
 - `scripts/socx-incident-mode` - read-only incident-mode summary for firewall, DNSBL, IDS, and next actions.
+- `scripts/socx-intel` - terminal summary of the current ATT&CK/D3FEND/KEV intelligence layer from the local SOCX web API.
 - `scripts/socx-notify-cron` - scheduled notification-rule cron installer/remover/status helper.
 - `scripts/socx-doctor` - live health check for wall, logs, VPN, Speedtest, UPS, reports, MIRANDA ingest, vnstatd, unknown-service noise, DNSBL review, IDS tuning, and slow-network triage.
 - `scripts/socx-miranda-bridge` - exports a compact JSON summary for MIRANDA or another local-AI/SOC collector.

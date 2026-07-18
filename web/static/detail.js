@@ -274,6 +274,8 @@ function renderMission(state, mission) {
   const vpn = mission.vpn || {};
   const hw = mission.hardware || {};
   const pi = mission.pi_ai || {};
+  const intel = mission.intel || state.intel || {};
+  const kev = intel.kev || {};
   root.innerHTML = [
     ...renderTruthCards({ ...state, data_truth: mission.data_truth || state.data_truth || {}, what_changed: { rows: mission.what_changed || [] } }),
     card("Mission Readout", [
@@ -283,6 +285,18 @@ function renderMission(state, mission) {
     card("What Matters", table(["#", "Signal"], (mission.what_matters || []).map((line, idx) => [idx + 1, line]))),
     card("What To Check", table(["#", "Action"], (mission.what_to_check || []).map((line, idx) => [idx + 1, line]))),
     card("Probably Noise", table(["#", "Why It Is Probably Noise"], (mission.probably_noise || []).map((line, idx) => [idx + 1, line]))),
+    card("ATT&CK / D3FEND", [
+      kv("Priority", `${intel.priority?.level || "--"} ${intel.priority?.status || ""}`, intel.priority?.level === "P1" || intel.priority?.level === "P2" ? "red" : intel.priority?.level === "P3" ? "yellow" : "green"),
+      kv("KEV", `${kev.status || "unknown"} ${kev.count ? `x${kev.count}` : ""}`, kev.count ? "red" : kev.status === "fresh" ? "green" : "yellow"),
+      table(["Signal", "Disposition", "ATT&CK", "D3FEND", "Evidence"], (intel.rows || []).map((r) => [
+        r.signal || "--",
+        `${r.priority || "--"} ${r.disposition || ""}`,
+        `${r.attack?.id || "--"} ${r.attack?.name || ""}`,
+        r.d3fend?.name || "--",
+        r.evidence || "--",
+      ])),
+    ].join("")),
+    card("Kill Chain Story", table(["Stage", "Current SOCX Evidence"], (intel.story || []).map((r) => [r.stage || "--", r.summary || "--"]))),
     card("VPN Truth", [
       kv("Summary", vpn.summary || "--", "cyan"),
       kv("Crypto", vpn.crypto?.summary || "--", vpn.crypto?.tone || "cyan"),

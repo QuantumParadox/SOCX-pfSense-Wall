@@ -31,6 +31,18 @@ top_talkers="$(pfctl -ss 2>/dev/null | awk '
   END {
     for (h in host) print host[h], h
   }' | sort -nr | head -8 | sed 's/"/\\"/g' | tr '\n' ';' | cut -c1-800)"
+intel="{}"
+if command -v fetch >/dev/null 2>&1; then
+    tmp_intel="$(fetch -qo - http://127.0.0.1:8094/api/intel 2>/dev/null | tr -d '\r' | cut -c1-5000 || true)"
+    case "$tmp_intel" in
+        \{*) intel="$tmp_intel" ;;
+    esac
+elif command -v curl >/dev/null 2>&1; then
+    tmp_intel="$(curl -fsS --max-time 3 http://127.0.0.1:8094/api/intel 2>/dev/null | tr -d '\r' | cut -c1-5000 || true)"
+    case "$tmp_intel" in
+        \{*) intel="$tmp_intel" ;;
+    esac
+fi
 
 cat > "$OUT" <<EOF
 {
@@ -52,7 +64,8 @@ cat > "$OUT" <<EOF
   "pi_nodes": "$pi_nodes",
   "label_brain": "$label_brain",
   "top_talkers": "$top_talkers",
-  "recommended_prompt": "Summarize SOCX network health, likely benign noise vs items worth checking, device/app identity from Label Brain, unusual behavior vs learned profiles, and evidence-preserving next steps."
+  "intel": $intel,
+  "recommended_prompt": "Summarize SOCX network health, ATT&CK/D3FEND/KEV context, likely benign noise vs items worth checking, device/app identity from Label Brain, unusual behavior vs learned profiles, and evidence-preserving next steps."
 }
 EOF
 
