@@ -50,7 +50,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 ## What It Does
 
 - Live wall sample: [`docs/socx-live-wall-capture.md`](docs/socx-live-wall-capture.md)
-- v1 release-candidate notes: [`docs/v1.0.0-rc3-release-notes.md`](docs/v1.0.0-rc3-release-notes.md)
+- v1 release notes: [`docs/v1.0.0-release-notes.md`](docs/v1.0.0-release-notes.md)
 
 - Starts a full-screen tmux dashboard called `socx`.
 - Adds `socweb`, a local browser dashboard for the modern btop-style SOC wall when terminal rendering is too limiting.
@@ -82,6 +82,8 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds focused browser detail pages for Speedtest, Devices, Incidents, AI, and Release Health so the main wall stays clean while deeper evidence is still available.
 - Adds Data Truth freshness scoring, a plain-English Data Truth reason, and a What Changed timeline so collector age, inactive VPN tests, Pi discovery state, UPS freshness, and meaningful state changes are visible.
 - Adds `/health` and `/api/health` for release readiness, wall error state, fixed service checks, and Pi AI role visibility.
+- Adds `/why` and `/api/why` for plain-English block context by IP, domain, or port using recent SOCX evidence plus the safe `socx why-blocked` helper.
+- Adds a browser `Bundle` action and `/api/incident-bundle` for one-click, evidence-preserving incident capture.
 - Adds `socx brief`, which writes a timestamped daily SOC summary to `/root/socx-briefs/`.
 - Adds `socx rules`, an approval-only recommendation view for firewall, DNSBL, IDS, and device-profile review. It does not change firewall rules automatically.
 - Adds `socx v1-check`, a readiness gate that verifies the terminal wall, browser API, renderer log, Speedtest paths, incident memory, Label Brain, host naming, Pi fleet, Pi 3-LLM roles, and pfSense service visibility.
@@ -226,6 +228,7 @@ Focused detail views:
 http://192.168.1.1:8094/speedtest
 http://192.168.1.1:8094/devices
 http://192.168.1.1:8094/incidents
+http://192.168.1.1:8094/why
 http://192.168.1.1:8094/ai
 http://192.168.1.1:8094/health
 ```
@@ -413,6 +416,7 @@ socx-report-cron status
 socx menu
 socx v1-check
 socx status
+socx why-blocked 23
 socx autopilot
 socx why-now
 socx timeline

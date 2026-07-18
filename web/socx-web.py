@@ -832,6 +832,98 @@ class SocxCollector:
         self.release_health_checked = now
         return health
 
+    def safe_why_target(self, target: str) -> str:
+        value = str(target or "").strip()
+        value = re.sub(r"[^A-Za-z0-9_.:/*-]", "", value)
+        return value[:120]
+
+    def collect_why(self, target: str = "") -> dict[str, Any]:
+        snapshot = self.snapshot()
+        incident = snapshot.get("incident", {}) if isinstance(snapshot, dict) else {}
+        packets = snapshot.get("packets", []) if isinstance(snapshot, dict) else []
+        target = self.safe_why_target(target)
+        candidates: list[dict[str, Any]] = []
+        for item in incident.get("blocked_sources", []) if isinstance(incident.get("blocked_sources"), list) else []:
+            name = str(item.get("name") or "")
+            if name:
+                candidates.append({"type": "source", "target": name, "count": item.get("count", 0)})
+        for item in incident.get("blocked_ports", []) if isinstance(incident.get("blocked_ports"), list) else []:
+            name = str(item.get("name") or "")
+            if name:
+                candidates.append({"type": "port", "target": name, "count": item.get("count", 0)})
+        for item in incident.get("dnsbl_domains", []) if isinstance(incident.get("dnsbl_domains"), list) else []:
+            raw = str(item.get("raw") or item.get("name") or "")
+            if raw:
+                candidates.append({"type": "domain", "target": raw, "count": item.get("count", 0)})
+        if not target and candidates:
+            target = str(candidates[0].get("target") or "")
+        matches: list[dict[str, Any]] = []
+        target_l = target.lower()
+        for packet in packets if isinstance(packets, list) else []:
+            if not isinstance(packet, dict):
+                continue
+            hay = " ".join(str(packet.get(k, "")) for k in ("src", "dst", "src_label", "dst_label", "dport", "service", "action")).lower()
+            if target_l and target_l not in hay:
+                continue
+            matches.append({
+                "time": packet.get("time", ""),
+                "action": packet.get("action", ""),
+                "direction": packet.get("direction", ""),
+                "source": packet.get("src_label") or packet.get("src") or "",
+                "destination": packet.get("dst_label") or packet.get("dst") or "",
+                "port": packet.get("dport", ""),
+                "service": packet.get("service", ""),
+                "severity": packet.get("severity", ""),
+            })
+        command = {"ok": False, "output": "No target selected.", "elapsed_ms": 0}
+        if target:
+            command = run_cmd_capture(["/usr/local/bin/socx", "why-blocked", target], timeout=25.0)
+        source_count = next((item.get("count") for item in candidates if item.get("target") == target and item.get("type") == "source"), 0)
+        port_count = next((item.get("count") for item in candidates if item.get("target") == target and item.get("type") == "port"), 0)
+        domain_count = next((item.get("count") for item in candidates if item.get("target") == target and item.get("type") == "domain"), 0)
+        if domain_count:
+            verdict = "DNSBL or reputation block context"
+            next_step = "Review DNSBL evidence before allowlisting; preserve a bundle if this affects a trusted app."
+        elif source_count or port_count or matches:
+            verdict = "Firewall block context"
+            next_step = "Treat repeated WAN scans as expected internet noise unless a LAN host is affected; preserve a bundle before changing policy."
+        else:
+            verdict = "No direct match in recent SOCX evidence"
+            next_step = "Try a different IP, domain, port, or run an incident bundle for wider evidence."
+        return {
+            "target": target,
+            "verdict": verdict,
+            "next_step": next_step,
+            "counts": {"source": source_count, "port": port_count, "domain": domain_count, "packet_matches": len(matches)},
+            "candidates": candidates[:16],
+            "matches": matches[:12],
+            "command": command,
+            "updated_ms": now_ms(),
+        }
+
+    def create_incident_bundle(self) -> dict[str, Any]:
+        result = run_cmd_capture(["/usr/local/bin/socx", "incident", "quick"], timeout=120.0)
+        output = result.get("output", "")
+        latest = ""
+        archive = ""
+        checksum = ""
+        for line in str(output).splitlines():
+            low = line.lower()
+            if "latest bundle:" in low:
+                latest = line.split(":", 1)[1].strip()
+            elif "snapshot archive:" in low or "archive:" in low:
+                archive = line.split(":", 1)[1].strip()
+            elif "sha256" in low:
+                checksum = line.strip()
+        return {
+            "action": "incident-bundle",
+            "title": "Incident bundle",
+            "latest": latest,
+            "archive": archive,
+            "checksum": checksum,
+            **result,
+        }
+
     def remember_change(self, key: str, value: str, title: str, detail: str, severity: str = "LOW") -> None:
         old = self.change_last.get(key)
         if old == value:
@@ -2322,6 +2414,11 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/incident-memory":
             self.send_json(self.collector.snapshot().get("incident_memory", {}))
             return
+        if parsed.path == "/api/why":
+            params = parse_qs(parsed.query)
+            target = params.get("target", [""])[0]
+            self.send_json(self.collector.collect_why(target))
+            return
         if parsed.path == "/api/config":
             self.send_json({"refresh_ms": int(self.collector.interval * 1000), "demo": self.collector.demo})
             return
@@ -2329,6 +2426,9 @@ class SocxHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/api/incident-bundle":
+            self.send_json(self.collector.create_incident_bundle())
+            return
         if parsed.path != "/api/commander":
             self.send_error(404)
             return
@@ -2347,6 +2447,8 @@ class SocxHandler(BaseHTTPRequestHandler):
     def run_commander_action(self, action: str) -> dict[str, Any]:
         commands: dict[str, tuple[list[str], float, str]] = {
             "snapshot": (["/usr/local/bin/socx", "snapshot"], 90.0, "Evidence snapshot"),
+            "bundle": (["/usr/local/bin/socx", "incident", "quick"], 120.0, "Incident bundle"),
+            "incident-bundle": (["/usr/local/bin/socx", "incident", "quick"], 120.0, "Incident bundle"),
             "incident": (["/usr/local/bin/socx", "incident-mode", "120"], 25.0, "Incident Mode"),
             "zeek": (["/usr/local/bin/socx-doctor", "zeek"], 25.0, "Zeek health"),
             "speedtest": (["/usr/local/bin/socx-doctor", "speedtest-profiles"], 25.0, "Speedtest profiles"),
@@ -2362,13 +2464,13 @@ class SocxHandler(BaseHTTPRequestHandler):
             "lab": (["/usr/local/bin/socx", "pi-lab", "llm"], 25.0, "Pi lab experiment"),
         }
         if action not in commands:
-            return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, incident, zeek, speedtest, pi, status, explain, brief, timeline, rules, doctor, speed-history, memory, lab"}
+            return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, bundle, incident, zeek, speedtest, pi, status, explain, brief, timeline, rules, doctor, speed-history, memory, lab"}
         args, timeout, title = commands[action]
         result = run_cmd_capture(args, timeout=timeout)
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health"}:
+        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health", "/why"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"

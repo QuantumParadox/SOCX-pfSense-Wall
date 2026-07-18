@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.0.0
+
+- Added `/why`, a browser operator page for explaining recent firewall/DNSBL block context by IP, domain, or port.
+- Added `/api/why`, a fixed allowlist explanation endpoint backed by recent SOCX evidence and `socx why-blocked`.
+- Added `/api/incident-bundle` and a browser Commander `Bundle` action for one-click, evidence-preserving incident capture.
+- Added quick target buttons on the `/why` page for current top blocked sources, ports, and DNSBL domains.
+- Cut the first final v1 release after rc3 readiness, clean wall logs, fresh Pi fleet, and live browser health checks.
+
 ## v1.0.0-rc3
 
 - Cleaned repo noise by ignoring generated Python bytecode and local `work/` scratch output.

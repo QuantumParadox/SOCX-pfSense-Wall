@@ -650,6 +650,7 @@ function commanderActionFromSpeech(text) {
   const value = String(text || "").toLowerCase();
   if (/(speed|bandwidth|test)/.test(value)) return "speedtest";
   if (/(incident|watch|investigate)/.test(value)) return "incident";
+  if (/(bundle|preserve|package)/.test(value)) return "bundle";
   if (/(snapshot|evidence|capture)/.test(value)) return "snapshot";
   if (/(zeek|logs?)/.test(value)) return "zeek";
   if (/(pi|raspberry|ai|llm)/.test(value)) return "pi";
@@ -680,13 +681,13 @@ function runVoiceCommand() {
   recognition.interimResults = false;
   recognition.maxAlternatives = 1;
   if (title) title.textContent = "Listening";
-  if (body) body.textContent = "Say: status, incident, snapshot, speed test, Zeek, Pi AI, brief, timeline, rules, memory, lab, or explain.";
+  if (body) body.textContent = "Say: status, incident, bundle, snapshot, speed test, Zeek, Pi AI, brief, timeline, rules, memory, lab, or explain.";
   recognition.onresult = (event) => {
     const transcript = event.results?.[0]?.[0]?.transcript || "";
     const action = commanderActionFromSpeech(transcript);
     if (!action) {
       if (title) title.textContent = "Voice command not mapped";
-    if (body) body.textContent = `Heard: ${transcript}\nAllowed: status, incident, snapshot, speedtest, zeek, pi, explain, brief, timeline, rules, doctor, speed-history, memory, lab.`;
+    if (body) body.textContent = `Heard: ${transcript}\nAllowed: status, incident, bundle, snapshot, speedtest, zeek, pi, explain, brief, timeline, rules, doctor, speed-history, memory, lab.`;
       return;
     }
     runCommander(action);

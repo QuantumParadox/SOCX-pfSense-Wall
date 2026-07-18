@@ -1,6 +1,8 @@
 const root = document.getElementById("detail-grid");
 const title = document.getElementById("detail-title");
 const subtitle = document.getElementById("detail-subtitle");
+let whyTarget = new URLSearchParams(location.search).get("target") || "";
+let bundleStatus = "";
 
 const esc = (value) => String(value ?? "--").replace(/[&<>"']/g, (c) => ({
   "&": "&amp;",
@@ -14,6 +16,7 @@ const pageName = () => {
   const path = location.pathname.replace(/^\/+/, "").toLowerCase();
   if (path.includes("device")) return "devices";
   if (path.includes("incident")) return "incidents";
+  if (path.includes("why")) return "why";
   if (path.includes("ai")) return "ai";
   if (path.includes("health")) return "health";
   return "speedtest";
@@ -21,6 +24,83 @@ const pageName = () => {
 
 function card(label, body, tone = "") {
   return `<section class="detail-card ${tone}"><h2>${esc(label)}</h2>${body}</section>`;
+}
+
+async function buildIncidentBundle() {
+  bundleStatus = "Building incident bundle...";
+  await refresh();
+  try {
+    const result = await fetch("/api/incident-bundle", { method: "POST" }).then((r) => r.json());
+    bundleStatus = `${result.ok ? "Bundle ready" : "Bundle warning"} ${result.latest || result.archive || ""}\n${result.output || ""}`;
+  } catch (err) {
+    bundleStatus = `Bundle error: ${err}`;
+  }
+  await refresh();
+}
+
+function wireWhyControls() {
+  const input = document.getElementById("why-target");
+  const run = document.getElementById("why-run");
+  const bundle = document.getElementById("why-bundle");
+  const setTarget = () => {
+    whyTarget = input ? input.value.trim() : whyTarget;
+    const url = new URL(location.href);
+    if (whyTarget) url.searchParams.set("target", whyTarget);
+    else url.searchParams.delete("target");
+    history.replaceState(null, "", url);
+    refresh();
+  };
+  run?.addEventListener("click", setTarget);
+  input?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") setTarget();
+  });
+  bundle?.addEventListener("click", buildIncidentBundle);
+  document.querySelectorAll("[data-why-target]").forEach((button) => {
+    button.addEventListener("click", () => {
+      whyTarget = button.getAttribute("data-why-target") || "";
+      const url = new URL(location.href);
+      url.searchParams.set("target", whyTarget);
+      history.replaceState(null, "", url);
+      refresh();
+    });
+  });
+}
+
+function renderWhy(state, why) {
+  title.textContent = "SOCX WHY BLOCKED";
+  const candidates = why.candidates || [];
+  const matches = why.matches || [];
+  const command = why.command || {};
+  const candidateRows = candidates.map((c) => [c.type, c.target, c.count]);
+  const candidateButtons = candidates.slice(0, 8).map((c) => `<button class="why-target-button" data-why-target="${esc(c.target)}">${esc(c.type)} ${esc(c.target)} x${esc(c.count)}</button>`).join("");
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    card("Ask Why", [
+      `<div class="why-controls"><input id="why-target" value="${esc(why.target || whyTarget || "")}" placeholder="IP, domain, or port"><button id="why-run">Analyze</button><button id="why-bundle">Build Incident Bundle</button></div>`,
+      `<div class="detail-reason">${esc(why.verdict || "waiting")} - ${esc(why.next_step || "")}</div>`,
+      bundleStatus ? `<pre class="why-output">${esc(bundleStatus)}</pre>` : "",
+    ].join("")),
+    card("Evidence Summary", [
+      kv("Target", why.target || "--", "cyan"),
+      kv("Source Hits", why.counts?.source || 0, Number(why.counts?.source || 0) ? "yellow" : "cyan"),
+      kv("Port Hits", why.counts?.port || 0, Number(why.counts?.port || 0) ? "yellow" : "cyan"),
+      kv("DNSBL Hits", why.counts?.domain || 0, Number(why.counts?.domain || 0) ? "purple" : "cyan"),
+      kv("Packet Rows", why.counts?.packet_matches || 0, Number(why.counts?.packet_matches || 0) ? "yellow" : "cyan"),
+    ].join("")),
+    card("Live Candidates", table(["Type", "Target", "Count"], candidateRows)),
+    card("Quick Targets", `<div class="why-targets">${candidateButtons || "<span class=\"muted\">No recent candidates</span>"}</div>`),
+    card("Recent Matching Packets", table(["Time", "Action", "Dir", "Source", "Destination", "Port", "Service"], matches.map((m) => [
+      m.time,
+      m.action,
+      m.direction,
+      m.source,
+      m.destination,
+      m.port,
+      m.service,
+    ]))),
+    card("Terminal Evidence", `<pre class="why-output">${esc(command.output || "No terminal evidence returned.")}</pre>`),
+  ].join("");
+  wireWhyControls();
 }
 
 function kv(label, value, tone = "") {
@@ -192,11 +272,15 @@ async function refresh() {
   const health = page === "health"
     ? await fetch("/api/health", { cache: "no-store" }).then((r) => r.json())
     : null;
+  const why = page === "why"
+    ? await fetch(`/api/why${whyTarget ? `?target=${encodeURIComponent(whyTarget)}` : ""}`, { cache: "no-store" }).then((r) => r.json())
+    : null;
   subtitle.textContent = `${state.hostname || "pfSense"} / ${state.mode || "live"} / ${new Date().toLocaleTimeString()}`;
   if (page === "devices") renderDevices(state);
   else if (page === "incidents") renderIncidents(state);
   else if (page === "ai") renderAi(state);
   else if (page === "health") renderHealth(state, health || {});
+  else if (page === "why") renderWhy(state, why || {});
   else renderSpeed(state);
 }
 
