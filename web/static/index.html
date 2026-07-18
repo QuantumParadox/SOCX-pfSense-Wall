@@ -176,6 +176,17 @@
           <button data-action="voice" id="voice-command">Voice</button>
         </div>
         <canvas class="spark mini" id="cmd-spark"></canvas>
+        <div class="operator-chat">
+          <div class="chat-head">
+            <span>Operator Chat</span>
+            <b id="chat-mode">read-only</b>
+          </div>
+          <div class="chat-row">
+            <input id="chat-input" aria-label="Ask SOCX" placeholder="Ask SOCX about firewall, IDS, DNSBL, VPN, or a draft config plan">
+            <button id="chat-send">Ask</button>
+          </div>
+          <div class="chat-output" id="chat-output">Ask in plain English. Configuration requests return draft-only plans.</div>
+        </div>
         <div class="table command-table" id="command-center"></div>
         <div class="speed-history" id="speed-history"></div>
         <div class="daily-brief" id="daily-brief"></div>

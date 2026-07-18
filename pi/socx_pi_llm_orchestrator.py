@@ -742,6 +742,8 @@ def compact_payload(payload: dict[str, Any]) -> str:
             "intel": payload.get("intel", {}) if isinstance(payload.get("intel"), dict) else str(payload.get("intel", ""))[:1200],
             "pi_nodes": str(payload.get("pi_nodes", ""))[:1200],
             "top_talkers": str(payload.get("top_talkers", ""))[:700],
+            "operator_question": str(payload.get("operator_question", ""))[:500],
+            "operator_intent": str(payload.get("operator_intent", ""))[:80],
         },
         separators=(",", ":"),
     )
@@ -759,6 +761,162 @@ def build_prompt(role: str, payload: dict[str, Any]) -> str:
         "Keep reasons to two short strings. Do not include markdown.\n"
         f"SOCX compact evidence: {compact_payload(payload)}"
     )
+
+
+def build_operator_prompt(question: str, intent: str, context: dict[str, Any]) -> str:
+    return (
+        "You are SOCX Operator Chat for an authorized pfSense home/lab SOC dashboard. "
+        "Explain firewall, IDS, DNSBL, VPN, speedtest, and Pi AI telemetry in plain English. "
+        "Do not reveal hidden chain-of-thought. Show short visible steps and cite the telemetry used. "
+        "If the operator asks to configure pfSense, produce a draft-only plan with approval_required true; do not claim a change was applied. "
+        "Return one compact JSON object with mode, answer, visible_steps, confidence, approval_required, and safe_commands.\n"
+        f"operator_intent={intent}\n"
+        f"operator_question={question[:700]}\n"
+        f"current_socx_context={json.dumps(context, separators=(',', ':'))[:5500]}"
+    )
+
+
+async def answer_operator_chat(question: str, intent: str, context: dict[str, Any]) -> dict[str, Any]:
+    started = time.time()
+    event("CHAT", f"operator chat received: {question[:72]}", "INFO")
+    prompt = build_operator_prompt(question, intent, context)
+    result: dict[str, Any] = {}
+    errors: list[str] = []
+    inventory = await runtime_inventory()
+    preferred = inventory["role_routes"]["action"]
+    attempts = []
+    if preferred.get("available"):
+        attempts.append((HAILO_CHAT_URL, preferred["preferred"]["model"], "hailo", float(os.getenv("SOCX_PI_CHAT_HAILO_TIMEOUT", "120"))))
+    attempts.append((role_url("action"), CPU_FALLBACK_MODELS["action"], "cpu-ollama", float(os.getenv("SOCX_PI_CHAT_TIMEOUT", "75"))))
+    for url, model, backend, timeout in attempts:
+        event("CHAT", f"operator answer thinking with {model} [{backend}]", "INFO")
+        try:
+            if backend == "hailo":
+                result = await asyncio.to_thread(call_hailo_chat, url, model, prompt, timeout)
+            else:
+                result = await asyncio.to_thread(call_ollama_generate, url, model, prompt, timeout)
+            result.update({"role": "operator_chat", "backend": backend, "summary": summarize_role_text(result.get("text", "")), "url": url})
+            if backend == "hailo" and is_low_signal_summary(str(result.get("summary") or "")):
+                errors.append(f"{backend}: low-signal output")
+                continue
+            break
+        except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError) as exc:
+            errors.append(f"{backend}: {str(exc)[:160]}")
+            result = {"ok": False, "error": "; ".join(errors)[:360]}
+    text = str(result.get("text") or result.get("summary") or "")
+    parsed: dict[str, Any] = {}
+    if text:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                parsed = json.loads(text[start : end + 1])
+            except json.JSONDecodeError:
+                parsed = {}
+    loose_answer = loose_json_field(text, "answer") if text and not parsed else ""
+    answer = polish_operator_answer(question, str(parsed.get("answer") or loose_answer or clean_model_text(text) or local_operator_answer(question, intent, context)))[:2400]
+    if operator_answer_is_weak(answer):
+        answer = local_operator_answer(question, intent, context)[:2400]
+    phases = parsed.get("visible_steps") if isinstance(parsed.get("visible_steps"), list) else []
+    if not phases and text:
+        phases = loose_json_list(text, "visible_steps")
+    if not phases:
+        phases = [
+            "received operator question",
+            "loaded latest SOCX evidence",
+            f"routed through {result.get('backend', 'local fallback')}",
+            "returned draft-only guidance" if intent == "draft" else "returned plain-English explanation",
+        ]
+    mode = str(parsed.get("mode") or loose_json_field(text, "mode") or ("PLAN" if intent == "draft" else "ANSWER")).upper()
+    safe_commands = parsed.get("safe_commands") if isinstance(parsed.get("safe_commands"), list) else loose_json_list(text, "safe_commands") or ["socx status", "socx mission", "socx intel"]
+    event("CHAT", f"operator chat complete mode {mode}", "INFO")
+    return {
+        "ok": bool(result.get("ok")) or bool(answer),
+        "mode": mode,
+        "answer": answer,
+        "phases": [str(x)[:140] for x in phases[:6]],
+        "confidence": parsed.get("confidence", "medium"),
+        "approval_required": bool(parsed.get("approval_required", intent == "draft")),
+        "safe_commands": [str(x)[:80] for x in safe_commands[:6]],
+        "role": {"model": result.get("model"), "backend": result.get("backend"), "ok": result.get("ok"), "summary": result.get("summary")},
+        "elapsed_ms": int((time.time() - started) * 1000),
+        "read_only": True,
+    }
+
+
+def local_operator_answer(question: str, intent: str, context: dict[str, Any]) -> str:
+    summary = context.get("summary") if isinstance(context.get("summary"), dict) else context.get("payload_summary") if isinstance(context.get("payload_summary"), dict) else {}
+    if not summary and isinstance(context.get("threat"), dict):
+        threat = context.get("threat") or {}
+        summary = {
+            "firewall_blocks_sampled": threat.get("fw_blocks"),
+            "dnsbl_lines_sampled": threat.get("dnsbl_hits"),
+            "ids_watch_sampled": threat.get("ids_watch"),
+        }
+    intel = context.get("intel") if isinstance(context.get("intel"), dict) else {}
+    rows = intel.get("rows") if isinstance(intel.get("rows"), list) else []
+    bits = [
+        f"SOCX sees firewall blocks {summary.get('firewall_blocks_sampled', '--')}, DNSBL {summary.get('dnsbl_lines_sampled', '--')}, IDS watch {summary.get('ids_watch_sampled', '--')}.",
+    ]
+    if rows:
+        top = rows[0]
+        bits.append(f"Top intel context: {top.get('signal', 'network signal')} maps to {top.get('attack', 'ATT&CK advisory')} with {top.get('d3fend', 'defensive review')}.")
+    if intent == "draft":
+        bits.append("This is a draft-only configuration answer. Preserve evidence first, then review the exact pfSense rule or service change before applying anything.")
+    else:
+        bits.append("The safest next step is to compare this with Mission, Intel, and Incident views before changing policy.")
+    return " ".join(bits)
+
+
+def polish_operator_answer(question: str, answer: str) -> str:
+    text = re.sub(r"\s+", " ", str(answer or "")).strip()
+    text = re.sub(r"DNSBL\s*\(\s*Domain[- ]based Denial of Service\s*\)", "DNSBL (DNS Block List)", text, flags=re.I)
+    text = re.sub(r"DNSBL\s+means\s+Domain[- ]based Denial of Service", "DNSBL means DNS Block List", text, flags=re.I)
+    text = re.sub(r"Domain[- ]based Denial of Service", "DNS Block List", text, flags=re.I)
+    text = re.sub(r"\bD3[- ]FEND framework\b", "SOCX defensive-intel layer", text, flags=re.I)
+    if "dnsbl" in question.lower() and "dns block list" not in text.lower():
+        text = "DNSBL means DNS Block List: pfBlockerNG blocked a domain lookup because it matched a reputation or category list. " + text
+    return text
+
+
+def operator_answer_is_weak(answer: str) -> bool:
+    lower = str(answer or "").lower()
+    return any(
+        marker in lower
+        for marker in [
+            "i'm not sure",
+            "i am not sure",
+            "could you please provide more information",
+            "as an ai",
+            "cannot determine",
+            "no clear model finding",
+            "token noise",
+        ]
+    )
+
+
+def loose_json_field(text: str, field: str) -> str:
+    match = re.search(rf'"{re.escape(field)}"\s*:\s*"((?:\\.|[^"\\])*)"', text, re.S)
+    if not match:
+        return ""
+    value = match.group(1)
+    try:
+        return json.loads(f'"{value}"')
+    except Exception:
+        return value.replace("\\n", "\n").replace('\\"', '"')
+
+
+def loose_json_list(text: str, field: str) -> list[str]:
+    match = re.search(rf'"{re.escape(field)}"\s*:\s*\[(.*?)\]', text, re.S)
+    if not match:
+        return []
+    out: list[str] = []
+    for item in re.findall(r'"((?:\\.|[^"\\])*)"', match.group(1), re.S):
+        try:
+            out.append(json.loads(f'"{item}"'))
+        except Exception:
+            out.append(item.replace("\\n", "\n").replace('\\"', '"'))
+    return out[:6]
 
 
 def call_ollama_generate(url: str, model: str, prompt: str, timeout: float) -> dict[str, Any]:
@@ -1055,6 +1213,15 @@ async def command(request: Request) -> JSONResponse:
     return JSONResponse(result)
 
 
+@app.post("/api/socx/chat")
+async def operator_chat(request: Request) -> JSONResponse:
+    payload = await request.json()
+    question = str(payload.get("question") or payload.get("message") or "")[:900]
+    intent = str(payload.get("intent") or "explain")[:80]
+    context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
+    return JSONResponse(await answer_operator_chat(question, intent, context))
+
+
 @app.post("/api/socx/evidence")
 async def evidence(request: Request) -> JSONResponse:
     payload = await request.json()
@@ -1185,7 +1352,7 @@ body.kiosk .shell{grid-template-rows:48px minmax(0,1fr) 98px}body.kiosk .main{gr
         <div class="command-row"><input id="command-input" value="status" aria-label="SOCX command"><button id="command-run">RUN</button></div>
         <div class="quick-row"><button id="why-warn">WHY WARN?</button><button id="kiosk-link">KIOSK</button></div>
         <div class="command-output" id="command-output">Awaiting operator command.</div>
-        <div class="command-help">status | why warn | vpn | top talkers | thermal | models | preserve evidence</div>
+        <div class="command-help">status | why warn | vpn | top talkers | thermal | models | preserve evidence | or ask a plain-English SOCX question</div>
       </div>
       <div class="review">
         <div class="review-title"><span>REVIEW QUEUE</span><span id="review-count">0</span></div>
@@ -1272,7 +1439,7 @@ function drawSignalTimeline(hist){const cv=$('historyTimeline');if(!cv)return;co
 async function poll(){try{render(await (await fetch('/api/socx/latest',{cache:'no-store'})).json())}catch(e){}}
 if(window.EventSource){const es=new EventSource('/api/socx/stream');es.onmessage=e=>{try{render(JSON.parse(e.data))}catch(_){}};es.onerror=poll}else setInterval(poll,1000); poll();
 document.querySelectorAll('[data-experiment]').forEach(button=>button.addEventListener('click',async()=>{try{await fetch('/api/socx/experiment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:button.dataset.experiment,action:'start',duration:30})})}catch(_){}})); $('lab-stop').addEventListener('click',async()=>{try{await fetch('/api/socx/experiment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'stop'})})}catch(_){}});
-async function runCommand(){const input=$('command-input'),output=$('command-output'); const command=input.value.trim()||'help'; output.textContent='Querying local SOCX telemetry...'; try{const r=await fetch('/api/socx/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command})}); const d=await r.json(); output.textContent=(d.title||'SOCX')+'\n'+(d.lines||[]).join('\n')}catch(e){output.textContent='Command service unavailable'}} $('command-run').addEventListener('click',runCommand); $('command-input').addEventListener('keydown',e=>{if(e.key==='Enter')runCommand()});
+async function runCommand(){const input=$('command-input'),output=$('command-output'); const command=input.value.trim()||'help'; const known=/^(help|status|why warn|vpn|top talkers|thermal|models|preserve evidence|network|show network|explain host|trace flow|show anomalies|compare normal|draft block|draft quarantine)/i.test(command); output.textContent=known?'Querying local SOCX telemetry...':'Thinking with SOCX Pi LLM...'; try{const url=known?'/api/socx/command':'/api/socx/chat';const body=known?{command}:{question:command,intent:/\b(configure|change|block|allow|quarantine|enable|disable|fix)\b/i.test(command)?'draft':'explain',context:state};const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); const d=await r.json(); output.textContent=known?((d.title||'SOCX')+'\n'+(d.lines||[]).join('\n')):((d.mode||'ANSWER')+'\n'+(d.answer||'No answer returned.')+'\n\nSteps: '+((d.phases||[]).join(' -> ')||'complete'))}catch(e){output.textContent='Command service unavailable'}} $('command-run').addEventListener('click',runCommand); $('command-input').addEventListener('keydown',e=>{if(e.key==='Enter')runCommand()});
 $('why-warn').addEventListener('click',()=>{$('command-input').value='why warn';runCommand()}); $('kiosk-link').addEventListener('click',()=>{location.href='/kiosk'});
 document.addEventListener('click',async e=>{const button=e.target.closest('[data-review]');if(!button)return;button.disabled=true;try{await fetch('/api/socx/draft/'+encodeURIComponent(button.dataset.review)+'/review',{method:'POST'})}catch(_){button.disabled=false}});
 const c=$('space'),ctx=c.getContext('2d');let t=0;

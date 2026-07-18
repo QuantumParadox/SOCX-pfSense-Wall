@@ -98,6 +98,14 @@ def run_cmd_capture(args: list[str], timeout: float = 20.0) -> dict[str, Any]:
         return {"ok": False, "returncode": 1, "elapsed_ms": int((time.time() - started) * 1000), "output": str(exc)[:1000]}
 
 
+def post_json(url: str, payload: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    req = Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+    with urlopen(req, timeout=timeout) as resp:
+        raw = resp.read().decode("utf-8", "replace")
+    return json.loads(raw)
+
+
 def parse_env_file(path: Path) -> dict[str, str]:
     data: dict[str, str] = {}
     try:
@@ -2585,6 +2593,147 @@ class SocxCollector:
         rank = lambda data: [{"name": k, "count": v} for k, v in sorted(data.items(), key=lambda kv: kv[1], reverse=True)[:10]]
         return {"assets": rank(assets), "peers": rank(peers), "services": rank(services), "flows": flows[:20]}
 
+    def operator_chat(self, question: str) -> dict[str, Any]:
+        started = time.time()
+        text = re.sub(r"\s+", " ", str(question or "")).strip()[:900]
+        if not text:
+            return {
+                "ok": False,
+                "mode": "DENIED",
+                "answer": "Ask me about firewall blocks, DNSBL, IDS, VPN, speedtest, Pi AI, devices, or a draft-only pfSense change plan.",
+                "phases": ["waiting for an operator question"],
+                "read_only": True,
+            }
+        snap = self.snapshot()
+        intent = self.chat_intent(text)
+        context = self.chat_context(snap)
+        phases = ["collected pfSense telemetry", f"classified request as {intent}"]
+        local = self.local_chat_answer(text, intent, context)
+        pi_answer: dict[str, Any] = {}
+        if intent in {"explain", "diagnose", "draft"}:
+            pi_answer = self.ask_pi_operator_chat(text, intent, context)
+            if pi_answer.get("ok"):
+                phases.extend(pi_answer.get("phases") or ["Pi LLM answered"])
+            else:
+                phases.append("Pi LLM unavailable; using pfSense explanation")
+        if intent == "blocked":
+            answer = local
+            mode = "DENIED"
+        elif pi_answer.get("answer"):
+            answer = str(pi_answer.get("answer"))[:2400]
+            mode = str(pi_answer.get("mode") or ("PLAN" if intent == "draft" else "ANSWER")).upper()
+        else:
+            answer = local
+            mode = "PLAN" if intent == "draft" else "ANSWER"
+        return {
+            "ok": intent != "blocked",
+            "mode": mode,
+            "intent": intent,
+            "answer": answer,
+            "phases": phases,
+            "context": context,
+            "pi": pi_answer,
+            "read_only": True,
+            "approval_required": intent == "draft",
+            "elapsed_ms": int((time.time() - started) * 1000),
+            "safe_commands": self.chat_safe_commands(intent, text),
+        }
+
+    def chat_intent(self, text: str) -> str:
+        lower = text.lower()
+        if re.search(r"\b(delete|wipe|factory reset|disable firewall|turn off firewall|bypass|exploit|attack|stealth|exfiltrate)\b", lower):
+            return "blocked"
+        if re.search(r"\b(configure|change|add rule|open port|block|allow|quarantine|enable|disable|apply|fix)\b", lower):
+            return "draft"
+        if re.search(r"\b(why|diagnose|broken|error|down|slow|stale|crash|not working|fail)\b", lower):
+            return "diagnose"
+        return "explain"
+
+    def chat_context(self, snap: dict[str, Any]) -> dict[str, Any]:
+        incident = snap.get("incident") or {}
+        intel = snap.get("intel") or {}
+        pulse = snap.get("threat_pulse") or {}
+        command = snap.get("command_center") or {}
+        pi_nodes = snap.get("pi_nodes") or {}
+        return {
+            "generated_at": snap.get("generated_at"),
+            "health": snap.get("status", {}).get("health"),
+            "wan": snap.get("wan_status") or snap.get("status", {}).get("wan"),
+            "vpn": snap.get("vpn_status") or command.get("vpn"),
+            "dns": snap.get("dns_status") or snap.get("status", {}).get("dns"),
+            "speed": command.get("speed_truth") or command.get("direct") or {},
+            "threat": {"label": pulse.get("label"), "score": pulse.get("score"), "fw_blocks": pulse.get("fw_blocks"), "dnsbl_hits": pulse.get("dnsbl_hits"), "ids_high": pulse.get("ids_high"), "ids_watch": pulse.get("ids_watch")},
+            "incident": {"mode": incident.get("mode"), "summary": incident.get("summary"), "top_sources": incident.get("blocked_sources", [])[:3], "top_ports": incident.get("blocked_ports", [])[:3], "dnsbl": incident.get("dnsbl_domains", [])[:3], "ids": incident.get("ids", {})},
+            "intel": {"status": intel.get("status"), "priority": (intel.get("priority") or {}).get("label"), "kev": intel.get("kev", {}), "rows": (intel.get("rows") or [])[:4]},
+            "flows": (snap.get("flows") or [])[:6],
+            "packets": (snap.get("packets") or [])[:6],
+            "pi": {"summary": pi_nodes.get("summary"), "nodes": (pi_nodes.get("nodes") or [])[:3]},
+        }
+
+    def ask_pi_operator_chat(self, question: str, intent: str, context: dict[str, Any]) -> dict[str, Any]:
+        urls = []
+        configured = os.environ.get("SOCX_PI_CHAT_URL", "").strip()
+        if configured:
+            urls.append(configured)
+        for node in (context.get("pi") or {}).get("nodes", []):
+            ip = str(node.get("ip") or "").strip()
+            ports = str(node.get("ports") or "")
+            if ip and "8095" in ports:
+                urls.append(f"http://{ip}:8095/api/socx/chat")
+        seen: set[str] = set()
+        for url in urls:
+            if url in seen:
+                continue
+            seen.add(url)
+            try:
+                result = post_json(url, {"question": question, "intent": intent, "context": context}, timeout=float(os.environ.get("SOCX_PI_CHAT_TIMEOUT", "95")))
+                result["url"] = url
+                return result
+            except Exception as exc:
+                last = str(exc)[:180]
+        return {"ok": False, "error": locals().get("last", "no Pi chat URL available")}
+
+    def local_chat_answer(self, question: str, intent: str, context: dict[str, Any]) -> str:
+        q = question.lower()
+        incident = context.get("incident") or {}
+        threat = context.get("threat") or {}
+        intel = context.get("intel") or {}
+        lines = []
+        if intent == "blocked":
+            return "I cannot help with destructive, bypass, or stealth requests. I can explain the alert, preserve evidence, or draft a safe approval-only pfSense change plan."
+        if "dnsbl" in q:
+            lines.append("DNSBL means DNS Block List. pfBlockerNG blocked or redirected a domain lookup because the domain matched a reputation/category list.")
+        if "ids" in q or "suricata" in q:
+            ids = incident.get("ids") or {}
+            lines.append(f"IDS/Suricata is inspection telemetry. Current sample: high-signal {ids.get('high_signal', ids.get('signal', 0))}, watch {ids.get('watch', 0)}, routine {ids.get('routine', 0)}.")
+        if "firewall" in q or "block" in q or "drop" in q:
+            ports = ", ".join(str(x.get("name")) for x in (incident.get("top_ports") or [])[:3]) or "none"
+            lines.append(f"Firewall blocks are packets pfSense refused by policy. Top blocked ports in the sample: {ports}.")
+        if "vpn" in q:
+            lines.append(f"VPN status is read from gateway/interface truth, not just whether VPN is configured: {context.get('vpn') or 'unknown'}.")
+        if "speed" in q:
+            lines.append(f"Speedtest truth: {context.get('speed') or 'waiting for speed cache'}.")
+        if not lines:
+            lines.append(f"SOCX is in {threat.get('label', 'watch')} mode with threat score {threat.get('score', '--')}. Firewall blocks {threat.get('fw_blocks', 0)}, DNSBL hits {threat.get('dnsbl_hits', 0)}, IDS high {threat.get('ids_high', 0)}.")
+        priority = intel.get("priority")
+        if priority:
+            lines.append(f"Intel priority is {priority}; ATT&CK/D3FEND rows are advisory evidence, not proof by themselves.")
+        if intent == "draft":
+            lines.append("Because this is a configuration request, I will only draft the pfSense plan and commands. No rule or service change is applied from chat.")
+        return "\n".join(lines)
+
+    def chat_safe_commands(self, intent: str, text: str) -> list[str]:
+        commands = ["socx status", "socx mission", "socx intel"]
+        lower = text.lower()
+        if "ids" in lower or "suricata" in lower:
+            commands.append("socx-doctor ids")
+        if "dnsbl" in lower:
+            commands.append("socx-doctor dnsbl-review")
+        if intent == "draft":
+            commands.append("socx rules")
+            commands.append("socx snapshot")
+        return commands[:6]
+
     def collect_incident(self, center: dict[str, Any] | None = None, sample_limit: int = 300) -> dict[str, Any]:
         center = center or self.collect_command_center()
         limit = max(80, min(1200, int(sample_limit)))
@@ -3063,7 +3212,7 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/story-archive":
             self.send_json(self.collector.create_story_archive())
             return
-        if parsed.path != "/api/commander":
+        if parsed.path not in {"/api/commander", "/api/chat"}:
             self.send_error(404)
             return
         try:
@@ -3075,6 +3224,10 @@ class SocxHandler(BaseHTTPRequestHandler):
             data = json.loads(raw.decode("utf-8", "replace"))
         except Exception:
             data = {}
+        if parsed.path == "/api/chat":
+            question = str(data.get("question") or data.get("message") or "")
+            self.send_json(self.collector.operator_chat(question))
+            return
         action = str(data.get("action", "")).strip().lower()
         self.send_json(self.run_commander_action(action))
 

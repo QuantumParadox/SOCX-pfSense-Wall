@@ -5,6 +5,7 @@ let pollingTimer = null;
 let latestState = null;
 let clusterTick = 0;
 let tickerMode = localStorage.getItem("socxTickerMode") || "slow";
+let chatBusy = false;
 
 const fmtPct = (v) => `${Number(v || 0).toFixed(0)}%`;
 const safe = (v, fallback = "--") => (v === undefined || v === null || v === "" ? fallback : String(v));
@@ -726,6 +727,51 @@ async function runCommander(action) {
   }
 }
 
+async function runOperatorChat() {
+  if (chatBusy) return;
+  const input = $("chat-input");
+  const output = $("chat-output");
+  const mode = $("chat-mode");
+  const button = $("chat-send");
+  const question = String(input?.value || "").trim();
+  if (!question) {
+    if (output) output.textContent = "Ask me something like: why is DNSBL high, explain IDS, diagnose VPN, or draft a block plan for this host.";
+    return;
+  }
+  chatBusy = true;
+  if (button) button.disabled = true;
+  if (mode) {
+    mode.textContent = "thinking";
+    mode.className = "plan";
+  }
+  if (output) output.textContent = "Collecting pfSense telemetry...\nAsking SOCX/Pi LLM if available...";
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+    const data = await res.json();
+    const label = String(data.mode || "ANSWER").toLowerCase();
+    if (mode) {
+      mode.textContent = `${data.mode || "ANSWER"}${data.pi?.ok ? " + PI" : ""}`;
+      mode.className = label.includes("denied") ? "denied" : label.includes("plan") ? "plan" : "answer";
+    }
+    const phases = Array.isArray(data.phases) && data.phases.length ? `\n\nSteps: ${data.phases.join(" -> ")}` : "";
+    const commands = Array.isArray(data.safe_commands) && data.safe_commands.length ? `\n\nUseful: ${data.safe_commands.join(" | ")}` : "";
+    if (output) output.textContent = `${data.answer || "No answer returned."}${phases}${commands}`;
+  } catch (err) {
+    if (mode) {
+      mode.textContent = "error";
+      mode.className = "denied";
+    }
+    if (output) output.textContent = `Chat service unavailable: ${err}`;
+  } finally {
+    chatBusy = false;
+    if (button) button.disabled = false;
+  }
+}
+
 async function poll() {
   try {
     const res = await fetch("/api/state", { cache: "no-store" });
@@ -779,6 +825,11 @@ $("big-mode")?.addEventListener("click", () => {
   const next = localStorage.getItem("socxBigWall") === "1" ? "0" : "1";
   localStorage.setItem("socxBigWall", next);
   applyWallPrefs();
+});
+
+$("chat-send")?.addEventListener("click", runOperatorChat);
+$("chat-input")?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") runOperatorChat();
 });
 
 document.querySelectorAll(".commander-buttons button").forEach((button) => {

@@ -97,6 +97,7 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds VPN crypto headroom on the browser Speedtest page so DIRECT/VPN throughput can be read beside current CPU temperature and thermal headroom.
 - Adds SOCX Mission / Operator Intelligence through `/mission`, `/api/mission`, and `socx mission`, summarizing what changed, what matters, what to check, and what is probably noise.
 - Adds SOCX ATT&CK / D3FEND / KEV Intelligence through `/api/intel`, Mission cards, and `socx intel`. It maps current firewall/DNSBL/IDS/asset-drift evidence to conservative ATT&CK context, defensive countermeasure names, CISA KEV status, priority, disposition, and a compact kill-chain story. It is read-only and never changes pfSense policy.
+- Adds SOCX Operator Chat through the browser Command Center, `/api/chat`, and `socx chat`. Ask plain-English questions about firewall blocks, DNSBL, IDS/Suricata, VPN, Speedtest, Pi AI, devices, or draft-only pfSense configuration plans. Chat can delegate to the Pi 5 LLM endpoint when available, shows visible operational steps, and never applies pfSense changes from chat.
 - Adds focused browser detail pages for Speedtest, Devices, Incidents, AI, and Release Health so the main wall stays clean while deeper evidence is still available.
 - Adds Data Truth freshness scoring, a plain-English Data Truth reason, and a What Changed timeline so collector age, inactive VPN tests, Pi discovery state, UPS freshness, and meaningful state changes are visible.
 - Adds `/health` and `/api/health` for release readiness, wall error state, fixed service checks, and Pi AI role visibility.
@@ -480,6 +481,8 @@ Reports are written to `/root/socx-reports/` and include firewall blocks, DNSBL 
 
 `socx story` shows the Daily Story: Data Truth, Autopilot, firewall pressure, DNSBL, IDS, Speedtest path truth, Pi fleet, repeated-event memory, AI verdicts, and what changed. `socx story archive` preserves the same story as text and JSON under `/root/socx-stories/`. The browser version is available at `/story`.
 
+`socx chat "why is DNSBL high?"` opens the same Operator Chat used by the browser wall. It classifies questions as `ANSWER`, `PLAN`, or `DENIED`, collects current pfSense/SOCX evidence, asks the Pi 5 chat model when available, and falls back to local rule-based explanation when the Pi is stale or offline. Configuration requests are draft-only and return `approval_required=true`; they do not edit pfSense rules, aliases, IDS settings, DNSBL allowlists, or services.
+
 `socx repair` safely restarts SOCX helper collectors such as UPS cache, Speedtest cache, Packet Radar, vnstatd, LLDP, and Pi discovery. It does not change firewall policy or pfSense rules.
 
 `socx explain-screen` turns the current wall state into plain English, including Autopilot mode, key health signals, direct/VPN Speedtest meaning, and suggested safe next actions.
@@ -620,6 +623,8 @@ The dashboard style is intentionally a restrained LCARS/cyberpunk hybrid: warm L
 The Pi dashboard also exposes a lightweight Network Digital Twin. The pfSense bridge samples current `pfctl` state rows and posts them to `/api/socx/network` separately from the slower LLM analysis, so the graph can refresh without waiting for all three roles. The read-only Command Center accepts `network` or `show network`, and the visual core shows the current node/link count. If no flow rows are available it explicitly shows `waiting for pfSense flow telemetry` instead of inventing paths.
 
 Flow snapshots are retained in memory at `/api/socx/network/history` for replay and comparison. Additional read-only commands include `explain host <host>`, `trace flow`, `show anomalies`, and `compare normal`. Response proposals such as `draft block <host>` or `draft quarantine <host>` return `DRAFT ONLY` objects with `approval_required: true`; they never call the pfSense configuration API.
+
+The Pi dashboard also exposes `/api/socx/chat`, a read-only operator-chat route used by pfSense `/api/chat`. It answers natural-language SOC questions with a dedicated operator prompt, records visible `CHAT` and role events, and returns compact JSON with `answer`, `phases`, `safe_commands`, `approval_required`, and model route metadata.
 
 If SOCX shows the Pi endpoint as reachable but `roles 0/3`, the Pi receiver is running but the local model backend is not. On the Pi, check:
 

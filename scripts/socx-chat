@@ -1,0 +1,48 @@
+#!/bin/sh
+set -eu
+
+API="${SOCX_WEB_URL:-http://127.0.0.1:8094}"
+PY="${PYTHON:-/usr/local/bin/python3.11}"
+
+if [ "$#" -eq 0 ]; then
+    printf 'Usage: socx chat "why is DNSBL high?"\n'
+    printf '       socx chat "draft a safe plan to quarantine 192.168.1.121"\n'
+    exit 2
+fi
+
+QUESTION="$*"
+export SOCX_CHAT_QUESTION="$QUESTION"
+export SOCX_CHAT_API="$API"
+
+"$PY" - <<'PY'
+import json
+import os
+import urllib.request
+
+api = os.environ.get("SOCX_CHAT_API", "http://127.0.0.1:8094").rstrip("/")
+question = os.environ.get("SOCX_CHAT_QUESTION", "")
+body = json.dumps({"question": question}).encode()
+req = urllib.request.Request(api + "/api/chat", data=body, headers={"Content-Type": "application/json"})
+try:
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        data = json.loads(resp.read().decode("utf-8", "replace"))
+except Exception as exc:
+    print(f"SOCX chat unavailable: {exc}")
+    raise SystemExit(1)
+
+print(f"Mode: {data.get('mode', 'ANSWER')}  read_only={data.get('read_only', True)}  approval_required={data.get('approval_required', False)}")
+print()
+print(data.get("answer") or "No answer returned.")
+phases = data.get("phases") or []
+if phases:
+    print()
+    print("Visible steps:")
+    for item in phases:
+        print(f"- {item}")
+commands = data.get("safe_commands") or []
+if commands:
+    print()
+    print("Useful commands:")
+    for item in commands:
+        print(f"- {item}")
+PY

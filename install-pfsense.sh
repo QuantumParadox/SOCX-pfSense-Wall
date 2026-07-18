@@ -26,6 +26,7 @@ install -m 0755 "$ROOT/scripts/socx-timeline" /usr/local/bin/socx-timeline
 install -m 0755 "$ROOT/scripts/socx-incident-memory" /usr/local/bin/socx-incident-memory
 install -m 0755 "$ROOT/scripts/socx-brief" /usr/local/bin/socx-brief
 install -m 0755 "$ROOT/scripts/socx-mission" /usr/local/bin/socx-mission
+install -m 0755 "$ROOT/scripts/socx-chat" /usr/local/bin/socx-chat
 install -m 0755 "$ROOT/scripts/socx-story" /usr/local/bin/socx-story
 install -m 0755 "$ROOT/scripts/socx-rule-assistant" /usr/local/bin/socx-rule-assistant
 install -m 0755 "$ROOT/scripts/socx-repair" /usr/local/bin/socx-repair

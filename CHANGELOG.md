@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.4.0
+
+- Added SOCX Operator Chat in the browser Command Center, backed by `/api/chat` and the terminal `socx chat` command.
+- Added safe request classification for operator questions: `ANSWER`, `PLAN`, and `DENIED`.
+- Added Pi 5 `/api/socx/chat` support with a dedicated operator prompt, visible `CHAT` events, route/model metadata, and read-only draft-only configuration guidance.
+- Added local pfSense fallback explanations for firewall blocks, DNSBL, IDS/Suricata, VPN truth, Speedtest, and current threat/intel context when the Pi LLM is unavailable.
+- Kept all chat-driven configuration requests approval-only; chat does not apply pfSense rules, aliases, IDS changes, DNSBL allowlists, or service changes.
+
 ## v1.3.0
 
 - Added a read-only ATT&CK / D3FEND / CISA KEV intelligence layer for SOCX Mission and `/api/intel`.

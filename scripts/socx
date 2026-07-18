@@ -39,6 +39,10 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-mission "$@"
         ;;
+    chat|ask|operator-chat)
+        shift
+        exec /usr/local/bin/socx-chat "$@"
+        ;;
     story|daily-story|soc-story)
         shift
         exec /usr/local/bin/socx-story "$@"
