@@ -177,6 +177,21 @@ def preserve_evidence(reason: str = "operator request") -> dict[str, Any]:
 def command_result(command: str) -> dict[str, Any]:
     normalized = " ".join(command.lower().strip().split())
     summary = LATEST_ANALYSIS.get("payload_summary") if isinstance(LATEST_ANALYSIS.get("payload_summary"), dict) else {}
+    if normalized in {"why warn", "why", "explain warn", "why warning"}:
+        quality = model_quality_summary(LATEST_ANALYSIS.get("role_results") if isinstance(LATEST_ANALYSIS.get("role_results"), dict) else {})
+        reasons = LATEST_ANALYSIS.get("reasons") if isinstance(LATEST_ANALYSIS.get("reasons"), list) else []
+        lines = [
+            f"severity: {LATEST_ANALYSIS.get('severity', 'INFO')} confidence {round(float(LATEST_ANALYSIS.get('confidence') or 0) * 100)}%",
+            f"autopilot: {AUTONOMY_STATE.get('mode', 'observe').upper()} score {AUTONOMY_STATE.get('score', 0)}/100",
+            f"signals: FW {summary.get('firewall_blocks_sampled', 0)} DNSBL {summary.get('dnsbl_lines_sampled', 0)} IDS watch {summary.get('ids_watch_sampled', 0)} high {summary.get('ids_high_sampled', 0)}",
+            f"model quality: {quality.get('good', 0)} good, {quality.get('weak', 0)} weak, {quality.get('offline', 0)} offline",
+        ]
+        lines.extend([f"reason: {str(reason)[:140]}" for reason in reasons[:4]])
+        lines.extend([
+            "plain English: this is a WATCH state because routine security telemetry is busy or AI evidence is not fully clean.",
+            "safe next step: preserve evidence, review DNSBL/IDS if the warning persists, and avoid rule changes from this panel.",
+        ])
+        return {"command": command, "title": "WHY WARN", "lines": lines}
     if normalized in {"status", "show status"}:
         return {"command": command, "title": "SYSTEM STATUS", "lines": [
             f"service: {LATEST_ANALYSIS.get('status', 'waiting')}",
@@ -235,15 +250,17 @@ def command_result(command: str) -> dict[str, Any]:
             f"memory used: {(sysm.get('memory') or {}).get('used_pct', '--')}%",
         ]}
     if normalized in {"models", "show models"}:
+        quality = model_quality_summary(LATEST_ANALYSIS.get("role_results") if isinstance(LATEST_ANALYSIS.get("role_results"), dict) else {})
         return {"command": command, "title": "LOCAL MODELS", "lines": [
-            f"{role}: {LATEST_ANALYSIS.get('models', {}).get(role, DEFAULT_MODELS[role])}" for role in DEFAULT_ROLES
+            *[f"{role}: {LATEST_ANALYSIS.get('models', {}).get(role, DEFAULT_MODELS[role])}" for role in DEFAULT_ROLES],
+            f"quality: {quality.get('good', 0)} good, {quality.get('weak', 0)} weak, {quality.get('offline', 0)} offline",
         ]}
     if normalized in {"preserve evidence", "capture evidence"}:
         saved = preserve_evidence("operator command")
         return {"command": command, "title": "EVIDENCE VAULT", "lines": [json.dumps(saved, separators=(",", ":"))]}
     if normalized in {"help", "?"}:
         return {"command": command, "title": "COMMANDS", "lines": [
-            "status | vpn | network | top talkers | thermal | models | explain host | trace flow",
+            "status | why warn | vpn | network | top talkers | thermal | models | explain host | trace flow",
             "show anomalies | compare normal | draft block <host> | preserve evidence",
             "All commands are read-only except local evidence preservation.",
         ]}
@@ -428,6 +445,40 @@ def is_low_signal_summary(summary: str) -> bool:
             "numeric token noise",
         ]
     )
+
+
+def model_quality_summary(role_results: dict[str, Any]) -> dict[str, Any]:
+    roles = []
+    good = weak = fallback = offline = 0
+    for role in DEFAULT_ROLES:
+        result = role_results.get(role) if isinstance(role_results, dict) else {}
+        if not isinstance(result, dict):
+            result = {}
+        ok = bool(result.get("ok"))
+        backend = str(result.get("backend") or "unknown")
+        summary = str(result.get("summary") or result.get("error") or "")
+        low_signal = ok and is_low_signal_summary(summary)
+        if not ok:
+            state = "offline"
+            offline += 1
+        elif low_signal:
+            state = "weak"
+            weak += 1
+        else:
+            state = "good"
+            good += 1
+        if backend == "cpu-ollama":
+            fallback += 1
+        roles.append({
+            "role": role,
+            "state": state,
+            "backend": backend,
+            "model": str(result.get("model") or DEFAULT_MODELS.get(role) or ""),
+            "elapsed_ms": int(result.get("elapsed_ms") or 0),
+            "summary": summary[:180],
+            "fallback_error": str(result.get("fallback_error") or "")[:180],
+        })
+    return {"good": good, "weak": weak, "fallback": fallback, "offline": offline, "roles": roles}
 
 
 def clean_model_text(text: str) -> str:
@@ -667,6 +718,8 @@ def autonomy_cycle(verdict: dict[str, Any]) -> dict[str, Any]:
             "payload_summary": summary,
             "score": state["score"],
             "mode": mode,
+            "system": sysm,
+            "model_quality": verdict.get("model_quality") or {},
         }
     )
     del HISTORY[:-MAX_HISTORY]
@@ -891,6 +944,11 @@ async def dashboard() -> str:
     return DASHBOARD_HTML
 
 
+@app.get("/kiosk", response_class=HTMLResponse)
+async def kiosk() -> str:
+    return DASHBOARD_HTML
+
+
 @app.get("/api/socx/latest")
 async def latest() -> JSONResponse:
     data = dict(LATEST_ANALYSIS)
@@ -905,6 +963,7 @@ async def latest() -> JSONResponse:
     data["drafts"] = DRAFTS[-12:]
     data["runtime"] = await runtime_inventory()
     data["history"] = HISTORY[-18:]
+    data["model_quality"] = model_quality_summary(data.get("role_results") if isinstance(data.get("role_results"), dict) else {})
     return JSONResponse(data)
 
 
@@ -1017,6 +1076,7 @@ async def stream() -> StreamingResponse:
             data["drafts"] = DRAFTS[-12:]
             data["runtime"] = await runtime_inventory()
             data["history"] = HISTORY[-18:]
+            data["model_quality"] = model_quality_summary(data.get("role_results") if isinstance(data.get("role_results"), dict) else {})
             yield f"data: {json.dumps(data, separators=(',', ':'))}\n\n"
             await asyncio.sleep(1)
 
@@ -1045,6 +1105,7 @@ async def triage(request: Request) -> dict[str, Any]:
             "system": system_metrics(),
         }
     )
+    verdict["model_quality"] = model_quality_summary(role_results)
     verdict["autonomy"] = autonomy_cycle(verdict)
     LATEST_ANALYSIS.clear()
     LATEST_ANALYSIS.update(verdict)
@@ -1071,13 +1132,16 @@ h2{margin:0 0 7px;color:var(--cyan);font-size:14px;letter-spacing:.08em}.metric{
 .role{display:grid;grid-template-columns:84px 1fr;gap:10px;border-top:1px solid #ffffff17;padding:8px 0;min-width:0}.role:first-of-type{border-top:0}.role-name{font-weight:900;color:var(--blue);text-transform:uppercase}.role.ok .role-name{color:var(--green)}.role.fail .role-name{color:var(--red)}.role-text{font-size:13px;line-height:1.26;white-space:normal;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}.role-meta{font-size:11px;color:var(--muted);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .viz{position:relative;height:100%;min-height:360px;overflow:hidden}.viz canvas{position:absolute;inset:0;width:100%;height:100%}.core{position:absolute;left:50%;top:50%;width:132px;height:132px;margin:-66px;border:2px solid var(--cyan);border-radius:50%;display:grid;place-items:center;text-align:center;font-weight:900;color:var(--cyan);box-shadow:0 0 36px #49fff466, inset 0 0 24px #49fff41e;animation:pulse 2.2s infinite}
 .vizhud{position:absolute;left:12px;right:12px;bottom:12px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px;pointer-events:none}.vizstat{border:1px solid #ffffff22;background:#02080caa;padding:7px 8px;font:700 12px ui-monospace,Consolas,monospace;color:var(--muted)}.vizstat b{display:block;color:var(--ink);font-size:16px;margin-top:2px}.twin-status{position:absolute;top:12px;left:12px;border:1px solid #ff9f4366;background:#1b1018cc;color:var(--lcars);padding:6px 8px;font:700 11px ui-monospace,Consolas,monospace;letter-spacing:.05em}
+.thermal-strip{position:absolute;left:12px;right:12px;bottom:70px;height:42px;border:1px solid #ffffff20;background:#02080caa;padding:6px 8px;display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center;pointer-events:none}.thermal-strip span{font:700 11px ui-monospace,Consolas,monospace;color:var(--muted);white-space:nowrap}.thermal-strip canvas{position:static;width:100%;height:26px}
 @keyframes pulse{50%{transform:scale(1.045);box-shadow:0 0 54px #49fff488,inset 0 0 34px #49fff433}}
 .feed{display:grid;grid-template-columns:1fr 1fr;gap:8px;min-height:0}.events{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;line-height:1.34;overflow:hidden}.event{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.json{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;color:#d8fbff;overflow:hidden;white-space:pre-wrap}
 .bar{height:9px;background:#ffffff16;margin-top:6px;overflow:hidden}.bar span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--lcars),var(--cyan),var(--green))}
 .lab{border:1px solid #ff9f4355;background:#1b1018;padding:9px 10px;margin-top:10px}.lab-title{display:flex;justify-content:space-between;color:var(--lcars);font-weight:900;letter-spacing:.06em}.lab-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}.lab button{border:1px solid #49fff466;background:#071c21;color:var(--cyan);padding:7px 5px;font:700 11px ui-monospace,Consolas,monospace;cursor:pointer}.lab button:hover{background:#49fff422;color:#fff}.lab button.stop{color:var(--red);border-color:#ff5e7866}.lab-status{margin-top:8px;font:12px ui-monospace,Consolas,monospace;color:var(--ink);white-space:normal}.lab-history{margin-top:6px;color:var(--muted);font:11px ui-monospace,Consolas,monospace}
 .command{border:1px solid #c76dff66;background:#130d1b;padding:9px 10px;margin-top:10px}.command-title{display:flex;justify-content:space-between;color:var(--lcars2);font-weight:900;letter-spacing:.06em}.command-row{display:grid;grid-template-columns:1fr auto;gap:6px;margin-top:7px}.command input{min-width:0;border:1px solid #ffffff22;background:#020609;color:var(--ink);padding:7px;font:12px ui-monospace,Consolas,monospace}.command button{border:1px solid #c76dff88;background:#21102d;color:var(--lcars2);padding:6px 8px;font:700 11px ui-monospace,Consolas,monospace;cursor:pointer}.command-output{margin-top:7px;min-height:42px;white-space:pre-wrap;color:var(--ink);font:12px/1.4 ui-monospace,Consolas,monospace}.command-help{color:var(--muted);font:10px ui-monospace,Consolas,monospace;margin-top:5px}
+.quick-row{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px}.quick-row button{border:1px solid #ffe35b77;background:#231d0a;color:var(--yellow);padding:6px 8px;font:700 10px ui-monospace,Consolas,monospace;cursor:pointer}
 .review{border:1px solid #ffe35b66;background:#1d180b;padding:9px 10px;margin-top:10px}.review-title{display:flex;justify-content:space-between;color:var(--yellow);font-weight:900;letter-spacing:.06em}.review-item{border-top:1px solid #ffffff17;padding:7px 0;font:12px/1.35 ui-monospace,Consolas,monospace}.review-item:first-child{border-top:0}.review-item b{color:var(--ink)}.review button{float:right;border:1px solid #66ff7c88;background:#0e2815;color:var(--green);padding:4px 6px;font:700 10px ui-monospace,Consolas,monospace;cursor:pointer}
-.model-grid,.summary-grid,.experiment-grid{display:grid;gap:7px}.model-card,.summary-card,.experiment-card{border:1px solid #ffffff1f;background:#ffffff08;padding:7px 9px}.model-card{display:grid;grid-template-columns:84px 1fr auto;gap:8px;align-items:center}.model-role{font-weight:900;text-transform:uppercase;color:var(--cyan)}.model-name{font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.summary-grid{grid-template-columns:repeat(5,1fr)}.summary-card span{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.summary-card b{display:block;color:var(--ink);font-size:18px;margin-top:1px}.summary-card small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.plain{font-size:13px;line-height:1.36;color:var(--ink)}.autopilot{border:1px solid #ff56f455;background:#210a2438;padding:8px 9px;margin-top:8px}.autopilot-title{display:flex;justify-content:space-between;gap:10px;font-weight:900;color:var(--mag);letter-spacing:.06em}.experiment-card{font-size:12px}.experiment-card b{display:block;color:var(--ink)}.trend{height:28px;width:100%;margin-top:6px}
+.model-grid,.summary-grid,.experiment-grid,.quality-grid{display:grid;gap:7px}.model-card,.summary-card,.experiment-card,.quality-card{border:1px solid #ffffff1f;background:#ffffff08;padding:7px 9px}.model-card{display:grid;grid-template-columns:84px 1fr auto;gap:8px;align-items:center}.model-role{font-weight:900;text-transform:uppercase;color:var(--cyan)}.model-name{font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.quality-grid{grid-template-columns:repeat(4,1fr)}.quality-card span{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em}.quality-card b{display:block;font-size:18px}.summary-grid{grid-template-columns:repeat(5,1fr)}.summary-card span{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.summary-card b{display:block;color:var(--ink);font-size:18px;margin-top:1px}.summary-card small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.plain{font-size:13px;line-height:1.36;color:var(--ink)}.autopilot{border:1px solid #ff56f455;background:#210a2438;padding:8px 9px;margin-top:8px}.autopilot-title{display:flex;justify-content:space-between;gap:10px;font-weight:900;color:var(--mag);letter-spacing:.06em}.experiment-card{font-size:12px}.experiment-card b{display:block;color:var(--ink)}.trend{height:28px;width:100%;margin-top:6px}.timeline{width:100%;height:42px;margin-top:7px;border:1px solid #ffffff18;background:#02080c88}
+body.kiosk .shell{grid-template-rows:48px minmax(0,1fr) 98px}body.kiosk .main{grid-template-columns:300px minmax(560px,1fr) 300px}body.kiosk .review,body.kiosk .lab,body.kiosk #models,body.kiosk #reasons,body.kiosk h2.hide-kiosk{display:none}body.kiosk .viz{min-height:520px}body.kiosk .role-text{-webkit-line-clamp:4}body.kiosk .feed{grid-template-columns:1fr}
 @media(max-width:1100px){.main{grid-template-columns:1fr}.shell{overflow:auto;height:auto}.viz{height:360px}.feed{grid-template-columns:1fr}body{overflow:auto}}
 </style>
 </head>
@@ -1104,6 +1168,7 @@ h2{margin:0 0 7px;color:var(--cyan);font-size:14px;letter-spacing:.08em}.metric{
       <canvas id="space"></canvas>
       <div class="core"><div>SOCX<br>PI<br><span id="coreRoles">0/3</span></div></div>
       <div class="twin-status" id="twin-status">TWIN WAITING FOR FLOWS</div>
+      <div class="thermal-strip"><span id="thermalLabel">PI TEMP --C | LOAD --</span><canvas id="thermalChart"></canvas></div>
       <div class="vizhud">
         <div class="vizstat">FW BLOCKS<b id="vizFw">0</b></div>
         <div class="vizstat">DNSBL<b id="vizDns">0</b></div>
@@ -1117,16 +1182,19 @@ h2{margin:0 0 7px;color:var(--cyan);font-size:14px;letter-spacing:.08em}.metric{
       <div class="command">
         <div class="command-title"><span>COMMAND CENTER</span><span class="muted">READ-ONLY</span></div>
         <div class="command-row"><input id="command-input" value="status" aria-label="SOCX command"><button id="command-run">RUN</button></div>
+        <div class="quick-row"><button id="why-warn">WHY WARN?</button><button id="kiosk-link">KIOSK</button></div>
         <div class="command-output" id="command-output">Awaiting operator command.</div>
-        <div class="command-help">status | vpn | top talkers | thermal | models | preserve evidence</div>
+        <div class="command-help">status | why warn | vpn | top talkers | thermal | models | preserve evidence</div>
       </div>
       <div class="review">
         <div class="review-title"><span>REVIEW QUEUE</span><span id="review-count">0</span></div>
         <div id="review-queue" class="review-item">No response drafts awaiting review.</div>
       </div>
-      <h2 style="margin-top:18px">Model Health</h2>
+      <h2 style="margin-top:18px">Model Quality</h2>
+      <div id="modelQuality" class="quality-grid"></div>
+      <h2 class="hide-kiosk" style="margin-top:18px">Model Health</h2>
       <div id="models" class="model-grid"></div>
-      <h2 style="margin-top:18px">Latest Reasons</h2>
+      <h2 class="hide-kiosk" style="margin-top:18px">Latest Reasons</h2>
       <div id="reasons" class="events"></div>
       <h2 style="margin-top:18px">Autopilot</h2>
       <div id="autopilot"></div>
@@ -1146,17 +1214,19 @@ h2{margin:0 0 7px;color:var(--cyan);font-size:14px;letter-spacing:.08em}.metric{
   </main>
   <footer class="feed">
     <section class="panel events"><h2>Live Events</h2><div id="events"></div></section>
-    <section class="panel"><h2>Payload Summary</h2><div id="payload" class="summary-grid"></div></section>
+    <section class="panel"><h2>Payload Summary</h2><div id="payload" class="summary-grid"></div><h2 style="margin-top:8px">Signal Timeline</h2><canvas id="historyTimeline" class="timeline"></canvas></section>
   </footer>
 </div>
 <script>
 const $=id=>document.getElementById(id);
 const colors={INFO:'#49fff4',WARN:'#ffe35b',ERROR:'#ff5e78',CRITICAL:'#ff5e78'};
 let state={roles_online:'0/3',severity:'INFO',role_results:{}};
+if(location.pathname.includes('/kiosk'))document.body.classList.add('kiosk');
 function cls(sev){return sev==='INFO'||sev==='OK'?'ok':(sev==='WARN'?'warn':'bad')}
 function fmt(n){n=Number(n||0);return n>=1000?(n/1000).toFixed(n>=10000?0:1)+'K':String(n)}
 function ms(v){v=Number(v||0);return v>=1000?(v/1000).toFixed(1)+'s':v+'ms'}
 function healthWord(x){return x?'online':'offline'}
+function tempF(c){c=Number(c||0);return c?Math.round(c*9/5+32):0}
 function cleanRoleText(s){
   s=String(s??'').replace(/\s+/g,' ').trim();
   if(!s)return 'waiting for role output';
@@ -1183,20 +1253,26 @@ function render(d){
   $('next').textContent=d.recommended_next_step||'waiting';
   const roles=d.role_results||{}; $('rolebox').innerHTML=['triage','evidence','action'].map(r=>{const x=roles[r]||{};return `<div class="role ${x.ok?'ok':'fail'}"><div class="role-name">${r}</div><div><div class="role-text">${esc(cleanRoleText(x.summary||x.error||'waiting for role output'))}</div><div class="role-meta">${esc(x.model||'model?')} | ${esc(x.backend||'route?')} | ${x.ok?'online':'offline'} ${x.error?' | '+esc(x.error):''}</div></div></div>`}).join('');
   const models=d.models||{}; const ollama=d.ollama||{}; $('models').innerHTML=['triage','evidence','action'].map(r=>{const x=roles[r]||{};const ok=!!x.ok;return `<div class="model-card"><div class="model-role">${r}</div><div><div class="model-name">${esc(models[r]||x.model||'not set')}</div><div class="muted">${ok?'last role completed':'waiting or timed out'}</div></div><b class="${ok?'ok':'warn'}">${healthWord(ok)}</b></div>`}).join('')+`<div class="model-card"><div class="model-role">ollama</div><div><div class="model-name">${ollama.ok?fmt(ollama.model_count)+' local models':'not reachable'}</div><div class="muted">${esc((ollama.models||[]).slice(0,3).join(', ')||ollama.error||'local model server')}</div></div><b class="${ollama.ok?'ok':'bad'}">${ollama.ok?'online':'offline'}</b></div>`;
+  const q=d.model_quality||{}; $('modelQuality').innerHTML=[['GOOD',q.good||0,'ok'],['WEAK',q.weak||0,'warn'],['FALLBACK',q.fallback||0,'mag'],['OFFLINE',q.offline||0,'bad']].map(([k,v,c])=>`<div class="quality-card"><span>${k}</span><b class="${c}">${v}</b></div>`).join('');
   $('reasons').innerHTML=(d.reasons||[]).map(r=>`<div class="event">${esc(r)}</div>`).join('');
   $('events').innerHTML=(d.events||[]).slice(-8).reverse().map(e=>`<div class="event"><span class="${cls(e.severity)}">[${esc(e.kind)}]</span> ${esc(e.message)}</div>`).join('');
   const a=d.autonomy||{}; const ex=a.experiments||[]; $('autopilot').innerHTML=`<div class="autopilot"><div class="autopilot-title"><span>${esc((a.mode||'observe').toUpperCase())}</span><span>${a.score??0}/100</span></div><div class="plain">${esc(a.summary||'waiting for SOCX evidence')}</div><canvas id="trend" class="trend"></canvas><div class="experiment-grid">${ex.map(x=>`<div class="experiment-card"><b>${esc(x.name)}</b><span class="${x.status==='pass'||x.status==='stable'?'ok':x.status==='cooldown'?'bad':'warn'}">${esc(x.status)}</span> ${esc(x.detail)}</div>`).join('')}</div><div class="plain muted" style="margin-top:8px">${esc((a.recommendations||[]).join(' '))}</div></div>`; drawTrend(d.history||[]);
   const lab=d.experiment||{}; $('lab-progress').textContent=lab.active?((lab.progress||0)+'% '+String(lab.kind||'RUN').toUpperCase()):String(lab.status||'READY').toUpperCase(); $('lab-progress').className=lab.active?'warn':lab.status==='complete'?'ok':'muted'; $('lab-status').textContent=lab.result||'All experiments are bounded and read-only.'; $('lab-history').textContent=(lab.history||[]).slice(-2).map(x=>x.result).join(' | ');
   const p=d.payload_summary||{}; const cards=[['Firewall blocks',p.firewall_blocks_sampled,'blocked samples'],['DNSBL hits',p.dnsbl_lines_sampled,'DNS blocks'],['IDS watch',p.ids_watch_sampled,'routine alerts'],['High IDS',p.ids_high_sampled,'urgent alerts'],['IDS lines',p.ids_alert_lines_sampled,'sample size']]; $('payload').innerHTML=cards.map(([k,v,s])=>`<div class="summary-card"><span>${esc(k)}</span><b>${fmt(v)}</b><small class="muted">${esc(s)}</small></div>`).join('');
   $('vizFw').textContent=fmt(p.firewall_blocks_sampled); $('vizDns').textContent=fmt(p.dnsbl_lines_sampled); $('vizIds').textContent=fmt(p.ids_watch_sampled); $('vizAuto').textContent=(a.mode||'observe').toUpperCase(); const twin=d.network||{}; $('twin-status').textContent='TWIN '+(twin.links||[]).length+' LINKS | '+(twin.nodes||[]).length+' NODES | '+(d.network_history||[]).length+' SNAP'; $('twin-status').style.color=(twin.links||[]).length?'var(--green)':'var(--lcars)';
+  const sys=d.system||{}; const tc=Number(sys.temp_c||0), load=Number((sys.load||{}).one||0); $('thermalLabel').textContent=`PI ${tc?tc.toFixed(1):'--'}C/${tc?tempF(tc):'--'}F | LOAD ${load.toFixed(2)}`; drawThermal(d.history||[], sys); drawSignalTimeline(d.history||[]);
   const drafts=d.drafts||[]; const pending=drafts.filter(x=>!x.reviewed); $('review-count').textContent=pending.length+' PENDING'; $('review-queue').innerHTML=pending.length?pending.slice(-4).reverse().map(x=>`<div class="review-item"><button data-review="${esc(x.id)}">ACKNOWLEDGE</button><b>${esc(String(x.type||'draft').toUpperCase())}</b> ${esc(x.target||'selected host')}<br><span class="muted">${esc(x.proposal||'draft response')} | no change applied</span></div>`).join(''):'No response drafts awaiting review.';
 }
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function drawTrend(hist){const cv=$('trend'); if(!cv)return; const g=cv.getContext('2d'),r=cv.getBoundingClientRect(),dpr=devicePixelRatio||1; cv.width=Math.max(1,r.width*dpr); cv.height=Math.max(1,r.height*dpr); g.clearRect(0,0,cv.width,cv.height); const pts=(hist||[]).slice(-18); g.strokeStyle='rgba(73,255,244,.25)'; g.beginPath(); g.moveTo(0,cv.height-1); g.lineTo(cv.width,cv.height-1); g.stroke(); if(!pts.length)return; g.strokeStyle='#ff56f4'; g.lineWidth=2*dpr; g.beginPath(); pts.forEach((p,i)=>{const x=pts.length===1?0:i*(cv.width/(pts.length-1)); const y=cv.height-(Math.min(100,p.score||0)/100)*cv.height; if(i===0)g.moveTo(x,y); else g.lineTo(x,y)}); g.stroke();}
+function spark(canvas,series,color,maxValue){if(!canvas)return;const g=canvas.getContext('2d'),r=canvas.getBoundingClientRect(),dpr=devicePixelRatio||1;canvas.width=Math.max(1,r.width*dpr);canvas.height=Math.max(1,r.height*dpr);g.clearRect(0,0,canvas.width,canvas.height);g.strokeStyle='rgba(255,255,255,.14)';g.beginPath();g.moveTo(0,canvas.height-1);g.lineTo(canvas.width,canvas.height-1);g.stroke();if(!series.length)return;g.strokeStyle=color;g.lineWidth=2*dpr;g.beginPath();series.forEach((v,i)=>{const x=series.length===1?0:i*(canvas.width/(series.length-1));const y=canvas.height-(Math.max(0,Math.min(maxValue,v))/maxValue)*canvas.height;if(i===0)g.moveTo(x,y);else g.lineTo(x,y)});g.stroke();}
+function drawThermal(hist,sys){const vals=(hist||[]).slice(-24).map(x=>Number(((x.system||{}).temp_c)||0)).filter(Boolean);const now=Number(sys.temp_c||0);if(now)vals.push(now);spark($('thermalChart'),vals,'#ff9f43',85)}
+function drawSignalTimeline(hist){const cv=$('historyTimeline');if(!cv)return;const g=cv.getContext('2d'),r=cv.getBoundingClientRect(),dpr=devicePixelRatio||1;cv.width=Math.max(1,r.width*dpr);cv.height=Math.max(1,r.height*dpr);g.clearRect(0,0,cv.width,cv.height);const pts=(hist||[]).slice(-24);const rows=[['FW','#ff5e78','firewall_blocks_sampled',2200],['DNS','#c76dff','dnsbl_lines_sampled',2200],['IDS','#ff9f43','ids_watch_sampled',500],['SCORE','#66ff7c','score',100]];rows.forEach(([label,color,key,max],ri)=>{const y0=(ri+.5)*(cv.height/rows.length);g.fillStyle='rgba(216,251,255,.62)';g.font=`${8*dpr}px ui-monospace,Consolas,monospace`;g.fillText(label,4*dpr,y0+3*dpr);g.strokeStyle='rgba(255,255,255,.08)';g.beginPath();g.moveTo(45*dpr,y0);g.lineTo(cv.width,y0);g.stroke();if(!pts.length)return;g.strokeStyle=color;g.lineWidth=1.8*dpr;g.beginPath();pts.forEach((p,i)=>{const summary=p.payload_summary||{};const raw=key==='score'?p.score:summary[key];const x=45*dpr+i*((cv.width-50*dpr)/Math.max(1,pts.length-1));const v=Math.max(0,Math.min(Number(max),Number(raw||0)))/Number(max);const y=y0-(v*(cv.height/rows.length*.42));if(i===0)g.moveTo(x,y);else g.lineTo(x,y)});g.stroke()})}
 async function poll(){try{render(await (await fetch('/api/socx/latest',{cache:'no-store'})).json())}catch(e){}}
 if(window.EventSource){const es=new EventSource('/api/socx/stream');es.onmessage=e=>{try{render(JSON.parse(e.data))}catch(_){}};es.onerror=poll}else setInterval(poll,1000); poll();
 document.querySelectorAll('[data-experiment]').forEach(button=>button.addEventListener('click',async()=>{try{await fetch('/api/socx/experiment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:button.dataset.experiment,action:'start',duration:30})})}catch(_){}})); $('lab-stop').addEventListener('click',async()=>{try{await fetch('/api/socx/experiment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'stop'})})}catch(_){}});
 async function runCommand(){const input=$('command-input'),output=$('command-output'); const command=input.value.trim()||'help'; output.textContent='Querying local SOCX telemetry...'; try{const r=await fetch('/api/socx/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command})}); const d=await r.json(); output.textContent=(d.title||'SOCX')+'\n'+(d.lines||[]).join('\n')}catch(e){output.textContent='Command service unavailable'}} $('command-run').addEventListener('click',runCommand); $('command-input').addEventListener('keydown',e=>{if(e.key==='Enter')runCommand()});
+$('why-warn').addEventListener('click',()=>{$('command-input').value='why warn';runCommand()}); $('kiosk-link').addEventListener('click',()=>{location.href='/kiosk'});
 document.addEventListener('click',async e=>{const button=e.target.closest('[data-review]');if(!button)return;button.disabled=true;try{await fetch('/api/socx/draft/'+encodeURIComponent(button.dataset.review)+'/review',{method:'POST'})}catch(_){button.disabled=false}});
 const c=$('space'),ctx=c.getContext('2d');let t=0;
 function resize(){c.width=c.clientWidth*devicePixelRatio;c.height=c.clientHeight*devicePixelRatio}addEventListener('resize',resize);resize();
