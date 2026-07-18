@@ -329,6 +329,31 @@ function renderThreatPulse(pulse = {}) {
   ].join("");
 }
 
+function renderDataTruth(truth = {}) {
+  const root = $("data-truth");
+  const state = $("truth-state");
+  const signals = Array.isArray(truth.signals) ? truth.signals : [];
+  if (state) {
+    state.textContent = `${safe(truth.label, "--")} ${safe(truth.score, "--")}`;
+    state.className = truth.tone || "";
+  }
+  if (!root) return;
+  const priority = [...signals].sort((a, b) => {
+    const rank = { red: 0, yellow: 1, cyan: 2, green: 3 };
+    return (rank[a.tone] ?? 4) - (rank[b.tone] ?? 4);
+  }).slice(0, 5);
+  root.innerHTML = [
+    `<div class="truth-score ${escapeHtml(truth.tone || "cyan")}">${escapeHtml(truth.label || "UNKNOWN")} <b>${escapeHtml(truth.score ?? "--")}</b></div>`,
+    ...priority.map((item) => `
+      <div class="truth-row">
+        <span>${escapeHtml(item.name || "--")}</span>
+        <b class="${escapeHtml(item.tone || "cyan")}">${escapeHtml(item.state || "--")}</b>
+        <em title="${escapeHtml(item.detail || item.source || "")}">${escapeHtml(item.age_h || "--")}</em>
+      </div>
+    `),
+  ].join("");
+}
+
 function renderAssetWatch(asset = {}) {
   const root = $("asset-watch");
   const state = $("asset-state");
@@ -606,6 +631,7 @@ function render(state) {
   renderCommandCenter(state.command_center || {});
   renderPiNodes(state.pi_nodes || {});
   renderThreatPulse(state.threat_pulse || {});
+  renderDataTruth(state.data_truth || {});
   renderAssetWatch(state.asset_watch || {});
   renderAiTimeline(state.ai_timeline || {});
   renderIncident(state.incident || {});

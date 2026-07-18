@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.0.0-rc2
+
+- Added Data Truth freshness scoring to the browser wall and detail pages so stale collectors, inactive VPN tests, Pi discovery age, UPS freshness, Label Brain, and incident memory are visible.
+- Added a What Changed timeline that tracks meaningful shifts such as top flow, Direct/VPN Speedtest state, Pi fleet state, incident verdict, top blocked source, learned-normal anomalies, and UPS freshness.
+- Hardened Pi fleet discovery by refreshing the safe `socx-pi-nodes` cache from the browser collector when the Pi cache is missing or stale.
+- Fixed `socx-pi-nodes` JSON output so `socx v1-check` and the browser API agree on Pi fleet `online`, `count`, and freshness state.
+- Polished the detail pages into richer Mission Control views with compact freshness, change timeline, Pi node load/temp/memory, and human-readable AI role health.
+
 ## v1.0.0-rc1
 
 - Added `socx v1-check`, a one-command readiness gate for the wall, browser API, Speedtest truth, incident memory, Label Brain, host naming, Pi fleet, Pi 3-LLM roles, and clean renderer logs.

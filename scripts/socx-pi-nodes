@@ -128,6 +128,8 @@ count="$(wc -l < "$nodes" | awk '{print $1}')"
     printf '{\n'
     printf '  "updated": %s,\n' "$(date +%s)"
     printf '  "count": %s,\n' "${count:-0}"
+    printf '  "online": %s,\n' "${count:-0}"
+    printf '  "state": "%s",\n' "$([ "${count:-0}" -gt 0 ] 2>/dev/null && echo fresh || echo empty)"
     printf '  "nodes": [\n'
     idx=0
     while IFS='|' read -r ip mac name model role service ports detail; do

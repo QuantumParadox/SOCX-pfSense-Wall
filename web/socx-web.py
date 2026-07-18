@@ -285,6 +285,8 @@ class SocxCollector:
         self.last_state_sample = 0.0
         self.pi_fleet_checked = 0.0
         self.pi_fleet_cache: dict[str, Any] = {"updated": 0, "count": 0, "online": 0, "score": 0, "nodes": []}
+        self.change_last: dict[str, str] = {}
+        self.change_events: deque[dict[str, Any]] = deque(maxlen=36)
         self.ups_samples: deque[float] = deque(maxlen=120)
         self.label_history_path = Path(os.environ.get("SOCX_LABEL_BRAIN_HISTORY", "/var/db/socx_label_brain.json"))
         self.label_history_last_write = 0.0
@@ -363,6 +365,8 @@ class SocxCollector:
         speedtest_history = self.collect_speedtest_history()
         incident_memory = self.collect_incident_memory()
         self.maybe_append_incident_memory()
+        data_truth = self.collect_data_truth(command_center, pi_nodes, ups, incident_memory, label_brain)
+        what_changed = self.collect_what_changed(command_center, incident, label_brain, pi_nodes, net, ups, data_truth, flows)
 
         packets: list[dict[str, Any]] = []
         if time.time() - self.last_event_read > 0.8:
@@ -415,6 +419,8 @@ class SocxCollector:
             "rule_assistant": rule_assistant,
             "speedtest_history": speedtest_history,
             "incident_memory": incident_memory,
+            "data_truth": data_truth,
+            "what_changed": what_changed,
             "flows": flows,
             "packets": packets,
             "events": list(self.events.values())[-self.event_max :],
@@ -665,6 +671,13 @@ class SocxCollector:
             cached["age_sec"] = int(max(0, now - float(cached.get("updated") or now)))
             return cached
         path = Path(os.environ.get("SOCX_PI_NODES_JSON", "/tmp/socx-pi-nodes.json"))
+        max_age = env_int("SOCX_PI_NODES_MAX_AGE_SECONDS", 45)
+        cache_age = self.file_age_seconds(path)
+        if cache_age is None or cache_age > max_age:
+            refreshed = run_cmd("if command -v socx-pi-nodes >/dev/null 2>&1; then socx-pi-nodes >/tmp/socx-web-pi-nodes-refresh.log 2>&1; echo refreshed; fi", timeout=8.0)
+            if refreshed:
+                cache_age = self.file_age_seconds(path)
+            cache_age = self.file_age_seconds(path)
         data: dict[str, Any] = {"updated": 0, "count": 0, "nodes": []}
         try:
             parsed = json.loads(path.read_text(errors="ignore"))
@@ -696,9 +709,134 @@ class SocxCollector:
         data["summary"] = f"{data['online']}/{data['count']} Pi nodes online"
         updated = float(data.get("updated") or 0)
         data["age_sec"] = int(max(0, time.time() - updated)) if updated else None
+        data["cache_age_sec"] = cache_age
+        data["fresh"] = bool(data.get("age_sec") is not None and int(data.get("age_sec") or 0) <= max_age)
+        data["state"] = "fresh" if data["fresh"] else ("empty" if not enriched else "stale")
         self.pi_fleet_cache = data
         self.pi_fleet_checked = now
         return data
+
+    def file_age_seconds(self, path: Path) -> int | None:
+        try:
+            return int(max(0, time.time() - path.stat().st_mtime))
+        except OSError:
+            return None
+
+    def truth_signal(self, name: str, state: str, age: Any = None, source: str = "", detail: str = "") -> dict[str, Any]:
+        state_l = str(state or "unknown").lower()
+        if state_l in {"ok", "ready", "fresh", "live", "online"}:
+            tone = "green"
+        elif state_l in {"stale", "waiting", "partial", "warn", "inactive"}:
+            tone = "yellow"
+        elif state_l in {"down", "fail", "failed", "error", "offline"}:
+            tone = "red"
+        else:
+            tone = "cyan"
+        return {
+            "name": name,
+            "state": state_l.upper(),
+            "tone": tone,
+            "age_sec": age,
+            "age_h": human_duration(age),
+            "source": source,
+            "detail": detail,
+        }
+
+    def collect_data_truth(
+        self,
+        center: dict[str, Any],
+        pi_nodes: dict[str, Any],
+        ups: dict[str, Any],
+        incident_memory: dict[str, Any],
+        label_brain: dict[str, Any],
+    ) -> dict[str, Any]:
+        signals: list[dict[str, Any]] = []
+        active = center.get("router") if isinstance(center.get("router"), dict) else {}
+        direct = center.get("direct") if isinstance(center.get("direct"), dict) else {}
+        vpn = center.get("vpn") if isinstance(center.get("vpn"), dict) else {}
+
+        def add_speed(label: str, row: dict[str, Any]) -> None:
+            state = row.get("path_state") or row.get("status") or "waiting"
+            signals.append(self.truth_signal(label, state, row.get("age_sec"), "speedtest-cache", f"{row.get('down') or '--'}/{row.get('up') or '--'} Mbps {row.get('ping') or '--'}ms"))
+
+        signals.append(self.truth_signal("Wall/API", "live", 0, "socxweb", "browser state is being generated"))
+        signals.append(self.truth_signal("UPS", "stale" if ups.get("stale") else "fresh", ups.get("age_sec"), "NUT/APC", f"{ups.get('watts_h') or ups.get('watts') or '--'}"))
+        add_speed("Speed Active", active)
+        add_speed("Speed Direct", direct)
+        add_speed("Speed VPN", vpn)
+        pi_state = "fresh" if pi_nodes.get("fresh") else ("stale" if pi_nodes.get("count") else "waiting")
+        signals.append(self.truth_signal("Pi Fleet", pi_state, pi_nodes.get("age_sec"), "socx-pi-nodes", f"{pi_nodes.get('online', 0)}/{pi_nodes.get('count', 0)} online"))
+        signals.append(self.truth_signal("Pi AI", "ready" if any(str(n.get("roles_online") or "") == "3/3" for n in pi_nodes.get("nodes", []) if isinstance(n, dict)) else "waiting", pi_nodes.get("age_sec"), "Pi 3-LLM", "role health from Pi dashboard"))
+        signals.append(self.truth_signal("Label Brain", "ready" if label_brain.get("devices") else "waiting", 0, "local memory", f"{len(label_brain.get('devices', []) if isinstance(label_brain.get('devices'), list) else [])} devices"))
+        signals.append(self.truth_signal("Incident Memory", "ready" if incident_memory.get("samples") else "waiting", 0, "jsonl memory", f"{incident_memory.get('samples', 0)} samples"))
+
+        ok = sum(1 for item in signals if item["tone"] == "green")
+        warn = sum(1 for item in signals if item["tone"] == "yellow")
+        red = sum(1 for item in signals if item["tone"] == "red")
+        score = max(0, min(100, int((ok / max(1, len(signals))) * 100) - red * 15 - warn * 4))
+        if red:
+            label = "DEGRADED"
+            tone = "red"
+        elif warn:
+            label = "WATCH"
+            tone = "yellow"
+        else:
+            label = "LIVE"
+            tone = "green"
+        return {"label": label, "tone": tone, "score": score, "ok": ok, "warn": warn, "red": red, "signals": signals, "updated_ms": now_ms()}
+
+    def remember_change(self, key: str, value: str, title: str, detail: str, severity: str = "LOW") -> None:
+        old = self.change_last.get(key)
+        if old == value:
+            return
+        self.change_last[key] = value
+        if old is None:
+            return
+        self.change_events.appendleft({
+            "time": time.strftime("%H:%M:%S"),
+            "key": key,
+            "severity": severity,
+            "title": title,
+            "detail": detail[:220],
+            "from": old,
+            "to": value,
+            "ts": now_ms(),
+        })
+
+    def collect_what_changed(
+        self,
+        center: dict[str, Any],
+        incident: dict[str, Any],
+        label_brain: dict[str, Any],
+        pi_nodes: dict[str, Any],
+        net: dict[str, Any],
+        ups: dict[str, Any],
+        data_truth: dict[str, Any],
+        flows: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        top_flow = ""
+        if flows:
+            row = flows[0]
+            top_flow = f"{row.get('asset', '')}->{row.get('peer', '')} {row.get('service', '')}"
+        self.remember_change("top_flow", top_flow, "Top flow changed", top_flow or "no flow", "LOW")
+        direct = center.get("direct") if isinstance(center.get("direct"), dict) else {}
+        vpn = center.get("vpn") if isinstance(center.get("vpn"), dict) else {}
+        self.remember_change("speed_direct", f"{direct.get('path_state') or direct.get('status')}:{direct.get('down')}/{direct.get('up')}", "Direct Speedtest changed", f"{direct.get('down') or '--'}/{direct.get('up') or '--'} Mbps", "LOW")
+        self.remember_change("speed_vpn", f"{vpn.get('path_state') or vpn.get('status')}:{vpn.get('down')}/{vpn.get('up')}", "VPN Speedtest changed", f"{vpn.get('path_state') or vpn.get('status') or 'waiting'} {vpn.get('down') or '--'}/{vpn.get('up') or '--'} Mbps", "MED")
+        self.remember_change("pi_fleet", f"{pi_nodes.get('online', 0)}/{pi_nodes.get('count', 0)}:{pi_nodes.get('state', '')}", "Pi fleet changed", f"{pi_nodes.get('online', 0)}/{pi_nodes.get('count', 0)} online, cache {pi_nodes.get('state', 'unknown')}", "MED")
+        self.remember_change("incident", str(incident.get("verdict") or ""), "Incident verdict changed", str(incident.get("headline") or incident.get("verdict") or ""), "MED")
+        top_src = (incident.get("blocked_sources") or [{}])[0].get("name", "") if isinstance(incident.get("blocked_sources"), list) else ""
+        self.remember_change("top_blocked_source", str(top_src), "Top blocked source changed", str(top_src or "none"), "MED")
+        anomalies = label_brain.get("anomalies") if isinstance(label_brain.get("anomalies"), list) else []
+        self.remember_change("device_anomalies", str(len(anomalies)), "Learned-normal changes changed", f"{len(anomalies)} unusual device observations", "MED" if anomalies else "LOW")
+        self.remember_change("data_truth", str(data_truth.get("label")), "Data truth changed", f"{data_truth.get('label')} score {data_truth.get('score')}", "MED")
+        self.remember_change("ups", "stale" if ups.get("stale") else "fresh", "UPS freshness changed", "UPS cache " + ("stale" if ups.get("stale") else "fresh"), "LOW")
+        return {
+            "count": len(self.change_events),
+            "rows": list(self.change_events)[:12],
+            "headline": (self.change_events[0]["title"] if self.change_events else "No major changes yet"),
+            "updated_ms": now_ms(),
+        }
 
     def collect_pi_node_health(self, node: dict[str, Any]) -> dict[str, Any]:
         ip = str(node.get("ip") or "")
@@ -2006,6 +2144,33 @@ class SocxCollector:
                     {"source": "Pi AI", "severity": "WARN", "confidence": "91", "reason": "Routine watch, preserve incident bundle before changes", "age_h": "2m"},
                     {"source": "MIRANDA", "severity": "WARN", "confidence": "88", "reason": "DNSBL/FW watch signals elevated", "age_h": "live"},
                     {"source": "Autopilot", "severity": "WATCH", "confidence": "82", "reason": "WAN healthy, VPN paths mixed, DNSBL routine", "age_h": "live"},
+                ],
+            },
+            "data_truth": {
+                "label": "WATCH",
+                "tone": "yellow",
+                "score": 84,
+                "ok": 7,
+                "warn": 2,
+                "red": 0,
+                "signals": [
+                    {"name": "Wall/API", "state": "LIVE", "tone": "green", "age_h": "now", "source": "socxweb", "detail": "browser state is being generated"},
+                    {"name": "UPS", "state": "FRESH", "tone": "green", "age_h": "now", "source": "NUT/APC", "detail": "603 W"},
+                    {"name": "Speed Direct", "state": "READY", "tone": "green", "age_h": "15m", "source": "speedtest-cache", "detail": "3223/2372 Mbps 9ms"},
+                    {"name": "Speed VPN", "state": "READY", "tone": "green", "age_h": "16m", "source": "speedtest-cache", "detail": "740/510 Mbps 52ms"},
+                    {"name": "Pi Fleet", "state": "FRESH", "tone": "green", "age_h": "now", "source": "socx-pi-nodes", "detail": "2/2 online"},
+                    {"name": "Pi AI", "state": "READY", "tone": "green", "age_h": "now", "source": "Pi 3-LLM", "detail": "role health from Pi dashboard"},
+                    {"name": "Label Brain", "state": "READY", "tone": "green", "age_h": "now", "source": "local memory", "detail": "4 devices"},
+                    {"name": "Incident Memory", "state": "READY", "tone": "green", "age_h": "now", "source": "jsonl memory", "detail": "37 samples"},
+                ],
+            },
+            "what_changed": {
+                "count": 3,
+                "headline": "VPN Speedtest changed",
+                "rows": [
+                    {"time": "19:44:10", "severity": "MED", "title": "VPN Speedtest changed", "detail": "ready 740/510 Mbps", "from": "waiting", "to": "ready:740/510"},
+                    {"time": "19:43:22", "severity": "MED", "title": "Incident verdict changed", "detail": "WATCH: top source EXT.217.142, top port 443", "from": "QUIET", "to": "WATCH"},
+                    {"time": "19:42:58", "severity": "LOW", "title": "Top flow changed", "detail": "JupiterLXI/192.168.1.161->EXT.155.209 https", "from": "none", "to": "web"},
                 ],
             },
             "flows": [

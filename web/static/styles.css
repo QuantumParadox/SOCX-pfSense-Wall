@@ -230,7 +230,7 @@ body {
 }
 
 .mission-card {
-  grid-column: span 4;
+  grid-column: span 3;
   padding-top: 10px;
   padding-bottom: 10px;
 }
@@ -241,6 +241,10 @@ body {
 
 .asset-card {
   border-color: rgba(52, 215, 242, .34);
+}
+
+.truth-card {
+  border-color: rgba(112, 242, 190, .36);
 }
 
 .ai-card {
@@ -421,6 +425,56 @@ body {
 
 .metric-box.purple b {
   color: var(--purple);
+}
+
+.truth-grid {
+  display: grid;
+  gap: 5px;
+}
+
+.truth-score {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .045);
+  font-size: clamp(14px, 1vw, 18px);
+  font-weight: 950;
+}
+
+.truth-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px 54px;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .035);
+  border: 1px solid rgba(255, 255, 255, .07);
+  font-size: clamp(10px, .7vw, 13px);
+}
+
+.truth-row span,
+.truth-row b,
+.truth-row em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.truth-row b {
+  font-weight: 950;
+}
+
+.truth-row em {
+  color: var(--muted);
+  font-style: normal;
+  text-align: right;
 }
 
 .ai-timeline {
@@ -1131,8 +1185,32 @@ body {
   margin: 0 0 10px;
   color: var(--cyan);
   font-size: clamp(15px, 1vw, 20px);
-  letter-spacing: .08em;
+  letter-spacing: 0;
   text-transform: uppercase;
+}
+
+.detail-score {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .045);
+  font-size: clamp(18px, 1.35vw, 26px);
+  font-weight: 950;
+}
+
+.detail-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 7px;
+  border: 1px solid currentColor;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, .05);
+  font-weight: 900;
 }
 
 .detail-kv {
@@ -1167,6 +1245,10 @@ body {
   border-radius: 5px;
   background: rgba(255, 255, 255, .035);
   font-size: clamp(11px, .76vw, 14px);
+}
+
+.detail-row:hover {
+  background: rgba(52, 215, 242, .075);
 }
 
 .detail-row.head {

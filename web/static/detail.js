@@ -27,7 +27,37 @@ function kv(label, value, tone = "") {
 }
 
 function table(headers, rows) {
-  return `<div class="detail-table"><div class="detail-row head">${headers.map((h) => `<span>${esc(h)}</span>`).join("")}</div>${rows.map((row) => `<div class="detail-row">${row.map((cell) => `<span title="${esc(cell)}">${esc(cell)}</span>`).join("")}</div>`).join("")}</div>`;
+  const cols = Math.max(1, headers.length);
+  const style = `style="grid-template-columns: repeat(${cols}, minmax(0, 1fr))"`;
+  const bodyRows = rows.length ? rows : [headers.map(() => "--")];
+  return `<div class="detail-table"><div class="detail-row head" ${style}>${headers.map((h) => `<span>${esc(h)}</span>`).join("")}</div>${bodyRows.map((row) => `<div class="detail-row" ${style}>${row.map((cell) => `<span title="${esc(cell)}">${esc(cell)}</span>`).join("")}</div>`).join("")}</div>`;
+}
+
+function pill(value, tone = "cyan") {
+  return `<span class="detail-pill ${tone}">${esc(value)}</span>`;
+}
+
+function renderTruthCards(state) {
+  const truth = state.data_truth || {};
+  const changed = state.what_changed || {};
+  return [
+    card("Data Truth", [
+      `<div class="detail-score ${truth.tone || "cyan"}">${esc(truth.label || "UNKNOWN")} ${esc(truth.score ?? "--")}/100</div>`,
+      table(["Signal", "State", "Age", "Source", "Detail"], (truth.signals || []).map((s) => [
+        s.name,
+        `${s.state || "--"}`,
+        s.age_h || "--",
+        s.source || "--",
+        s.detail || "--",
+      ])),
+    ].join("")),
+    card("What Changed", table(["Time", "Severity", "Change", "Detail"], (changed.rows || []).map((r) => [
+      r.time || "--",
+      r.severity || "--",
+      r.title || "--",
+      r.detail || "--",
+    ]))),
+  ];
 }
 
 function renderSpeed(state) {
@@ -37,14 +67,15 @@ function renderSpeed(state) {
   const paths = hist.paths || [];
   const pathRows = paths.map((p) => [String(p.path || "").toUpperCase(), p.status, `${p.avg_down || "--"}/${p.avg_up || "--"}`, `${p.best_down || "--"}/${p.worst_down || "--"}`, `${p.avg_ping || "--"}ms`, `${p.ok || 0}/${p.samples || 0}`]);
   root.innerHTML = [
+    ...renderTruthCards(state),
     card("Current Paths", [
-      kv("Active", `${center.router?.down || "--"}/${center.router?.up || "--"} Mbps ${center.router?.ping || "--"}ms`, center.router?.status === "OK" ? "green" : "yellow"),
-      kv("Direct", `${center.direct?.down || "--"}/${center.direct?.up || "--"} Mbps ${center.direct?.ping || "--"}ms`, center.direct?.status === "OK" ? "green" : "yellow"),
-      kv("VPN", `${center.vpn?.status || "WAIT"} ${center.vpn?.down || "--"}/${center.vpn?.up || "--"}`, center.vpn?.status === "OK" ? "green" : "yellow"),
+      kv("Active", `${center.router?.down || "--"}/${center.router?.up || "--"} Mbps ${center.router?.ping || "--"}ms`, center.router?.path_state === "ready" ? "green" : "yellow"),
+      kv("Direct", `${center.direct?.down || "--"}/${center.direct?.up || "--"} Mbps ${center.direct?.ping || "--"}ms`, center.direct?.path_state === "ready" ? "green" : "yellow"),
+      kv("VPN", `${center.vpn?.path_state || center.vpn?.status || "WAIT"} ${center.vpn?.down || "--"}/${center.vpn?.up || "--"}`, center.vpn?.path_state === "ready" ? "green" : "yellow"),
       kv("Truth", center.speed_truth?.label || "waiting", "cyan"),
     ].join("")),
     card("History", table(["Path", "State", "Avg", "Best/Worst", "Ping", "OK/Samples"], pathRows)),
-    card("Named VPN Paths", table(["Path", "Status", "Down/Up", "Ping", "Age"], (center.vpn_paths || []).map((p) => [p.label, p.path_state || p.status, `${p.down || "--"}/${p.up || "--"}`, `${p.ping || "--"}ms`, `${Math.floor((p.age_sec || 0) / 60)}m`]))),
+    card("Named VPN Paths", table(["Path", "Status", "Down/Up", "Ping", "Age", "Message"], (center.vpn_paths || []).map((p) => [p.label, p.path_state || p.status, `${p.down || "--"}/${p.up || "--"}`, `${p.ping || "--"}ms`, `${Math.floor((p.age_sec || 0) / 60)}m`, p.message || p.external_ip || "--"]))),
   ].join("");
 }
 
@@ -54,6 +85,7 @@ function renderDevices(state) {
   const asset = state.asset_watch || {};
   const devices = brain.devices || [];
   root.innerHTML = [
+    ...renderTruthCards(state),
     card("LAN Asset Watch", [
       kv("Known", asset.known ?? "--", "green"),
       kv("Unknown", asset.unknown ?? "--", Number(asset.unknown || 0) > 5 ? "yellow" : "cyan"),
@@ -71,6 +103,7 @@ function renderIncidents(state) {
   const memory = state.incident_memory || {};
   const timeline = state.incident_timeline || {};
   root.innerHTML = [
+    ...renderTruthCards(state),
     card("Incident Cockpit", [
       kv("Verdict", incident.verdict || "--", incident.verdict === "QUIET" ? "green" : "yellow"),
       kv("Headline", incident.headline || "--", "cyan"),
@@ -86,13 +119,22 @@ function renderAi(state) {
   const pi = state.pi_nodes || {};
   const ai = state.ai_timeline || {};
   root.innerHTML = [
+    ...renderTruthCards(state),
     card("Pi Fleet", [
       kv("Online", `${pi.online || 0}/${pi.count || 0}`, pi.online === pi.count ? "green" : "yellow"),
       kv("Score", pi.score ?? "--", Number(pi.score || 0) >= 80 ? "green" : "yellow"),
+      kv("Freshness", `${pi.state || "--"} ${pi.age_sec ?? "--"}s`, pi.fresh ? "green" : "yellow"),
       kv("Summary", pi.summary || "--", "cyan"),
     ].join("")),
     card("AI Verdicts", table(["Source", "Severity", "Confidence", "Reason", "Age"], (ai.rows || []).map((r) => [r.source, r.severity, r.confidence, r.reason, r.age_h]))),
-    card("Pi Nodes", table(["Name", "IP", "Role", "Temp", "Memory", "Service"], (pi.nodes || []).map((n) => [n.name, n.ip, n.role_h || n.role, n.temperature_h, n.memory_h, n.service_h || n.service]))),
+    card("Pi Nodes", table(["Name", "IP", "Role", "Temp", "Load", "Memory", "Service"], (pi.nodes || []).map((n) => [n.name, n.ip, n.role_h || n.role, n.temperature_h, n.load_h, n.memory_h, n.service_h || n.service]))),
+    card("AI Role Health", table(["Node", "Roles", "Mode", "Score", "Last Thought"], (pi.nodes || []).map((n) => [
+      n.name || n.ip,
+      n.roles_online || "--",
+      n.autonomy_mode || n.latest_status || "--",
+      n.autonomy_score ?? "--",
+      n.autonomy_summary || n.detail || "--",
+    ]))),
   ].join("");
 }
 
