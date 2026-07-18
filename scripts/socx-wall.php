@@ -715,6 +715,10 @@ function collect_live_frame(array &$state, array $hosts): array
     $speedtest = collect_speedtest_metrics($state, $now);
     $wanQuality = collect_wan_quality($state, $now);
     $mirandaInsight = collect_miranda_insight($now);
+    $flows = collect_pf_state_flows($state, $hosts, $now);
+    if (!$flows) {
+        $flows = flows_from_events($events);
+    }
     update_speedtest_history($state, $speedtest, $now);
     update_metric_histories($state, $now, $wan, $lan, $pf);
     $commandEvents = collect_soc_command_events($state, $hosts, $now, [
@@ -729,6 +733,7 @@ function collect_live_frame(array &$state, array $hosts): array
         'speedtest' => $speedtest,
         'wan_quality' => $wanQuality,
         'procs' => $procs,
+        'flows' => $flows,
         'ifwan' => $ifwan,
         'iflan' => $iflan,
     ]);
@@ -759,10 +764,6 @@ function collect_live_frame(array &$state, array $hosts): array
         $events[] = $incidentEvent;
     }
     $events = balance_events_for_feed(prioritize_events($events), 80);
-    $flows = collect_pf_state_flows($state, $hosts, $now);
-    if (!$flows) {
-        $flows = flows_from_events($events);
-    }
     $topFlow = top_network_flow($flows);
     $activityEvents = collect_activity_summary_events($state, $events, $flows, $ups, $wan, $lan, $pf, $now);
     if ($activityEvents) {
@@ -5862,10 +5863,166 @@ function collect_soc_command_events(array &$state, array $hosts, float $now, arr
         if ($backup !== null) {
             $events[] = $backup;
         }
+        foreach (operator_mission_events($metrics, $events, $now) as $event) {
+            $events[] = $event;
+        }
         $state['last_command_status_at'] = $now;
     }
 
     return $events;
+}
+
+function operator_mission_events(array $metrics, array $events, float $now): array
+{
+    if (!env_bool('SOCX_MISSION_EVENTS_ENABLED', true)) {
+        return [];
+    }
+    $out = [];
+    $vpn = is_array($metrics['vpn_status'] ?? null) ? $metrics['vpn_status'] : [];
+    $speed = is_array($metrics['speedtest'] ?? null) ? $metrics['speedtest'] : [];
+    $ups = normalize_ups($metrics['ups'] ?? []);
+    $cpu = is_array($metrics['cpu'] ?? null) ? $metrics['cpu'] : [];
+    $mem = is_array($metrics['mem'] ?? null) ? $metrics['mem'] : [];
+    $flows = is_array($metrics['flows'] ?? null) ? $metrics['flows'] : [];
+    $top = first_useful_flow($flows);
+    $missionParts = [];
+    $vpnState = strtoupper((string)($vpn['status'] ?? 'UNKNOWN'));
+    $missionParts[] = 'VPN ' . ($vpnState !== '' ? $vpnState : 'UNKNOWN');
+    if (strtolower((string)($speed['status'] ?? '')) === 'ok') {
+        $missionParts[] = 'SPD ' . (string)($speed['download_mbps'] ?? '?') . '/' . (string)($speed['upload_mbps'] ?? '?');
+    }
+    if ($top !== null) {
+        $missionParts[] = 'top ' . flow_path_text($top, 24) . ' ' . service_short((string)($top['service'] ?? ''));
+    }
+    $out[] = soc_event('MISSION', 'INFO', 'What matters: ' . implode(' | ', array_slice($missionParts, 0, 3)));
+
+    $vpnDetail = vpn_detail_event($vpn);
+    if ($vpnDetail !== null) {
+        $out[] = $vpnDetail;
+    }
+    $pi = pi_role_event($now);
+    if ($pi !== null) {
+        $out[] = $pi;
+    }
+    $thermal = thermal_confidence_event($cpu, $mem, $ups);
+    if ($thermal !== null) {
+        $out[] = $thermal;
+    }
+    $noise = operator_noise_event($events);
+    if ($noise !== null) {
+        $out[] = $noise;
+    }
+    return $out;
+}
+
+function vpn_detail_event(array $vpn): ?array
+{
+    $items = is_array($vpn['details'] ?? null) ? $vpn['details'] : (is_array($vpn['items'] ?? null) ? $vpn['items'] : []);
+    $details = [];
+    foreach ($items as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $name = strtoupper(truncate_text((string)($item['name'] ?? $item['gateway'] ?? $item['interface'] ?? $item['id'] ?? 'VPN'), 8));
+        $state = strtolower((string)($item['status'] ?? $item['state'] ?? 'unknown'));
+        $lat = '';
+        if (isset($item['rtt']) && is_numeric($item['rtt'])) {
+            $lat = ' ' . (int)round((float)$item['rtt']) . 'ms';
+        } elseif (isset($item['latency']) && is_numeric($item['latency'])) {
+            $lat = ' ' . (int)round((float)$item['latency']) . 'ms';
+        }
+        $details[] = $name . ' ' . $state . $lat;
+    }
+    if (!$details) {
+        $online = (int)($vpn['online'] ?? 0);
+        $total = (int)($vpn['total'] ?? 0);
+        if ($total <= 0) {
+            return null;
+        }
+        return soc_event('VPN', $online === $total ? 'INFO' : 'WARN', sprintf('VPN detail %d/%d online | gateway truth active', $online, $total));
+    }
+    return soc_event('VPN', 'INFO', 'VPN detail ' . implode(' | ', array_slice($details, 0, 3)));
+}
+
+function pi_role_event(float $now): ?array
+{
+    $file = getenv('SOCX_PI_LLM_ANALYSIS_CACHE') ?: '/tmp/socx-pi-llm-analysis.env';
+    if (!is_readable($file)) {
+        return null;
+    }
+    $data = parse_env_file($file);
+    $roles = trim((string)($data['roles'] ?? $data['roles_online'] ?? ''));
+    $sev = strtoupper(trim((string)($data['severity'] ?? $data['status'] ?? 'WATCH')));
+    $summary = trim((string)($data['summary'] ?? $data['reason'] ?? 'Pi AI analysis cache present'));
+    $updated = isset($data['updated']) && is_numeric($data['updated']) ? (float)$data['updated'] : (float)@filemtime($file);
+    $age = $updated > 0 ? max(0, (int)round($now - $updated)) : 0;
+    $severity = str_contains($sev, 'WARN') || str_contains($sev, 'WATCH') ? 'LOW' : 'INFO';
+    return soc_event('PIAI', $severity, sprintf('Pi AI roles %s age %s | %s',
+        $roles !== '' ? $roles : 'waiting',
+        $age > 0 ? format_age_seconds((float)$age) : 'fresh',
+        truncate_text($summary, 72)));
+}
+
+function thermal_confidence_event(array $cpu, array $mem, array $ups): ?array
+{
+    $temp = parse_temperature_c((string)($cpu['temp'] ?? ''));
+    $warn = (float)(getenv('SOCX_CPU_WARN_C') ?: 75);
+    $headroom = $temp !== null ? $warn - $temp : null;
+    $used = (int)($mem['used_pct'] ?? 0);
+    $watts = (string)($ups['watts'] ?? '?');
+    if ($temp === null && $used <= 0 && $watts === '?') {
+        return null;
+    }
+    $severity = ($headroom !== null && $headroom < 5) || $used >= 88 ? 'WARN' : 'INFO';
+    $head = $headroom !== null ? sprintf('headroom %.0fC', $headroom) : 'headroom ?';
+    return soc_event('THERM', $severity, sprintf('CPU %s %s | RAM %d%% | UPS %sW',
+        $temp !== null ? (int)round($temp) . 'C' : '?C',
+        $head,
+        $used,
+        $watts));
+}
+
+function parse_temperature_c(string $text): ?float
+{
+    if (preg_match('/(-?[0-9.]+)\s*(?:C|°C)?/i', $text, $m)) {
+        return (float)$m[1];
+    }
+    return null;
+}
+
+function operator_noise_event(array $events): ?array
+{
+    $fw = 0;
+    $dns = 0;
+    $idsRoutine = 0;
+    foreach ($events as $event) {
+        if (!is_array($event)) {
+            continue;
+        }
+        $cat = event_category($event);
+        $ticker = strtolower((string)($event['ticker'] ?? ''));
+        if ($cat === 'FW' && str_contains($ticker, 'scan')) {
+            $fw++;
+        } elseif ($cat === 'DNSBL') {
+            $dns++;
+        } elseif (($cat === 'IDS' || $cat === 'IPS') && preg_match('/routine|watch|decoder|stream|checksum/', $ticker)) {
+            $idsRoutine++;
+        }
+    }
+    $parts = [];
+    if ($fw > 0) {
+        $parts[] = "WAN scans x$fw";
+    }
+    if ($dns > 0) {
+        $parts[] = "DNSBL hits x$dns";
+    }
+    if ($idsRoutine > 0) {
+        $parts[] = "IDS routine x$idsRoutine";
+    }
+    if (!$parts) {
+        return null;
+    }
+    return soc_event('NOISE', 'LOW', 'Probably noise: ' . implode(' | ', $parts) . ' | preserve evidence before tuning');
 }
 
 function wall_doctor_status_event(float $now): ?array

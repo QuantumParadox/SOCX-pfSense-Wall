@@ -1,0 +1,67 @@
+#!/bin/sh
+set -u
+
+API="${SOCX_WEB_URL:-http://127.0.0.1:8094}"
+
+exec /usr/local/bin/python3.11 - "$API" <<'PY'
+import json
+import subprocess
+import sys
+import urllib.request
+
+api = sys.argv[1].rstrip("/")
+
+def fetch_mission():
+    with urllib.request.urlopen(api + "/api/mission", timeout=8) as resp:
+        return json.load(resp)
+
+def fallback():
+    print("SOCX Mission")
+    print("web mission API unavailable; showing local fallback")
+    print()
+    for cmd in (["/usr/local/bin/socx", "status"], ["/usr/local/bin/socx", "why-now"]):
+        try:
+            out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, timeout=25, text=True)
+        except Exception as exc:
+            out = f"{cmd}: {exc}"
+        print("$ " + " ".join(cmd))
+        print(out.strip())
+        print()
+
+def section(title, rows):
+    print(title)
+    if not rows:
+        print("- --")
+        return
+    for row in rows:
+        print(f"- {row}")
+
+try:
+    mission = fetch_mission()
+except Exception:
+    fallback()
+    raise SystemExit(1)
+
+print("SOCX Mission")
+print("Generated:", mission.get("generated", "--"))
+print("Mode:", mission.get("mode", "--"), "Score:", mission.get("score", "--"))
+print("Headline:", mission.get("headline", "--"))
+print()
+section("What Matters", mission.get("what_matters") or [])
+print()
+section("What To Check", mission.get("what_to_check") or [])
+print()
+section("Probably Noise", mission.get("probably_noise") or [])
+print()
+vpn = mission.get("vpn") or {}
+print("VPN:", vpn.get("summary", "--"))
+crypto = vpn.get("crypto") or {}
+if crypto.get("summary"):
+    print("VPN Crypto:", crypto.get("summary"))
+hardware = mission.get("hardware") or {}
+print("Hardware:", hardware.get("summary", "--"), "| headroom", hardware.get("headroom_c", "--"), "C")
+pi = mission.get("pi_ai") or {}
+print("Pi AI:", pi.get("summary", "--"))
+print()
+section("Next Actions", mission.get("next_actions") or [])
+PY

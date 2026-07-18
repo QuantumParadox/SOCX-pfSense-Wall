@@ -370,6 +370,7 @@ class SocxCollector:
         self.maybe_append_incident_memory()
         data_truth = self.collect_data_truth(command_center, pi_nodes, ups, incident_memory, label_brain)
         what_changed = self.collect_what_changed(command_center, incident, label_brain, pi_nodes, net, ups, data_truth, flows)
+        mission = self.collect_mission(command_center, incident, label_brain, pi_nodes, ai_timeline, hardware, data_truth, what_changed, flows)
 
         packets: list[dict[str, Any]] = []
         if time.time() - self.last_event_read > 0.8:
@@ -425,6 +426,7 @@ class SocxCollector:
             "incident_memory": incident_memory,
             "data_truth": data_truth,
             "what_changed": what_changed,
+            "mission": mission,
             "flows": flows,
             "packets": packets,
             "events": list(self.events.values())[-self.event_max :],
@@ -959,7 +961,7 @@ class SocxCollector:
             "wall_error": {"bytes": wall_err_size, "age_sec": wall_err_age, "clean": wall_err_size == 0},
             "checks": [
                 {"name": "SOCX Web", "ok": bool(svc.get("ok")), "elapsed_ms": svc.get("elapsed_ms"), "output": svc.get("output", "").strip()},
-                {"name": "v1 Readiness", "ok": bool(v1.get("ok")) and "READY FOR v1.0" in str(v1.get("output", "")), "elapsed_ms": v1.get("elapsed_ms"), "output": v1.get("output", "").strip()},
+                {"name": "Readiness", "ok": bool(v1.get("ok")) and "READY FOR SOCX" in str(v1.get("output", "")), "elapsed_ms": v1.get("elapsed_ms"), "output": v1.get("output", "").strip()},
             ],
             "versions": {
                 "web": "SOCXWeb/0.1",
@@ -970,6 +972,116 @@ class SocxCollector:
         self.release_health_cache = health
         self.release_health_checked = now
         return health
+
+    def collect_mission(
+        self,
+        center: dict[str, Any],
+        incident: dict[str, Any],
+        label_brain: dict[str, Any],
+        pi_nodes: dict[str, Any],
+        ai_timeline: dict[str, Any],
+        hardware: dict[str, Any],
+        data_truth: dict[str, Any],
+        what_changed: dict[str, Any],
+        flows: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        ids = incident.get("ids") if isinstance(incident.get("ids"), dict) else {}
+        counts = incident.get("counts") if isinstance(incident.get("counts"), dict) else {}
+        top_source = (incident.get("blocked_sources") or [{}])[0] if isinstance(incident.get("blocked_sources"), list) else {}
+        top_port = (incident.get("blocked_ports") or [{}])[0] if isinstance(incident.get("blocked_ports"), list) else {}
+        top_dns = (incident.get("dnsbl_domains") or [{}])[0] if isinstance(incident.get("dnsbl_domains"), list) else {}
+        anomalies = label_brain.get("anomalies") if isinstance(label_brain.get("anomalies"), list) else []
+        ai_rows = ai_timeline.get("rows") if isinstance(ai_timeline.get("rows"), list) else []
+        changed_rows = what_changed.get("rows") if isinstance(what_changed.get("rows"), list) else []
+        top_flow = flows[0] if flows else {}
+        ht = hardware.get("trend") if isinstance(hardware.get("trend"), dict) else {}
+        headroom = ht.get("headroom_c")
+        mode = str(center.get("mode") or "UNKNOWN").upper()
+        score = center.get("score", "--")
+        matters: list[str] = []
+        checks: list[str] = []
+        noise: list[str] = []
+
+        if top_source.get("name") and int(top_source.get("count", 0) or 0) >= 20:
+            matters.append(f"WAN scan pressure from {top_source.get('name')} x{top_source.get('count')} on port {top_port.get('name', 'mixed')}")
+        else:
+            noise.append("Firewall blocks look like normal internet background scan noise")
+        if top_dns.get("name"):
+            matters.append(f"DNSBL is filtering {top_dns.get('name')} x{top_dns.get('count', 0)}")
+            checks.append("Use /why before allowlisting any DNSBL hit that breaks a trusted app")
+        else:
+            noise.append("No dominant DNSBL domain in the current sample")
+        if int(ids.get("high_signal", 0) or 0) > 0:
+            matters.append(f"IDS has {ids.get('high_signal')} high-signal alert(s)")
+            checks.append("Build an incident bundle before changing IDS policy")
+        elif int(ids.get("watch", 0) or 0) > 0:
+            noise.append(f"IDS watch/routine volume is present but low confidence: {ids.get('watch', 0)} watch")
+        if anomalies:
+            matters.append(f"{len(anomalies)} learned-normal device change(s) need review")
+            checks.append("Open /devices and verify whether the new app/service belongs to that host")
+        if str(data_truth.get("label", "")).upper() != "LIVE":
+            matters.append(f"Data Truth is {data_truth.get('label', 'UNKNOWN')}: {data_truth.get('reason', 'collector freshness issue')}")
+            checks.append("Open /health and refresh stale collectors before trusting automation")
+        if headroom is not None and float(headroom) < 5:
+            matters.append(f"CPU thermal headroom is tight at {headroom}C")
+            checks.append("Watch cooling/airflow if CPU stays warm across several history samples")
+        elif hardware:
+            noise.append(f"Hardware headroom normal: {hardware.get('max_temp_h', '--')} max, {headroom if headroom is not None else '--'}C headroom")
+        if int(pi_nodes.get("count", 0) or 0):
+            matters.append(f"Pi fleet {pi_nodes.get('online', 0)}/{pi_nodes.get('count', 0)} online; AI roles visible")
+        if ai_rows:
+            checks.append(f"Review AI verdict: {ai_rows[0].get('source', 'AI')} {ai_rows[0].get('severity', '--')} - {ai_rows[0].get('reason', '--')}")
+        if top_flow:
+            app = top_flow.get("app_hint") or top_flow.get("service") or "traffic"
+            noise.append(f"Top flow is {top_flow.get('asset', top_flow.get('src', '--'))} -> {top_flow.get('peer', top_flow.get('dst', '--'))} via {app}")
+        if not matters:
+            matters.append(f"SOCX is in {mode} mode with score {score}; no critical evidence in the current sample")
+        if not checks:
+            checks.append("Keep watching; run socx snapshot before any risky configuration change")
+
+        headline = f"{mode} {score}/100 | {matters[0]}"
+        return {
+            "title": "SOCX Mission",
+            "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "headline": headline[:180],
+            "mode": mode,
+            "score": score,
+            "data_truth": {"label": data_truth.get("label"), "score": data_truth.get("score"), "reason": data_truth.get("reason"), "tone": data_truth.get("tone")},
+            "what_changed": changed_rows[:5],
+            "what_matters": matters[:6],
+            "what_to_check": checks[:6],
+            "probably_noise": noise[:6],
+            "vpn": {
+                "summary": self.vpn_mission_summary(center),
+                "paths": center.get("vpn_paths", []) if isinstance(center.get("vpn_paths"), list) else [],
+                "crypto": center.get("vpn_crypto", {}),
+            },
+            "pi_ai": {
+                "summary": f"{pi_nodes.get('online', 0)}/{pi_nodes.get('count', 0)} nodes online",
+                "rows": ai_rows[:5],
+            },
+            "hardware": {
+                "summary": hardware.get("summary"),
+                "headroom_c": headroom,
+                "trend": ht.get("label"),
+                "tone": hardware.get("tone"),
+            },
+            "next_actions": (center.get("actions") if isinstance(center.get("actions"), list) else ["socx status"])[:5],
+            "updated_ms": now_ms(),
+        }
+
+    def vpn_mission_summary(self, center: dict[str, Any]) -> str:
+        paths = center.get("vpn_paths") if isinstance(center.get("vpn_paths"), list) else []
+        if paths:
+            parts = []
+            for path in paths[:3]:
+                label = str(path.get("label") or "VPN")
+                state = str(path.get("path_state") or path.get("status") or "waiting").upper()
+                ping = path.get("ping")
+                parts.append(f"{label} {state.lower()}{(' ' + str(ping) + 'ms') if ping not in ('', None) else ''}")
+            return " | ".join(parts)
+        vpn = center.get("vpn") if isinstance(center.get("vpn"), dict) else {}
+        return f"VPN {vpn.get('path_state') or vpn.get('status') or 'waiting'} {vpn.get('down') or '--'}/{vpn.get('up') or '--'} Mbps"
 
     def safe_why_target(self, target: str) -> str:
         value = str(target or "").strip()
@@ -2651,6 +2763,9 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/command-center":
             self.send_json(self.collector.snapshot().get("command_center", {}))
             return
+        if parsed.path == "/api/mission":
+            self.send_json(self.collector.snapshot().get("mission", {}))
+            return
         if parsed.path == "/api/history":
             rows = self.collector.collect_history(240)
             self.send_json({"count": len(rows), "trend": self.collector.history_trend(rows), "rows": rows})
@@ -2743,7 +2858,7 @@ class SocxHandler(BaseHTTPRequestHandler):
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health", "/why", "/story"}:
+        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health", "/why", "/story", "/mission"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"

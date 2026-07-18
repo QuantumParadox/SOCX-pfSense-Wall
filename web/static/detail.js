@@ -19,6 +19,7 @@ const pageName = () => {
   if (path.includes("incident")) return "incidents";
   if (path.includes("why")) return "why";
   if (path.includes("story")) return "story";
+  if (path.includes("mission")) return "mission";
   if (path.includes("ai")) return "ai";
   if (path.includes("health")) return "health";
   return "speedtest";
@@ -268,6 +269,47 @@ function renderStory(state, story) {
   document.getElementById("story-archive")?.addEventListener("click", archiveStory);
 }
 
+function renderMission(state, mission) {
+  title.textContent = "SOCX MISSION";
+  const vpn = mission.vpn || {};
+  const hw = mission.hardware || {};
+  const pi = mission.pi_ai || {};
+  root.innerHTML = [
+    ...renderTruthCards({ ...state, data_truth: mission.data_truth || state.data_truth || {}, what_changed: { rows: mission.what_changed || [] } }),
+    card("Mission Readout", [
+      `<div class="story-title"><span>${esc(mission.headline || "SOCX mission warming up")}</span><b class="${mission.mode === "NORMAL" ? "green" : "yellow"}">${esc(mission.mode || "--")} ${esc(mission.score || "--")}</b></div>`,
+      `<div class="detail-reason">${esc((mission.what_matters || [])[0] || "No critical evidence in the current sample.")}</div>`,
+    ].join("")),
+    card("What Matters", table(["#", "Signal"], (mission.what_matters || []).map((line, idx) => [idx + 1, line]))),
+    card("What To Check", table(["#", "Action"], (mission.what_to_check || []).map((line, idx) => [idx + 1, line]))),
+    card("Probably Noise", table(["#", "Why It Is Probably Noise"], (mission.probably_noise || []).map((line, idx) => [idx + 1, line]))),
+    card("VPN Truth", [
+      kv("Summary", vpn.summary || "--", "cyan"),
+      kv("Crypto", vpn.crypto?.summary || "--", vpn.crypto?.tone || "cyan"),
+      table(["Path", "State", "Down/Up", "Ping", "Age"], (vpn.paths || []).map((p) => [
+        p.label || "--",
+        p.path_state || p.status || "--",
+        `${p.down || "--"}/${p.up || "--"}`,
+        `${p.ping || "--"}ms`,
+        `${Math.floor((p.age_sec || 0) / 60)}m`,
+      ])),
+    ].join("")),
+    card("AI And Hardware", [
+      kv("Pi AI", pi.summary || "--", "green"),
+      kv("Hardware", hw.summary || "--", hw.tone || "cyan"),
+      kv("Headroom", `${hw.headroom_c ?? "--"}C`, Number(hw.headroom_c || 0) < 5 ? "yellow" : "green"),
+      kv("Trend", hw.trend || "--", hw.trend === "rising" ? "yellow" : "green"),
+      table(["Source", "Severity", "Confidence", "Reason"], (pi.rows || []).map((r) => [
+        r.source || "--",
+        r.severity || "--",
+        r.confidence || "--",
+        r.reason || "--",
+      ])),
+    ].join("")),
+    card("Next Actions", table(["#", "Command"], (mission.next_actions || []).map((line, idx) => [idx + 1, line]))),
+  ].join("");
+}
+
 function renderSpeed(state) {
   title.textContent = "SOCX SPEEDTEST";
   const center = state.command_center || {};
@@ -360,6 +402,9 @@ async function refresh() {
   const story = page === "story"
     ? await fetch("/api/story", { cache: "no-store" }).then((r) => r.json())
     : null;
+  const mission = page === "mission"
+    ? await fetch("/api/mission", { cache: "no-store" }).then((r) => r.json())
+    : null;
   subtitle.textContent = `${state.hostname || "pfSense"} / ${state.mode || "live"} / ${new Date().toLocaleTimeString()}`;
   if (page === "devices") renderDevices(state);
   else if (page === "incidents") renderIncidents(state);
@@ -367,6 +412,7 @@ async function refresh() {
   else if (page === "health") renderHealth(state, health || {});
   else if (page === "why") renderWhy(state, why || {});
   else if (page === "story") renderStory(state, story || {});
+  else if (page === "mission") renderMission(state, mission || state.mission || {});
   else renderSpeed(state);
 }
 

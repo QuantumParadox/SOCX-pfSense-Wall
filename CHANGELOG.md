@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.2.0
+
+- Added SOCX Mission / Operator Intelligence: a read-only mission summary for what changed, what matters, what to check, and what is probably noise.
+- Added `/mission` and `/api/mission` for browser Mission Control detail views.
+- Added `socx mission` for terminal/SSH operators, with a safe fallback when the browser API is unavailable.
+- Added rotating terminal-wall Mission, VPN detail, Pi AI role, thermal confidence, and probable-noise events without adding another permanent panel.
+- Added VPN drilldown summaries that can rotate gateway/path status such as `NYCVPN up | RCNVPN up | RCNVPN2 up`.
+- Added hardware/load confidence to the operator layer, including CPU thermal headroom, RAM pressure, and UPS wattage.
+- Added a GitHub README showcase using real photographed SOCX wall output.
+- Fixed Release Health readiness parsing to look for the current `READY FOR SOCX` gate text.
+
 ## v1.1.3
 
 - Polished the photographed terminal wall readability without changing the successful layout.

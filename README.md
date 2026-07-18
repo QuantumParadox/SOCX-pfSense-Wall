@@ -52,6 +52,17 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Live wall sample: [`docs/socx-live-wall-capture.md`](docs/socx-live-wall-capture.md)
 - v1 release notes: [`docs/v1.0.0-release-notes.md`](docs/v1.0.0-release-notes.md)
 - Latest hardware/stability notes: [`docs/v1.1.2-release-notes.md`](docs/v1.1.2-release-notes.md)
+- Operator Intelligence notes: [`docs/v1.2.0-release-notes.md`](docs/v1.2.0-release-notes.md)
+
+## Real Wall Showcase
+
+SOCX is designed for a real photographed monitor: high contrast, large-room readability, compact status truth, and enough motion/color to feel alive without hiding important data.
+
+![SOCX terminal wall on a monitor](docs/assets/socx-wall-photo-1.jpg)
+
+![SOCX packet radar and flow view](docs/assets/socx-wall-photo-2.jpg)
+
+The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows, Packet Radar, AI/SOC event feed, and hardware health. Use `/mission` or `socx mission` when you want SOCX to explain what matters instead of only showing raw telemetry.
 
 - Starts a full-screen tmux dashboard called `socx`.
 - Adds `socweb`, a local browser dashboard for the modern btop-style SOC wall when terminal rendering is too limiting.
@@ -84,6 +95,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds hardware-health visibility for pfSense appliance upgrades such as the Lenovo ThinkCentre M910t i7-7700: CPU profile, core/thread count, hottest core, AES-NI, powerd, and thermal thresholds appear in `/health` and `/story`.
 - Adds `socx hardware`, `socx stability-watch`, and `socx baseline` for thermal headroom, UPS watt trend, short/overnight stability evidence, and appliance performance baselines.
 - Adds VPN crypto headroom on the browser Speedtest page so DIRECT/VPN throughput can be read beside current CPU temperature and thermal headroom.
+- Adds SOCX Mission / Operator Intelligence through `/mission`, `/api/mission`, and `socx mission`, summarizing what changed, what matters, what to check, and what is probably noise.
 - Adds focused browser detail pages for Speedtest, Devices, Incidents, AI, and Release Health so the main wall stays clean while deeper evidence is still available.
 - Adds Data Truth freshness scoring, a plain-English Data Truth reason, and a What Changed timeline so collector age, inactive VPN tests, Pi discovery state, UPS freshness, and meaningful state changes are visible.
 - Adds `/health` and `/api/health` for release readiness, wall error state, fixed service checks, and Pi AI role visibility.
@@ -165,6 +177,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-timeline` - compact incident timeline from recent VPN, Speedtest, firewall, DNSBL, IDS, and AI signals.
 - `scripts/socx-incident-memory` - rolling repeated-event memory for top scanner, top port, DNSBL domain, and IDS pressure.
 - `scripts/socx-brief` - daily SOC brief generator with Autopilot, Label Brain, timeline, Speedtest, and Pi AI context.
+- `scripts/socx-mission` - terminal operator-intelligence summary from `/api/mission`.
 - `scripts/socx-story` - Daily Story viewer and archiver for browser evidence, repeated-event memory, Speedtest path truth, and Pi AI context.
 - `scripts/socx-rule-assistant` - approval-only rule recommendation assistant for evidence-backed policy review.
 - `scripts/socx-repair` - safe collector repair for SOCX wall helpers, vnstatd, LLDP, and Pi discovery without changing firewall policy.
