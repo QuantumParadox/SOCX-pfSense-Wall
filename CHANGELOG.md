@@ -6,6 +6,8 @@
 - Added `/api/story` and `/api/story-archive` for integrations and one-click preservation of the current Daily Story.
 - Added `socx story` and `socx story archive`, saving timestamped JSON and text reports under `/root/socx-stories/`.
 - Added a browser Commander Story action and fixed voice routing so “story” opens the Story workflow instead of the incident timeline.
+- Added hardware-health visibility for the Lenovo ThinkCentre M910t i7-7700 upgrade, including CPU profile, 4C/8T display, hottest-core Celsius/Fahrenheit, AES-NI, powerd, and thermal thresholds on `/health` and `/story`.
+- Added an example `/usr/local/etc/socx_system_profile.env` profile and M910t/i7-7700 post-upgrade notes.
 
 ## v1.0.0
 

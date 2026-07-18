@@ -162,6 +162,7 @@ function renderHealth(state, health) {
   title.textContent = "SOCX RELEASE HEALTH";
   const truth = health.data_truth || state.data_truth || {};
   const pi = health.pi_nodes || state.pi_nodes || {};
+  const hw = state.hardware || {};
   const checks = health.checks || [];
   const wall = health.wall_error || {};
   const roleRows = [];
@@ -185,6 +186,17 @@ function renderHealth(state, health) {
       kv("Wall Errors", `${wall.bytes ?? "--"} bytes`, wall.clean ? "green" : "red"),
       kv("Data Reason", truth.reason || "--", truth.tone || "cyan"),
     ].join("")),
+    card("Hardware Health", [
+      kv("System", [hw.vendor, hw.model, hw.type_model].filter(Boolean).join(" ") || hw.system_name || "--", "cyan"),
+      kv("CPU", hw.cpu_model || hw.cpu_sysctl || "--", "green"),
+      kv("Cores", `${hw.cores || "--"}C/${hw.threads || "--"}T`, "cyan"),
+      kv("BIOS", `${hw.bios_version || "--"} ${hw.bios_release_date || ""}`, "cyan"),
+      kv("Hottest Core", hw.max_temp_h || "--", hw.tone || "cyan"),
+      kv("Frequency", hw.freq_h || "--", "cyan"),
+      kv("AES-NI", hw.aesni ? "on" : "unknown", hw.aesni ? "green" : "yellow"),
+      kv("Powerd", hw.powerd || "--", String(hw.powerd || "").includes("running") ? "green" : "yellow"),
+      kv("Thermal Limits", `${hw.warning_c || "--"}C warn / ${hw.critical_c || "--"}C critical`, "cyan"),
+    ].join("")),
     card("Checks", table(["Check", "State", "Elapsed", "Output"], checks.map((c) => [
       c.name,
       c.ok ? "OK" : "WARN",
@@ -207,6 +219,7 @@ function renderHealth(state, health) {
 function renderStory(state, story) {
   title.textContent = "SOCX DAILY STORY";
   const glance = story.at_a_glance || {};
+  const hw = story.hardware || state.hardware || {};
   root.innerHTML = [
     ...renderTruthCards(state),
     card("Today So Far", [
@@ -222,12 +235,20 @@ function renderStory(state, story) {
       kv("DNSBL", glance.dnsbl || "--", "purple"),
       kv("IDS", glance.ids || "--", "cyan"),
       kv("Pi", glance.pi || "--", "green"),
+      kv("Hardware", glance.hardware || hw.summary || "--", hw.tone || "cyan"),
     ].join("")),
     card("Story Lines", table(["#", "What SOCX Saw"], (story.story || []).map((line, idx) => [idx + 1, line]))),
     card("Recommended Next Steps", table(["#", "Action"], (story.next_steps || []).map((line, idx) => [idx + 1, line]))),
     card("Speedtest Truth", table(["Path", "State", "Avg Down/Up", "Ping", "Samples"], [
       ["Direct", story.speedtest?.direct?.status || "--", `${story.speedtest?.direct?.avg_down || "--"}/${story.speedtest?.direct?.avg_up || "--"}`, story.speedtest?.direct?.avg_ping || "--", story.speedtest?.direct?.samples || "--"],
       ["VPN", story.speedtest?.vpn?.status || "--", `${story.speedtest?.vpn?.avg_down || "--"}/${story.speedtest?.vpn?.avg_up || "--"}`, story.speedtest?.vpn?.avg_ping || "--", story.speedtest?.vpn?.samples || "--"],
+    ])),
+    card("Hardware Headroom", table(["Signal", "Value", "State"], [
+      ["System", [hw.vendor, hw.model, hw.type_model].filter(Boolean).join(" ") || hw.system_name || "--", hw.status || "--"],
+      ["CPU", hw.cpu_model || hw.cpu_sysctl || "--", `${hw.cores || "--"}C/${hw.threads || "--"}T`],
+      ["BIOS", hw.bios_version || "--", hw.bios_release_date || "--"],
+      ["Thermal", `${hw.max_temp_h || "--"} max / ${hw.avg_temp_c || "--"}C avg`, `${hw.warning_c || "--"}C warn / ${hw.critical_c || "--"}C crit`],
+      ["Crypto", hw.aesni ? "AES-NI on" : "AES-NI unknown", hw.powerd || "--"],
     ])),
     card("Repeated Memory", table(["Type", "Name", "Count"], [
       ...(story.repeated_memory?.sources || []).map((x) => ["source", x.name, x.count]),

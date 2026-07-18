@@ -80,6 +80,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds an Explain button in the browser Commander for a safe plain-English screen summary.
 - Adds a browser Daily SOC Brief, structured Incident Timeline, and approval-only Rule Assistant for turning live telemetry into a readable investigation story.
 - Adds a browser Daily Story page, `/api/story`, `/api/story-archive`, and `socx story` so SOCX can explain the day in plain English and preserve a timestamped narrative under `/root/socx-stories/`.
+- Adds hardware-health visibility for pfSense appliance upgrades such as the Lenovo ThinkCentre M910t i7-7700: CPU profile, core/thread count, hottest core, AES-NI, powerd, and thermal thresholds appear in `/health` and `/story`.
 - Adds focused browser detail pages for Speedtest, Devices, Incidents, AI, and Release Health so the main wall stays clean while deeper evidence is still available.
 - Adds Data Truth freshness scoring, a plain-English Data Truth reason, and a What Changed timeline so collector age, inactive VPN tests, Pi discovery state, UPS freshness, and meaningful state changes are visible.
 - Adds `/health` and `/api/health` for release readiness, wall error state, fixed service checks, and Pi AI role visibility.
@@ -190,6 +191,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `web/socx-web.py` - lightweight Python WebSocket/HTTP backend for the browser wall.
 - `web/static/` - HTML, CSS, and JavaScript frontend for the modern card dashboard.
 - `config/socx_hosts.conf.example` - optional friendly-name map for local LAN hosts.
+- `config/socx_system_profile.env.example` - optional hardware profile for SOCX `/health` and `/story`.
 - `config/socx_ai_lab.conf.example` - optional AI/MIRANDA endpoint map for local LLMs and external model APIs.
 - `config/socx_watchlist.conf.example` - optional watchlist for important devices, services, domains, ports, and event text.
 - `config/socx_speedtest_paths.conf.example` - optional DIRECT/VPN Speedtest path labels for Frontier, NYC, RCN-DE, RCN-VA, or other policy-routed test paths.

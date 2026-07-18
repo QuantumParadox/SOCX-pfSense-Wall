@@ -351,6 +351,7 @@ class SocxCollector:
         pf = self.collect_pf()
         net = self.collect_network()
         ups = self.collect_ups()
+        hardware = self.collect_hardware_health(cpu)
         processes = self.collect_processes()
         command_center = self.collect_command_center()
         incident = self.collect_incident_light(command_center)
@@ -395,6 +396,7 @@ class SocxCollector:
             "mode": "live",
             "status": {"health": "online", "refresh_ms": int(self.interval * 1000)},
             "cpu": cpu | {"history": list(self.histories["cpu"])},
+            "hardware": hardware,
             "memory": mem | {"history": list(self.histories["mem"])},
             "pf": pf | {"history": list(self.histories["pf_search"])},
             "net": {
@@ -457,6 +459,75 @@ class SocxCollector:
             "freq_mhz": int(float(freq)) if freq.replace(".", "", 1).isdigit() else None,
             "temp_c": float(temp_match.group(1)) if temp_match else None,
             "process_text": proc_text,
+        }
+
+    def collect_hardware_health(self, cpu: dict[str, Any]) -> dict[str, Any]:
+        profile = parse_env_file(Path(os.environ.get("SOCX_SYSTEM_PROFILE", "/usr/local/etc/socx_system_profile.env")))
+        model = run_cmd("sysctl -n hw.model 2>/dev/null", timeout=0.4).strip()
+        ncpu = run_cmd("sysctl -n hw.ncpu 2>/dev/null", timeout=0.4).strip()
+        bios_version = profile.get("SOCX_BIOS_VERSION") or run_cmd("kenv smbios.bios.version 2>/dev/null", timeout=0.4).strip().strip('"')
+        bios_date = profile.get("SOCX_BIOS_RELEASE_DATE") or run_cmd("kenv smbios.bios.reldate 2>/dev/null", timeout=0.4).strip().strip('"')
+        temp_out = run_cmd("sysctl -a 2>/dev/null | egrep '^dev.cpu\\.[0-9]+\\.temperature:'", timeout=0.7)
+        temps: list[dict[str, Any]] = []
+        for line in temp_out.splitlines():
+            match = re.search(r"dev\.cpu\.(\d+)\.temperature:\s*([0-9.]+)C", line)
+            if not match:
+                continue
+            celsius = float(match.group(2))
+            temps.append({"id": int(match.group(1)), "c": celsius, "f": round((celsius * 9 / 5) + 32, 1)})
+        temps.sort(key=lambda item: item["id"])
+        max_temp = max((float(item["c"]) for item in temps), default=float(cpu.get("temp_c") or 0))
+        avg_temp = round(sum(float(item["c"]) for item in temps) / len(temps), 1) if temps else None
+        aesni_out = run_cmd("kldstat 2>/dev/null | grep aesni; dmesg 2>/dev/null | grep -i aesni | tail -5", timeout=0.6)
+        aesni = "aesni" in aesni_out.lower()
+        powerd_status = run_cmd("service powerd status 2>/dev/null", timeout=0.6).strip()
+        cx = run_cmd("sysctl -n dev.cpu.0.cx_lowest 2>/dev/null", timeout=0.4).strip()
+        warning_c = env_int("SOCX_CPU_WARN_C", 75)
+        critical_c = env_int("SOCX_CPU_CRIT_C", 85)
+        if max_temp >= critical_c:
+            tone = "red"
+            status = "critical"
+        elif max_temp >= warning_c:
+            tone = "yellow"
+            status = "warm"
+        else:
+            tone = "green"
+            status = "normal"
+        cores = profile.get("SOCX_CPU_CORES") or ""
+        threads = profile.get("SOCX_CPU_THREADS") or ncpu
+        cpu_name = profile.get("SOCX_CPU_MODEL") or model
+        freq = cpu.get("freq_mhz")
+        max_temp_h = f"{max_temp:.0f}C/{((max_temp * 9 / 5) + 32):.0f}F" if max_temp else "--"
+        return {
+            "status": status,
+            "tone": tone,
+            "system_name": profile.get("SOCX_SYSTEM_NAME") or socket.gethostname(),
+            "vendor": profile.get("SOCX_SYSTEM_VENDOR", ""),
+            "model": profile.get("SOCX_SYSTEM_MODEL", ""),
+            "type_model": profile.get("SOCX_SYSTEM_TYPE_MODEL", ""),
+            "cpu_model": cpu_name,
+            "cpu_sysctl": model,
+            "cores": cores,
+            "threads": threads,
+            "base_ghz": profile.get("SOCX_CPU_BASE_GHZ", ""),
+            "tdp_w": profile.get("SOCX_CPU_TDP_W", ""),
+            "upgraded_from": profile.get("SOCX_CPU_UPGRADED_FROM", ""),
+            "upgrade_date": profile.get("SOCX_CPU_UPGRADE_DATE", ""),
+            "bios_version": bios_version,
+            "bios_release_date": bios_date,
+            "freq_mhz": freq,
+            "freq_h": f"{freq} MHz" if freq else "--",
+            "max_temp_c": round(max_temp, 1) if max_temp else None,
+            "max_temp_f": round((max_temp * 9 / 5) + 32, 1) if max_temp else None,
+            "max_temp_h": max_temp_h,
+            "avg_temp_c": avg_temp,
+            "temps": temps,
+            "aesni": aesni,
+            "powerd": "running" if "running" in powerd_status.lower() else (powerd_status or "unknown"),
+            "cx_lowest": cx or "--",
+            "warning_c": warning_c,
+            "critical_c": critical_c,
+            "summary": f"{cpu_name} {cores}C/{threads}T max {max_temp_h} AES-NI {'on' if aesni else 'unknown'}",
         }
 
     def collect_memory(self, top: str) -> dict[str, Any]:
@@ -910,6 +981,7 @@ class SocxCollector:
         speed = snapshot.get("speedtest_history", {}) if isinstance(snapshot, dict) else {}
         center = snapshot.get("command_center", {}) if isinstance(snapshot, dict) else {}
         pi = snapshot.get("pi_nodes", {}) if isinstance(snapshot, dict) else {}
+        hardware = snapshot.get("hardware", {}) if isinstance(snapshot, dict) else {}
         ai = snapshot.get("ai_timeline", {}) if isinstance(snapshot, dict) else {}
         brain = snapshot.get("label_brain", {}) if isinstance(snapshot, dict) else {}
         top_source = (incident.get("blocked_sources") or [{}])[0] if isinstance(incident.get("blocked_sources"), list) else {}
@@ -941,6 +1013,8 @@ class SocxCollector:
         else:
             story_lines.append(f"IDS signal is routine/watch level: {ids.get('watch', 0)} watch, {ids.get('routine', 0)} routine.")
         story_lines.append(f"Pi fleet is {pi.get('online', 0)}/{pi.get('count', 0)} online; Pi AI role status is visible in the AI page.")
+        if hardware:
+            story_lines.append(f"Hardware headroom: {hardware.get('summary', 'hardware profile waiting')}; powerd {hardware.get('powerd', 'unknown')}.")
         if changed_rows:
             story_lines.append(f"Most recent meaningful change: {changed_rows[0].get('title')} - {changed_rows[0].get('detail')}.")
         next_steps = []
@@ -966,7 +1040,9 @@ class SocxCollector:
                 "dnsbl": f"{top_dns.get('name', 'none')} x{top_dns.get('count', 0)}",
                 "ids": f"high {ids.get('high_signal', 0)} watch {ids.get('watch', 0)}",
                 "pi": f"{pi.get('online', 0)}/{pi.get('count', 0)} online",
+                "hardware": hardware.get("summary", "--") if isinstance(hardware, dict) else "--",
             },
+            "hardware": hardware,
             "speedtest": {
                 "direct": direct,
                 "vpn": vpn,
