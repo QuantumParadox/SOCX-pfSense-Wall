@@ -129,10 +129,8 @@ speedtest_profile_from_mode() {
 }
 
 speedtest_tool() {
-    if [ "${SOCX_SPEEDTEST_PREFER_OOKLA:-false}" != "true" ] && command -v speedtest-go >/dev/null 2>&1; then
+    if [ "${SOCX_SPEEDTEST_PREFER_SPEEDTEST_GO:-false}" = "true" ] && command -v speedtest-go >/dev/null 2>&1; then
         echo speedtest-go
-    elif [ "${SOCX_SPEEDTEST_PREFER_OOKLA:-false}" != "true" ] && command -v speedtest-cli >/dev/null 2>&1; then
-        echo speedtest-cli
     elif [ -x "$OOKLA_SPEEDTEST" ]; then
         echo ookla:"$OOKLA_SPEEDTEST"
     elif command -v speedtest >/dev/null 2>&1 && speedtest --help 2>&1 | grep -q -- '--format'; then
@@ -298,7 +296,7 @@ run_once() {
     IFS='|' read -r status tool_name down up ping jitter sid sname sloc isp ip url <<EOF
 $parsed
 EOF
-    if [ "$tool" = speedtest-go ] && awk -v d="$down" -v u="$up" 'BEGIN { exit !((d + 0) < 0 || (u + 0) < 0) }'; then
+    if [ "$tool" = speedtest-go ] && awk -v d="$down" -v u="$up" 'BEGIN { exit !((d + 0) <= 0 || (u + 0) <= 0) }'; then
         parsed=$(run_speedtest_go auto) && mode=auto || parsed=''
         if [ -z "$parsed" ] && [ -x "$OOKLA_SPEEDTEST" ]; then
             parsed=$(run_ookla_speedtest "$mode" "$OOKLA_SPEEDTEST") || parsed=''
