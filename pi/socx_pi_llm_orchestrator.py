@@ -393,8 +393,12 @@ def operator_safe_summary(text: str, limit: int = 180) -> str:
         return "Model route online, but no clear role finding returned."
     if re.fullmatch(r"[0-9.\s\\nrt,:;_-]{3,}", text):
         return "Model route online, but output was token noise; use heuristic SOCX verdict."
+    if re.search(r"(?:n1,?){4,}", lower) or len(re.findall(r"\d+\.\d+", text)) >= 4:
+        return "Model route online, but output was numeric token noise; use heuristic SOCX verdict."
     if "done_reason" in lower and ("created_at" in lower or "total_duration" in lower):
         return "Model route online, but returned transport metadata instead of a SOC finding."
+    if len(re.findall(r"->", text)) >= 5:
+        return "Model route online, but output was flow-token noise; use heuristic SOCX verdict."
     low_signal_patterns = [
         "i'm not sure",
         "i am not sure",
@@ -409,6 +413,21 @@ def operator_safe_summary(text: str, limit: int = 180) -> str:
     if len(text) > limit:
         text = text[: limit - 1].rstrip(" ,;|") + "…"
     return text
+
+
+def is_low_signal_summary(summary: str) -> bool:
+    lower = str(summary or "").lower()
+    return any(
+        marker in lower
+        for marker in [
+            "no clear role finding",
+            "token noise",
+            "transport metadata",
+            "no clear model finding",
+            "flow-token noise",
+            "numeric token noise",
+        ]
+    )
 
 
 def clean_model_text(text: str) -> str:
@@ -765,6 +784,7 @@ async def run_role(role: str, payload: dict[str, Any]) -> dict[str, Any]:
     attempts.append((role_url(role), CPU_FALLBACK_MODELS[role], "cpu-ollama", float(os.getenv("SOCX_PI_LLM_TIMEOUT", "75"))))
     prompt = build_prompt(role, payload)
     errors: list[str] = []
+    low_signal_result: dict[str, Any] | None = None
     for url, model, backend, timeout in attempts:
         event("ROLE", f"{role} thinking with {model} [{backend}]", "INFO")
         try:
@@ -773,6 +793,11 @@ async def run_role(role: str, payload: dict[str, Any]) -> dict[str, Any]:
             else:
                 result = await asyncio.to_thread(call_ollama_generate, url, model, prompt, timeout)
             result.update({"role": role, "backend": backend, "summary": summarize_role_text(result.get("text", "")), "url": url})
+            if backend == "hailo" and is_low_signal_summary(str(result.get("summary") or "")):
+                event("ROUTER", f"{role} Hailo output low-signal; falling back to CPU Ollama", "WARN")
+                errors.append(f"{backend}: low-signal output")
+                low_signal_result = dict(result)
+                continue
             event("ROLE", f"{role} complete with {model} [{backend}]", "INFO")
             return result
         except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError) as exc:
@@ -781,6 +806,10 @@ async def run_role(role: str, payload: dict[str, Any]) -> dict[str, Any]:
             if backend == "hailo":
                 event("ROUTER", f"{role} falling back to CPU Ollama", "WARN")
             errors.append(f"{backend}: {error}")
+    if low_signal_result:
+        low_signal_result["fallback_error"] = "; ".join(errors)[:420]
+        event("ROLE", f"{role} using low-signal Hailo result after fallback exhaustion", "WARN")
+        return low_signal_result
     return {"ok": False, "role": role, "model": CPU_FALLBACK_MODELS[role], "backend": "unavailable", "summary": "Hailo and CPU Ollama unavailable", "error": "; ".join(errors)[:420]}
 
 
@@ -1136,7 +1165,9 @@ function cleanRoleText(s){
   const low=s.toLowerCase();
   if(s==='{}'||s==='[]'||low==='null'||low==='none')return 'Model route online, but no clear role finding returned.';
   if(/^[0-9.\s\\nrt,:;_-]{3,}$/.test(s))return 'Model route online, but output was token noise; use SOCX verdict.';
+  if(/(?:n1,?){4,}/i.test(s)||(s.match(/\d+\.\d+/g)||[]).length>=4)return 'Model route online, but output was numeric token noise; use SOCX verdict.';
   if(low.includes('done_reason')&&(low.includes('created_at')||low.includes('total_duration')))return 'Model route online, but returned transport metadata instead of a SOC finding.';
+  if((s.match(/->/g)||[]).length>=5)return 'Model route online, but output was flow-token noise; use SOCX verdict.';
   if(low.includes("i'm not sure")||low.includes('i am not sure')||low.includes('based on the information provided')||low.includes('as an ai'))return 'No clear model finding; use SOCX verdict, reasons, and latest evidence.';
   s=s.replace(/\(\s*[A-Z0-9]\s*\)(?:\s*\(\s*[A-Z0-9]\s*\)){3,}/g,'repeated token noise');
   return s.length>170?s.slice(0,169).replace(/[ ,;|]+$/,'')+'…':s;
@@ -1169,11 +1200,18 @@ async function runCommand(){const input=$('command-input'),output=$('command-out
 document.addEventListener('click',async e=>{const button=e.target.closest('[data-review]');if(!button)return;button.disabled=true;try{await fetch('/api/socx/draft/'+encodeURIComponent(button.dataset.review)+'/review',{method:'POST'})}catch(_){button.disabled=false}});
 const c=$('space'),ctx=c.getContext('2d');let t=0;
 function resize(){c.width=c.clientWidth*devicePixelRatio;c.height=c.clientHeight*devicePixelRatio}addEventListener('resize',resize);resize();
-function draw(){t+=0.014;ctx.clearRect(0,0,c.width,c.height);const w=c.width,h=c.height,cx=w/2,cy=h/2;const roles=['triage','evidence','action'];const online=(state.roles_online||'0/3').split('/')[0]*1;const p=state.payload_summary||{};const auto=state.autonomy||{};const fw=Math.min(1,(p.firewall_blocks_sampled||0)/2000),dns=Math.min(1,(p.dnsbl_lines_sampled||0)/2000),ids=Math.min(1,(p.ids_watch_sampled||0)/300),ascore=Math.min(1,(auto.score||0)/100);const energy=.45+fw*.22+dns*.18+ids*.12+ascore*.2;
- ctx.save();ctx.translate(cx,cy);for(let ring=0;ring<4;ring++){ctx.strokeStyle=`rgba(${ring%2?102:73},255,${ring%2?124:244},${0.16+ring*.05})`;ctx.lineWidth=(1+ring*.35)*devicePixelRatio;ctx.beginPath();const rx=(78+ring*38+Math.sin(t*3+ring)*8)*devicePixelRatio,ry=rx*(.48+ring*.045);for(let a=0;a<=Math.PI*2+.05;a+=.06){const twist=a+t*(ring%2?-1:1);const x=Math.cos(twist)*rx,y=Math.sin(twist)*ry;if(a===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)}ctx.stroke()}ctx.restore();
- for(let i=0;i<150;i++){const z=((i*37+t*(90+energy*150))%100)/100;const a=i*2.399+t*(.8+energy);const r=(40+z*(260+fw*240))*devicePixelRatio;const hue=i%5===0?'255,86,244':i%3===0?'255,227,91':i%3===1?'73,255,244':'102,255,124';ctx.fillStyle=`rgba(${hue},${0.035+z*(0.16+ascore*.12)})`;ctx.fillRect(cx+Math.cos(a)*r,cy+Math.sin(a)*r*.55,1+z*3,1+z*3)}
- const twin=state.network||{}; const twinNodes=(twin.nodes||[]).slice(0,8); const positions=twinNodes.map((n,i)=>{const a=-Math.PI*.85+i*(Math.PI*1.7/Math.max(1,twinNodes.length-1));return {n,x:cx+Math.cos(a)*w*.36,y:cy+Math.sin(a)*h*.34}}); const byId={}; positions.forEach(p=>byId[p.n.id]=p); (twin.links||[]).slice(0,12).forEach(link=>{const s=byId[link.source],d=byId[link.target];if(!s||!d)return;ctx.strokeStyle='#ff9f43aa';ctx.lineWidth=1.5*devicePixelRatio;ctx.beginPath();ctx.moveTo(s.x,s.y);ctx.lineTo(d.x,d.y);ctx.stroke()}); positions.forEach(({n,x,y})=>{const color=n.kind==='firewall'?'#ffe35b':n.kind==='ai'?'#ff56f4':n.kind==='internet'?'#ff5e78':'#49fff4';ctx.fillStyle=color;ctx.shadowColor=color;ctx.shadowBlur=12*devicePixelRatio;ctx.beginPath();ctx.arc(x,y,7*devicePixelRatio,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.fillStyle='#d8fbff';ctx.font=`${10*devicePixelRatio}px monospace`;ctx.fillText(String(n.label).slice(0,16),x+10*devicePixelRatio,y+3*devicePixelRatio)});
- roles.forEach((r,i)=>{const a=t*(1.1+energy)+i*Math.PI*2/3;const radius=w*(.21+.05*Math.sin(t+i));const x=cx+Math.cos(a)*radius,y=cy+Math.sin(a)*h*.22;ctx.strokeStyle=i<online?'#66ff7c':'#ff5e78';ctx.lineWidth=(2+energy*2)*devicePixelRatio;ctx.shadowColor=ctx.strokeStyle;ctx.shadowBlur=18*devicePixelRatio;ctx.beginPath();ctx.moveTo(cx,cy);ctx.bezierCurveTo(cx+Math.cos(a-.6)*90,cy+Math.sin(a-.6)*60,x-Math.cos(a)*40,y-Math.sin(a)*20,x,y);ctx.stroke();ctx.shadowBlur=0;ctx.fillStyle=i<online?'#66ff7c':'#ff5e78';ctx.beginPath();ctx.arc(x,y,(13+energy*5)*devicePixelRatio,0,Math.PI*2);ctx.fill();ctx.fillStyle='#e8fbff';ctx.font=`${12*devicePixelRatio}px monospace`;ctx.fillText(r.toUpperCase(),x+18*devicePixelRatio,y+4*devicePixelRatio)})
+function line(a,b,color,width=1,alpha=1){ctx.strokeStyle=color.replace(')',`,`+alpha+')').replace('rgb','rgba');ctx.lineWidth=width*devicePixelRatio;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke()}
+function drawNode(x,y,label,color,size=8,sub=''){ctx.save();ctx.shadowColor=color;ctx.shadowBlur=14*devicePixelRatio;ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,y,size*devicePixelRatio,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.fillStyle='#d8fbff';ctx.font=`${10*devicePixelRatio}px ui-monospace,Consolas,monospace`;ctx.fillText(String(label).slice(0,18),x+12*devicePixelRatio,y+4*devicePixelRatio);if(sub){ctx.fillStyle='rgba(216,251,255,.62)';ctx.font=`${8*devicePixelRatio}px ui-monospace,Consolas,monospace`;ctx.fillText(String(sub).slice(0,22),x+12*devicePixelRatio,y+16*devicePixelRatio)}ctx.restore()}
+function packet(a,b,phase,color,label){const p=(phase%1);const x=a.x+(b.x-a.x)*p,y=a.y+(b.y-a.y)*p;ctx.save();ctx.shadowColor=color;ctx.shadowBlur=10*devicePixelRatio;ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,y,3.2*devicePixelRatio,0,Math.PI*2);ctx.fill();if(label&&p>.48&&p<.55){ctx.shadowBlur=0;ctx.fillStyle='#e8fbff';ctx.font=`${8*devicePixelRatio}px ui-monospace,Consolas,monospace`;ctx.fillText(label,x+7*devicePixelRatio,y-5*devicePixelRatio)}ctx.restore()}
+function draw(){t+=0.0048;ctx.clearRect(0,0,c.width,c.height);const w=c.width,h=c.height,cx=w/2,cy=h/2;const dpr=devicePixelRatio||1;const roles=['triage','evidence','action'];const online=(state.roles_online||'0/3').split('/')[0]*1;const p=state.payload_summary||{};const auto=state.autonomy||{};const fw=Math.min(1,(p.firewall_blocks_sampled||0)/2200),dns=Math.min(1,(p.dnsbl_lines_sampled||0)/2200),ids=Math.min(1,(p.ids_watch_sampled||0)/500),ascore=Math.min(1,(auto.score||0)/100);const pulse=.5+.5*Math.sin(t*7);const watch=(auto.mode||'observe').toUpperCase();
+ ctx.fillStyle='rgba(73,255,244,.025)';for(let gx=0;gx<w;gx+=42*dpr){ctx.fillRect(gx,0,1,h)}for(let gy=0;gy<h;gy+=42*dpr){ctx.fillRect(0,gy,w,1)}
+ ctx.save();ctx.translate(cx,cy);for(let ring=0;ring<4;ring++){const rx=(72+ring*42+(pulse*5))*dpr,ry=rx*.52;ctx.strokeStyle=`rgba(73,255,244,${.12+ring*.035})`;ctx.lineWidth=(1.2+ring*.2)*dpr;ctx.beginPath();ctx.ellipse(0,0,rx,ry,0,0,Math.PI*2);ctx.stroke()}ctx.restore();
+ const core={x:cx,y:cy};const nodes=[{id:'pf',label:'pfSense',x:cx-w*.31,y:cy-h*.13,color:'#ffe35b',sub:'firewall'},{id:'wan',label:'WAN',x:cx+w*.33,y:cy-h*.18,color:'#ff5e78',sub:fmt(p.firewall_blocks_sampled||0)+' blocks'},{id:'lan',label:'LAN',x:cx+w*.34,y:cy+h*.05,color:'#49fff4',sub:'35 nodes'},{id:'pi',label:'Pi 5 AI',x:cx+w*.18,y:cy-h*.34,color:'#ff56f4',sub:(state.roles_online||'0/3')+' roles'},{id:'dns',label:'DNSBL',x:cx-w*.27,y:cy+h*.27,color:'#c76dff',sub:fmt(p.dnsbl_lines_sampled||0)+' hits'},{id:'ids',label:'IDS',x:cx+w*.2,y:cy+h*.31,color:'#ff9f43',sub:fmt(p.ids_watch_sampled||0)+' watch'}];const byId={};nodes.forEach(n=>byId[n.id]=n);
+ [['pf','wan',fw,'#ff5e78','FW'],['pf','lan',.45,'#49fff4','LAN'],['pf','pi',ascore,'#ff56f4','AI'],['pf','dns',dns,'#c76dff','DNS'],['pf','ids',ids,'#ff9f43','IDS'],['pi','ids',ids*.7,'#66ff7c','triage']].forEach(([a,b,intensity,color,label],i)=>{line(byId[a],byId[b],color,1.1+Number(intensity)*2,.25+Number(intensity)*.45);packet(byId[a],byId[b],t*(.18+Number(intensity)*.18)+i*.17,color,label)});
+ nodes.forEach(n=>drawNode(n.x,n.y,n.label,n.color,8+(n.id==='pi'?online:0),n.sub));
+ roles.forEach((r,i)=>{const y=cy-h*.05+i*h*.1;const x=core.x-w*.09;const role={x,y};const ok=i<online;const color=ok?'#66ff7c':'#ff5e78';line(role,core,color,1.4,ok?.7:.28);drawNode(x,y,r.toUpperCase(),color,10,ok?'online':'waiting')});
+ ctx.save();ctx.translate(core.x,core.y);ctx.strokeStyle=watch==='WATCH'||watch==='INVESTIGATE'?'rgba(255,227,91,.7)':'rgba(102,255,124,.55)';ctx.lineWidth=(2+pulse*1.4)*dpr;ctx.beginPath();ctx.arc(0,0,(55+pulse*5)*dpr,0,Math.PI*2);ctx.stroke();ctx.fillStyle='rgba(73,255,244,.08)';ctx.beginPath();ctx.arc(0,0,42*dpr,0,Math.PI*2);ctx.fill();ctx.restore();
+ const bars=[['FW',fw,'#ff5e78'],['DNS',dns,'#c76dff'],['IDS',ids,'#ff9f43'],['AUTO',ascore,'#66ff7c']];bars.forEach(([label,val,color],i)=>{const x=16*dpr+i*w*.18,y=h-64*dpr,bw=w*.15,bh=7*dpr;ctx.fillStyle='rgba(255,255,255,.08)';ctx.fillRect(x,y,bw,bh);ctx.fillStyle=color;ctx.fillRect(x,y,bw*val,bh);ctx.fillStyle='#a9c3c8';ctx.font=`${9*dpr}px ui-monospace,Consolas,monospace`;ctx.fillText(label,x,y-6*dpr)});
  requestAnimationFrame(draw)}draw();
 </script>
 </body></html>"""
