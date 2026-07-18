@@ -356,6 +356,9 @@ class SocxCollector:
         flows = self.enrich_flows_with_labels(flows, label_brain)
         asset_watch = self.collect_asset_watch(flows, pi_nodes, label_brain)
         ai_timeline = self.collect_ai_timeline(pi_nodes, command_center)
+        incident_timeline = self.collect_incident_timeline(incident, label_brain, ai_timeline)
+        daily_brief = self.collect_daily_brief(command_center, incident, label_brain, pi_nodes, ai_timeline)
+        rule_assistant = self.collect_rule_assistant(incident, label_brain)
 
         packets: list[dict[str, Any]] = []
         if time.time() - self.last_event_read > 0.8:
@@ -403,6 +406,9 @@ class SocxCollector:
             "asset_watch": asset_watch,
             "label_brain": label_brain,
             "ai_timeline": ai_timeline,
+            "incident_timeline": incident_timeline,
+            "daily_brief": daily_brief,
+            "rule_assistant": rule_assistant,
             "flows": flows,
             "packets": packets,
             "events": list(self.events.values())[-self.event_max :],
@@ -1017,6 +1023,8 @@ class SocxCollector:
             unusual = self.unusual_for_asset(baseline, app_rank, service_rank)
             rows.append({
                 "asset": row["asset"],
+                "friendly_name": row["asset"].split("/", 1)[0],
+                "identity_confidence": self.identity_confidence(row["asset"], confidence),
                 "flows": row["flows"],
                 "apps": app_rank,
                 "services": service_rank,
@@ -1045,6 +1053,143 @@ class SocxCollector:
             "anomalies": anomalies,
             "updated_ms": now_ms(),
         }
+
+    def identity_confidence(self, asset: str, activity_confidence: str) -> str:
+        if "/" in asset and not asset.startswith(("LAN.", "EXT.")):
+            return "confirmed"
+        if activity_confidence in {"high", "medium"}:
+            return "likely"
+        return "unknown"
+
+    def collect_incident_timeline(self, incident: dict[str, Any], label_brain: dict[str, Any], ai_timeline: dict[str, Any]) -> dict[str, Any]:
+        rows: list[dict[str, Any]] = []
+        generated = now_ms()
+
+        def add(kind: str, severity: str, title: str, detail: str, evidence: str = "") -> None:
+            rows.append({
+                "time": time.strftime("%H:%M:%S"),
+                "kind": kind,
+                "severity": severity,
+                "title": title[:80],
+                "detail": detail[:220],
+                "evidence": evidence[:160],
+                "ts": generated,
+            })
+
+        sources = incident.get("blocked_sources") if isinstance(incident.get("blocked_sources"), list) else []
+        ports = incident.get("blocked_ports") if isinstance(incident.get("blocked_ports"), list) else []
+        dns = incident.get("dnsbl_domains") if isinstance(incident.get("dnsbl_domains"), list) else []
+        ids = incident.get("ids") if isinstance(incident.get("ids"), dict) else {}
+        anomalies = label_brain.get("anomalies") if isinstance(label_brain.get("anomalies"), list) else []
+        ai_rows = ai_timeline.get("rows") if isinstance(ai_timeline.get("rows"), list) else []
+
+        if sources:
+            top = sources[0]
+            port_text = ", ".join(str(item.get("name")) for item in ports[:3]) or "mixed"
+            sev = "HIGH" if int(top.get("count", 0) or 0) >= 80 else "MED"
+            add("FW", sev, "WAN scan pressure", f"{top.get('count', 0)} blocked events from {top.get('name', 'unknown')}; top ports {port_text}", "filter.log")
+        if dns:
+            top = dns[0]
+            sev = "MED" if int(top.get("count", 0) or 0) >= 25 else "LOW"
+            add("DNSBL", sev, "DNS block activity", f"{top.get('name', 'domain')} blocked x{top.get('count', 0)}", "pfBlockerNG DNSBL")
+        if int(ids.get("high_signal", 0) or 0) > 0:
+            add("IDS", "HIGH", "High-signal IDS activity", f"{ids.get('high_signal')} high-signal alerts; {ids.get('watch', 0)} watch alerts", "Suricata")
+        elif int(ids.get("watch", 0) or 0) > 0:
+            add("IDS", "LOW", "Routine IDS watch noise", f"{ids.get('watch')} watch alerts and {ids.get('routine', 0)} routine decoder/stream lines", "Suricata")
+        for anomaly in anomalies[:2]:
+            add("DEVICE", "MED", "Learned-normal deviation", f"{anomaly.get('asset', 'device')} showed unusual {', '.join(anomaly.get('items', [])[:3])}", "Label Brain")
+        for ai in ai_rows[:2]:
+            sev = str(ai.get("severity") or "INFO").upper()
+            add("AI", "MED" if "WARN" in sev or "WATCH" in sev else "LOW", f"{ai.get('source', 'AI')} verdict", str(ai.get("reason") or "analysis available"), f"confidence {ai.get('confidence', '--')}")
+        if not rows:
+            add("SOCX", "LOW", "Quiet cycle", "No meaningful firewall, DNSBL, IDS, device, or AI pressure in the current sample.", "live collectors")
+        return {"rows": rows[:8], "count": len(rows), "generated_ms": generated}
+
+    def collect_daily_brief(
+        self,
+        center: dict[str, Any],
+        incident: dict[str, Any],
+        label_brain: dict[str, Any],
+        pi_nodes: dict[str, Any],
+        ai_timeline: dict[str, Any],
+    ) -> dict[str, Any]:
+        ids = incident.get("ids") if isinstance(incident.get("ids"), dict) else {}
+        counts = incident.get("counts") if isinstance(incident.get("counts"), dict) else {}
+        top_apps = label_brain.get("top_apps") if isinstance(label_brain.get("top_apps"), list) else []
+        anomalies = label_brain.get("anomalies") if isinstance(label_brain.get("anomalies"), list) else []
+        rows = ai_timeline.get("rows") if isinstance(ai_timeline.get("rows"), list) else []
+        summary = [
+            f"Autopilot {str(center.get('mode') or 'UNKNOWN').upper()} score {center.get('score', '--')}/100",
+            f"FW blocks {counts.get('sources', 0)} | DNSBL {counts.get('dnsbl', 0)} | IDS signal {ids.get('high_signal', 0)}",
+            f"Pi fleet {pi_nodes.get('online', 0)}/{pi_nodes.get('count', 0)} online",
+        ]
+        if top_apps:
+            summary.append("Now watching " + ", ".join(str(item.get("name")) for item in top_apps[:4]))
+        if anomalies:
+            summary.append(f"{len(anomalies)} learned-normal device changes need a look")
+        elif rows:
+            summary.append(f"AI verdicts present from {', '.join(str(row.get('source')) for row in rows[:2])}")
+        else:
+            summary.append("No unusual learned-normal changes in the current window")
+        mode_text = str(center.get("mode") or "").upper()
+        return {
+            "title": "SOCX Daily SOC Brief",
+            "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "summary": summary,
+            "next": (center.get("actions") if isinstance(center.get("actions"), list) else ["socx status"])[:4],
+            "status": "watch" if anomalies or int(ids.get("high_signal", 0) or 0) or any(token in mode_text for token in ["WATCH", "DEGRADED", "INCIDENT", "INVESTIGATE"]) else "normal",
+        }
+
+    def collect_rule_assistant(self, incident: dict[str, Any], label_brain: dict[str, Any]) -> dict[str, Any]:
+        drafts: list[dict[str, Any]] = []
+        sources = incident.get("blocked_sources") if isinstance(incident.get("blocked_sources"), list) else []
+        ports = incident.get("blocked_ports") if isinstance(incident.get("blocked_ports"), list) else []
+        dns = incident.get("dnsbl_domains") if isinstance(incident.get("dnsbl_domains"), list) else []
+        ids = incident.get("ids") if isinstance(incident.get("ids"), dict) else {}
+        anomalies = label_brain.get("anomalies") if isinstance(label_brain.get("anomalies"), list) else []
+
+        if sources and int(sources[0].get("count", 0) or 0) >= 40:
+            drafts.append({
+                "kind": "firewall-review",
+                "confidence": "medium",
+                "recommendation": f"Review WAN scan source {sources[0].get('name')} before creating any persistent block.",
+                "evidence": f"{sources[0].get('count')} blocked events; top ports {', '.join(str(p.get('name')) for p in ports[:3]) or 'mixed'}",
+                "safe_command": "socx incident quick",
+            })
+        if dns:
+            drafts.append({
+                "kind": "dnsbl-review",
+                "confidence": "medium",
+                "recommendation": f"Inspect DNSBL domain/app {dns[0].get('name')} and affected LAN hosts before allowlisting or suppressing.",
+                "evidence": f"{dns[0].get('count')} DNSBL observations from local pfBlockerNG logs",
+                "safe_command": "socx-doctor dnsbl-review",
+            })
+        if int(ids.get("high_signal", 0) or 0) > 0:
+            drafts.append({
+                "kind": "ids-review",
+                "confidence": "medium",
+                "recommendation": "Preserve evidence and review matching Suricata signatures before suppressing or tuning IDS rules.",
+                "evidence": f"{ids.get('high_signal')} high-signal IDS lines; {ids.get('watch', 0)} watch lines; {ids.get('routine', 0)} routine lines",
+                "safe_command": "socx snapshot",
+            })
+        if anomalies:
+            first = anomalies[0]
+            drafts.append({
+                "kind": "device-profile-review",
+                "confidence": "low",
+                "recommendation": f"Verify whether {first.get('asset')} should normally use {', '.join(first.get('items', [])[:3])}.",
+                "evidence": "Label Brain learned-normal history saw a new app/service pattern",
+                "safe_command": "socx label-brain",
+            })
+        if not drafts:
+            drafts.append({
+                "kind": "no-rule-change",
+                "confidence": "high",
+                "recommendation": "No firewall/DNSBL/IDS policy change is recommended from the current evidence.",
+                "evidence": "Current sample lacks high-confidence repeated harmful behavior.",
+                "safe_command": "socx status",
+            })
+        return {"mode": "approval-only", "applies_changes": False, "drafts": drafts[:4], "updated_ms": now_ms()}
 
     def baseline_for_asset(self, history: dict[str, Any], asset: str) -> dict[str, Any]:
         devices = history.get("devices") if isinstance(history.get("devices"), dict) else {}
@@ -1786,6 +1931,15 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/incident":
             self.send_json(self.collector.collect_incident())
             return
+        if parsed.path == "/api/incident-timeline":
+            self.send_json(self.collector.snapshot().get("incident_timeline", {}))
+            return
+        if parsed.path == "/api/daily-brief":
+            self.send_json(self.collector.snapshot().get("daily_brief", {}))
+            return
+        if parsed.path == "/api/rule-assistant":
+            self.send_json(self.collector.snapshot().get("rule_assistant", {}))
+            return
         if parsed.path == "/api/config":
             self.send_json({"refresh_ms": int(self.collector.interval * 1000), "demo": self.collector.demo})
             return
@@ -1817,9 +1971,13 @@ class SocxHandler(BaseHTTPRequestHandler):
             "pi": (["/usr/local/bin/socx", "pi-llm"], 330.0, "Pi 3-LLM analysis"),
             "status": (["/usr/local/bin/socx", "status"], 25.0, "SOCX status"),
             "explain": (["/usr/local/bin/socx", "explain-screen"], 25.0, "SOCX explanation"),
+            "brief": (["/usr/local/bin/socx", "brief"], 40.0, "Daily SOC brief"),
+            "timeline": (["/usr/local/bin/socx", "timeline", "120"], 35.0, "Incident timeline"),
+            "rules": (["/usr/local/bin/socx", "rules"], 35.0, "Rule assistant"),
+            "doctor": (["/usr/local/bin/socx", "status"], 35.0, "pfSense health doctor"),
         }
         if action not in commands:
-            return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, incident, zeek, speedtest, pi, status, explain"}
+            return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, incident, zeek, speedtest, pi, status, explain, brief, timeline, rules, doctor"}
         args, timeout, title = commands[action]
         result = run_cmd_capture(args, timeout=timeout)
         return {"action": action, "title": title, **result}

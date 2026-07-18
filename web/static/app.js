@@ -192,6 +192,51 @@ function renderIncident(incident = {}) {
   table.innerHTML = lines.slice(0, 11).join("");
 }
 
+function renderIncidentTimeline(timeline = {}) {
+  const root = $("incident-timeline");
+  if (!root) return;
+  const rows = Array.isArray(timeline.rows) ? timeline.rows : [];
+  root.innerHTML = rows.slice(0, 5).map((item) => {
+    const sev = String(item.severity || "").toUpperCase();
+    const cls = sev.includes("HIGH") ? "red" : sev.includes("MED") || sev.includes("WARN") ? "yellow" : "green";
+    return `
+      <div class="timeline-row">
+        <span>${escapeHtml(item.time || "--")}</span>
+        <b class="${cls}">${escapeHtml(item.kind || "SOCX")}</b>
+        <em title="${escapeHtml(item.detail || "")}">${escapeHtml(item.title || item.detail || "--")}</em>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderDailyBrief(brief = {}) {
+  const root = $("daily-brief");
+  if (!root) return;
+  const summary = Array.isArray(brief.summary) ? brief.summary : [];
+  const next = Array.isArray(brief.next) ? brief.next : [];
+  root.innerHTML = `
+    <div class="brief-title"><span>${escapeHtml(brief.title || "SOCX Brief")}</span><b class="${brief.status === "watch" ? "yellow" : "green"}">${escapeHtml(brief.status || "normal")}</b></div>
+    ${summary.slice(0, 4).map((line) => `<div class="brief-line">${escapeHtml(line)}</div>`).join("")}
+    ${next.length ? `<div class="brief-next">${next.slice(0, 2).map(escapeHtml).join(" | ")}</div>` : ""}
+  `;
+}
+
+function renderRuleAssistant(assistant = {}) {
+  const root = $("rule-assistant");
+  if (!root) return;
+  const drafts = Array.isArray(assistant.drafts) ? assistant.drafts : [];
+  root.innerHTML = drafts.slice(0, 2).map((draft) => {
+    const cls = draft.confidence === "high" ? "green" : draft.confidence === "medium" ? "yellow" : "cyan";
+    return `
+      <div class="rule-row">
+        <b class="${cls}">${escapeHtml(draft.kind || "review")}</b>
+        <span title="${escapeHtml(draft.evidence || "")}">${escapeHtml(draft.recommendation || "--")}</span>
+        <em>${escapeHtml(draft.safe_command || "socx status")}</em>
+      </div>
+    `;
+  }).join("");
+}
+
 function renderPiNodes(piNodes = {}) {
   const root = $("pi-nodes");
   const score = $("pi-fleet-score");
@@ -294,7 +339,7 @@ function renderAssetWatch(asset = {}) {
       <div class="identity-row">
         <b>${escapeHtml(device.asset || "--")}</b>
         <span title="${escapeHtml(device.summary || apps)}">${escapeHtml(device.profile ? `${device.profile}: ${apps || "--"}` : apps || "--")}</span>
-        <em class="${cls}">${escapeHtml((device.unusual || []).length ? "odd" : device.confidence || "low")}</em>
+        <em class="${cls}">${escapeHtml((device.unusual || []).length ? "odd" : device.identity_confidence || device.confidence || "low")}</em>
       </div>
     `;
   }).join("");
@@ -535,6 +580,9 @@ function render(state) {
   renderAssetWatch(state.asset_watch || {});
   renderAiTimeline(state.ai_timeline || {});
   renderIncident(state.incident || {});
+  renderIncidentTimeline(state.incident_timeline || {});
+  renderDailyBrief(state.daily_brief || {});
+  renderRuleAssistant(state.rule_assistant || {});
   renderFlows(state.flows || []);
   renderPackets(state.packets || []);
   renderTicker(state.events || []);
@@ -548,6 +596,9 @@ function commanderActionFromSpeech(text) {
   if (/(zeek|logs?)/.test(value)) return "zeek";
   if (/(pi|raspberry|ai|llm)/.test(value)) return "pi";
   if (/(explain|why|summary|plain english)/.test(value)) return "explain";
+  if (/(brief|daily|morning)/.test(value)) return "brief";
+  if (/(timeline|story|history)/.test(value)) return "timeline";
+  if (/(rule|draft|recommend)/.test(value)) return "rules";
   if (/(status|health|doctor)/.test(value)) return "status";
   return "";
 }
@@ -568,13 +619,13 @@ function runVoiceCommand() {
   recognition.interimResults = false;
   recognition.maxAlternatives = 1;
   if (title) title.textContent = "Listening";
-  if (body) body.textContent = "Say: status, incident, snapshot, speed test, Zeek, or Pi AI.";
+  if (body) body.textContent = "Say: status, incident, snapshot, speed test, Zeek, Pi AI, brief, timeline, rules, or explain.";
   recognition.onresult = (event) => {
     const transcript = event.results?.[0]?.[0]?.transcript || "";
     const action = commanderActionFromSpeech(transcript);
     if (!action) {
       if (title) title.textContent = "Voice command not mapped";
-    if (body) body.textContent = `Heard: ${transcript}\nAllowed: status, incident, snapshot, speedtest, zeek, pi, explain.`;
+    if (body) body.textContent = `Heard: ${transcript}\nAllowed: status, incident, snapshot, speedtest, zeek, pi, explain, brief, timeline, rules, doctor.`;
       return;
     }
     runCommander(action);

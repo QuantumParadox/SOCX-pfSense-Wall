@@ -1,0 +1,101 @@
+#!/bin/sh
+set -u
+
+OUTDIR="${SOCX_BRIEF_DIR:-/root/socx-briefs}"
+STAMP="$(date +%Y%m%d-%H%M%S)"
+OUT="$OUTDIR/socx-brief-$STAMP.txt"
+mkdir -p "$OUTDIR"
+
+env_value() {
+    key="$1"
+    file="$2"
+    [ -f "$file" ] || { echo ""; return; }
+    sed -n "s/^$key=//p" "$file" 2>/dev/null | tail -1
+}
+
+age_file() {
+    file="$1"
+    [ -f "$file" ] || { echo ""; return; }
+    now="$(date +%s)"
+    mod="$(stat -f %m "$file" 2>/dev/null || stat -c %Y "$file" 2>/dev/null || echo 0)"
+    [ "$mod" -gt 0 ] 2>/dev/null || { echo ""; return; }
+    echo $((now - mod))
+}
+
+section() {
+    {
+        echo
+        echo "## $1"
+        echo
+    } >> "$OUT"
+}
+
+run() {
+    "$@" >> "$OUT" 2>&1 || true
+}
+
+fw="$(tail -2000 /var/log/filter.log 2>/dev/null | grep -Eic ',block,|,reject,' || true)"
+dns="$(tail -2000 /var/log/pfblockerng/dnsbl.log /var/log/pfblockerng/dns_reply.log 2>/dev/null | wc -l | awk '{print $1}' || echo 0)"
+ids="$(find /var/log/suricata -maxdepth 2 -type f \( -name alerts.log -o -name fast.log \) 2>/dev/null | xargs tail -500 2>/dev/null | wc -l | awk '{print $1}' || echo 0)"
+mode="$(env_value mode /tmp/socx-autopilot.env)"
+score="$(env_value score /tmp/socx-autopilot.env)"
+pi_sev="$(env_value severity /tmp/socx-pi-llm-analysis.env)"
+pi_roles="$(env_value roles /tmp/socx-pi-llm-analysis.env)"
+
+{
+    echo "SOCX Daily SOC Brief"
+    echo "Generated: $(date)"
+    echo "Host: $(hostname 2>/dev/null || echo pfSense)"
+    echo
+    echo "At-a-glance:"
+    echo "- Autopilot: ${mode:-unknown} score ${score:---}/100"
+    echo "- Firewall blocks sampled: $fw"
+    echo "- DNSBL lines sampled: $dns"
+    echo "- IDS lines sampled: $ids"
+    echo "- Pi AI: ${pi_sev:-unknown} roles ${pi_roles:---}"
+} > "$OUT"
+
+section "Recommended Next Actions"
+if [ "$ids" -gt 0 ] 2>/dev/null || [ "$fw" -gt 80 ] 2>/dev/null; then
+    echo "- Preserve evidence first: socx incident quick" >> "$OUT"
+fi
+echo "- Review timeline: socx timeline 120" >> "$OUT"
+echo "- Review rule drafts: socx rules" >> "$OUT"
+echo "- Refresh AI verdict: socx pi-llm" >> "$OUT"
+
+section "Label Brain"
+if command -v socx-label-brain >/dev/null 2>&1; then
+    run socx-label-brain
+else
+    echo "socx-label-brain not installed." >> "$OUT"
+fi
+
+section "Autopilot"
+if command -v socx-doctor >/dev/null 2>&1; then
+    run socx-doctor autopilot
+else
+    cat /tmp/socx-autopilot.env 2>/dev/null >> "$OUT" || echo "No autopilot cache." >> "$OUT"
+fi
+
+section "Incident Timeline"
+if command -v socx-timeline >/dev/null 2>&1; then
+    run socx-timeline 120
+else
+    echo "socx-timeline not installed." >> "$OUT"
+fi
+
+section "Speedtest Truth"
+if command -v socx-doctor >/dev/null 2>&1; then
+    run socx-doctor speedtest-profiles
+fi
+
+section "Pi AI Verdict"
+if [ -f /tmp/socx-pi-llm-analysis.env ]; then
+    cat /tmp/socx-pi-llm-analysis.env >> "$OUT"
+    echo "age=$(age_file /tmp/socx-pi-llm-analysis.env)s" >> "$OUT"
+else
+    echo "No Pi AI verdict cache." >> "$OUT"
+fi
+
+find "$OUTDIR" -type f -name 'socx-brief-*.txt' -mtime +30 -delete 2>/dev/null || true
+echo "$OUT"

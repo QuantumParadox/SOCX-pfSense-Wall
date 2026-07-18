@@ -73,6 +73,20 @@ else
     echo "socx-doctor not installed." >> "$OUT"
 fi
 
+section "SOCX Rule Assistant"
+if command -v socx-rule-assistant >/dev/null 2>&1; then
+    run socx-rule-assistant
+else
+    echo "socx-rule-assistant not installed." >> "$OUT"
+fi
+
+section "SOCX Incident Timeline"
+if command -v socx-timeline >/dev/null 2>&1; then
+    run socx-timeline 120
+else
+    echo "socx-timeline not installed." >> "$OUT"
+fi
+
 section "SOCX Doctor Traffic Totals"
 if command -v socx-doctor >/dev/null 2>&1; then
     run socx-doctor vnstat

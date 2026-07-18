@@ -22,6 +22,8 @@ install -m 0755 "$ROOT/scripts/socx-hosts-audit" /usr/local/bin/socx-hosts-audit
 install -m 0755 "$ROOT/scripts/socx-explain" /usr/local/bin/socx-explain
 install -m 0755 "$ROOT/scripts/socx-menu" /usr/local/bin/socx-menu
 install -m 0755 "$ROOT/scripts/socx-timeline" /usr/local/bin/socx-timeline
+install -m 0755 "$ROOT/scripts/socx-brief" /usr/local/bin/socx-brief
+install -m 0755 "$ROOT/scripts/socx-rule-assistant" /usr/local/bin/socx-rule-assistant
 install -m 0755 "$ROOT/scripts/socx-repair" /usr/local/bin/socx-repair
 install -m 0755 "$ROOT/scripts/socx-explain-screen" /usr/local/bin/socx-explain-screen
 install -m 0755 "$ROOT/scripts/socx-history" /usr/local/bin/socx-history

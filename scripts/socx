@@ -27,6 +27,14 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-timeline "$@"
         ;;
+    brief|daily-brief|soc-brief)
+        shift
+        exec /usr/local/bin/socx-brief "$@"
+        ;;
+    rules|rule-assistant|rule-draft)
+        shift
+        exec /usr/local/bin/socx-rule-assistant "$@"
+        ;;
     why-now|why-now?)
         shift
         exec /usr/local/bin/socx-why-now "$@"

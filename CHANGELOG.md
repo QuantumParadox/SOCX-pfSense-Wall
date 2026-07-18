@@ -2,6 +2,12 @@
 
 ## v0.1.46
 
+- Added a structured browser Incident Timeline that links firewall pressure, DNSBL hits, IDS buckets, learned-normal device anomalies, and Pi/MIRANDA AI verdicts into one readable story.
+- Added a Daily SOC Brief card and `socx brief`, which saves a timestamped report under `/root/socx-briefs/` with Autopilot, Label Brain, timeline, Speedtest, and Pi AI context.
+- Added approval-only `socx rules` / Rule Assistant recommendations for firewall, DNSBL, IDS, and device-profile review without automatically changing pfSense policy.
+- Added browser Commander buttons and safe endpoints for Brief, Timeline, Rules, and Doctor.
+- Added device identity confidence labels (`confirmed`, `likely`, `unknown`) on top of Label Brain app/service confidence.
+- Expanded snapshots and reports with Daily Brief, Rule Assistant, and structured timeline artifacts.
 - Added Label Brain v2 rolling local memory with per-device profiles, normal apps/services, unusual behavior hints, grouped Now Watching categories, and browser/terminal visibility.
 - Added an Explain button to the browser Commander and a `/api/label-brain` endpoint for integrations and snapshots.
 - Enriched Pi/MIRANDA exports with Label Brain context so local LLMs can reason about device identity and learned-normal behavior.

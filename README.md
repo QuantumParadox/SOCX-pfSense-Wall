@@ -74,8 +74,12 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Keeps app/service enrichment local by default: raw IP-only `pftop`/`tcpdump` flows are labeled from local host maps, ports, DNS/DNSBL logs, and safe built-in patterns rather than automatic third-party lookups.
 - Adds `socx label-brain`, a terminal-friendly passive identity summary that shows likely per-device apps and services from local pf states, DNS/DNSBL/resolver logs, and host labels.
 - Adds rolling local Label Brain memory in `/var/db/socx_label_brain.json`, so SOCX can learn normal per-device apps/services and flag unusual app/service changes without external lookups.
+- Adds device identity confidence labels (`confirmed`, `likely`, `unknown`) so friendly names are easier to trust at a glance.
 - Adds grouped Now Watching categories such as Streaming, AI Lab, Quantum, and Cloud inside LAN Asset Watch when local DNS/log evidence supports them.
 - Adds an Explain button in the browser Commander for a safe plain-English screen summary.
+- Adds a browser Daily SOC Brief, structured Incident Timeline, and approval-only Rule Assistant for turning live telemetry into a readable investigation story.
+- Adds `socx brief`, which writes a timestamped daily SOC summary to `/root/socx-briefs/`.
+- Adds `socx rules`, an approval-only recommendation view for firewall, DNSBL, IDS, and device-profile review. It does not change firewall rules automatically.
 - Adds `socx snapshot`, a read-only evidence bundle for status, why-now, history, timeline, Speedtest paths, topology, unknown services, and web API JSON.
 - Adds `socx snapshot-cron`, a nightly read-only evidence snapshot schedule with retention cleanup.
 - Adds `/api/history` plus a tiny Command Center score sparkline in the browser wall.
@@ -140,6 +144,8 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-explain` - explains short labels such as `tls`, `dnsbl`, `nut`, `sysl`, `game`, and `unk`.
 - `scripts/socx-menu` - interactive SOCX Command Center for common operator workflows.
 - `scripts/socx-timeline` - compact incident timeline from recent VPN, Speedtest, firewall, DNSBL, IDS, and AI signals.
+- `scripts/socx-brief` - daily SOC brief generator with Autopilot, Label Brain, timeline, Speedtest, and Pi AI context.
+- `scripts/socx-rule-assistant` - approval-only rule recommendation assistant for evidence-backed policy review.
 - `scripts/socx-repair` - safe collector repair for SOCX wall helpers, vnstatd, LLDP, and Pi discovery without changing firewall policy.
 - `scripts/socx-explain-screen` - plain-English explanation of the current wall state and Autopilot mode.
 - `scripts/socx-history` - appends compact SOCX trend samples to `/var/db/socx_history.jsonl` and tails recent history.

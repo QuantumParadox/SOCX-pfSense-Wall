@@ -1,0 +1,85 @@
+#!/bin/sh
+set -u
+
+echo "SOCX Rule Assistant"
+echo "mode: approval-only, read-only evidence review"
+echo "generated: $(date)"
+echo
+
+fw_top="$(tail -1600 /var/log/filter.log 2>/dev/null | grep -Ei ',block,|,reject,' | awk -F, '
+  $9 == 4 && $19 ~ /^[0-9.]+$/ {src[$19]++; port[$22]++}
+  END {
+    top_src=""; top_src_n=0; top_port=""; top_port_n=0
+    for (s in src) if (src[s] > top_src_n) {top_src=s; top_src_n=src[s]}
+    for (p in port) if (p != "" && port[p] > top_port_n) {top_port=p; top_port_n=port[p]}
+    if (top_src_n > 0) printf "%s|%d|%s|%d\n", top_src, top_src_n, top_port, top_port_n
+  }')"
+
+dns_top="$(tail -1200 /var/log/pfblockerng/dnsbl.log /var/log/pfblockerng/dns_reply.log 2>/dev/null | awk -F, '
+  NF >= 3 {
+    d=$3
+    gsub(/^ +| +$/, "", d)
+    if (d ~ /\./) dns[d]++
+  }
+  END {
+    top=""; n=0
+    for (d in dns) if (dns[d] > n) {top=d; n=dns[d]}
+    if (n > 0) printf "%s|%d\n", top, n
+  }')"
+
+ids_high="$(find /var/log/suricata -maxdepth 2 -type f \( -name alerts.log -o -name fast.log \) 2>/dev/null | xargs tail -500 2>/dev/null | grep -Eic 'malware|trojan|ransom|command.?and.?control|c2|botnet|exploit|known.?bad' || true)"
+
+printed=0
+if [ -n "$fw_top" ]; then
+    src="$(printf '%s' "$fw_top" | cut -d'|' -f1)"
+    src_n="$(printf '%s' "$fw_top" | cut -d'|' -f2)"
+    port="$(printf '%s' "$fw_top" | cut -d'|' -f3)"
+    port_n="$(printf '%s' "$fw_top" | cut -d'|' -f4)"
+    if [ "$src_n" -ge 40 ] 2>/dev/null; then
+        printed=1
+        echo "[firewall-review] confidence=medium"
+        echo "  recommendation: Review repeated WAN scan source $src before creating any persistent block."
+        echo "  evidence: $src_n blocked events; top destination port ${port:-mixed} x${port_n:-0}"
+        echo "  safe next command: socx incident quick"
+        echo
+    fi
+fi
+
+if [ -n "$dns_top" ]; then
+    domain="$(printf '%s' "$dns_top" | cut -d'|' -f1)"
+    dns_n="$(printf '%s' "$dns_top" | cut -d'|' -f2)"
+    printed=1
+    echo "[dnsbl-review] confidence=medium"
+    echo "  recommendation: Inspect $domain and affected LAN hosts before allowlisting or suppressing."
+    echo "  evidence: $dns_n DNSBL observations from pfBlockerNG logs."
+    echo "  safe next command: socx-doctor dnsbl-review"
+    echo
+fi
+
+if [ "$ids_high" -gt 0 ] 2>/dev/null; then
+    printed=1
+    echo "[ids-review] confidence=medium"
+    echo "  recommendation: Preserve evidence and review the matching Suricata signatures before tuning."
+    echo "  evidence: $ids_high high-signal IDS lines in the recent sample."
+    echo "  safe next command: socx snapshot"
+    echo
+fi
+
+if command -v socx-label-brain >/dev/null 2>&1; then
+    odd="$(socx-label-brain 2>/dev/null | awk 'tolower($0) ~ / odd| unusual/ {print; exit}')"
+    if [ -n "$odd" ]; then
+        printed=1
+        echo "[device-profile-review] confidence=low"
+        echo "  recommendation: Verify learned-normal device behavior before any policy change."
+        echo "  evidence: $odd"
+        echo "  safe next command: socx label-brain"
+        echo
+    fi
+fi
+
+if [ "$printed" -eq 0 ]; then
+    echo "[no-rule-change] confidence=high"
+    echo "  recommendation: No firewall, DNSBL, or IDS policy change is recommended from this sample."
+    echo "  evidence: No high-confidence repeated harmful behavior crossed the safe review threshold."
+    echo "  safe next command: socx status"
+fi
