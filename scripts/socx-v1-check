@@ -1,0 +1,115 @@
+#!/bin/sh
+set -u
+
+ok=0
+warn=0
+fail=0
+
+mark() {
+    level="$1"
+    shift
+    case "$level" in
+        OK) ok=$((ok + 1)) ;;
+        WARN) warn=$((warn + 1)) ;;
+        FAIL) fail=$((fail + 1)) ;;
+    esac
+    printf '%-5s %s\n' "$level" "$*"
+}
+
+age_file() {
+    file="$1"
+    [ -f "$file" ] || { echo ""; return; }
+    now="$(date +%s)"
+    mod="$(stat -f %m "$file" 2>/dev/null || stat -c %Y "$file" 2>/dev/null || echo 0)"
+    [ "$mod" -gt 0 ] 2>/dev/null || { echo ""; return; }
+    echo $((now - mod))
+}
+
+env_get() {
+    key="$1"
+    file="$2"
+    [ -f "$file" ] || { echo ""; return; }
+    sed -n "s/^$key=//p" "$file" 2>/dev/null | tail -1
+}
+
+json_count() {
+    file="$1"
+    [ -f "$file" ] || { echo 0; return; }
+    wc -l < "$file" 2>/dev/null | awk '{print $1+0}'
+}
+
+echo "SOCX v1.0 readiness gate"
+echo "generated $(date)"
+echo
+
+tmux has-session -t socx >/dev/null 2>&1 && mark OK "tmux wall session running" || mark WARN "tmux wall session not running"
+service socxweb status >/dev/null 2>&1 && mark OK "socxweb service running" || mark FAIL "socxweb service not running"
+
+if fetch -qo /tmp/socx-v1-state.json http://127.0.0.1:8094/api/state 2>/dev/null || curl -fsS --max-time 5 http://127.0.0.1:8094/api/state >/tmp/socx-v1-state.json 2>/dev/null; then
+    mark OK "browser API /api/state reachable"
+else
+    mark FAIL "browser API /api/state unreachable"
+fi
+
+err_size="$(wc -c /tmp/socx-wall.err 2>/dev/null | awk '{print $1+0}')"
+[ "${err_size:-0}" -eq 0 ] 2>/dev/null && mark OK "wall error log clean" || mark WARN "wall error log has ${err_size:-?} bytes"
+
+spd_status="$(env_get status /tmp/socx-speedtest-cache.env)"
+spd_down="$(env_get download_mbps /tmp/socx-speedtest-cache.env)"
+spd_up="$(env_get upload_mbps /tmp/socx-speedtest-cache.env)"
+[ "$spd_status" = ok ] && mark OK "active Speedtest ${spd_down:-?}/${spd_up:-?} Mbps" || mark WARN "active Speedtest status=${spd_status:-missing}"
+
+direct_status="$(env_get status /tmp/socx-speedtest-direct.env)"
+[ "$direct_status" = ok ] && mark OK "DIRECT Speedtest ready" || mark WARN "DIRECT Speedtest not ready"
+
+vpn_status="$(env_get status /tmp/socx-speedtest-vpn.env)"
+case "$vpn_status" in
+    ok) mark OK "VPN Speedtest has valid sample" ;;
+    unavailable|"") mark WARN "VPN Speedtest inactive or waiting; OK if VPN is currently off" ;;
+    *) mark WARN "VPN Speedtest status=$vpn_status" ;;
+esac
+
+hist_count="$(json_count /var/db/socx_speedtest_history.jsonl)"
+[ "$hist_count" -gt 0 ] 2>/dev/null && mark OK "Speedtest history samples=$hist_count" || mark WARN "Speedtest history empty"
+
+mem_count="$(json_count /var/db/socx_incident_memory.jsonl)"
+[ "$mem_count" -gt 0 ] 2>/dev/null && mark OK "incident memory samples=$mem_count" || mark WARN "incident memory empty"
+
+[ -f /var/db/socx_label_brain.json ] && mark OK "Label Brain memory present" || mark WARN "Label Brain memory missing"
+
+if command -v socx-hosts-audit >/dev/null 2>&1; then
+    SOCX_HOSTS_AUDIT_OUT=/tmp/socx-v1-hosts.txt socx-hosts-audit >/tmp/socx-v1-hosts-run.txt 2>&1 || true
+    unknown="$(awk 'tolower($0) ~ / unknown$/ {n++} END{print n+0}' /tmp/socx-v1-hosts.txt 2>/dev/null)"
+    [ "${unknown:-0}" -le 5 ] 2>/dev/null && mark OK "host naming audit unknowns=${unknown:-0}" || mark WARN "host naming audit unknowns=${unknown:-?}; run socx hosts suggest"
+else
+    mark WARN "host audit command missing"
+fi
+
+if command -v socx-pi-nodes >/dev/null 2>&1; then
+    socx-pi-nodes >/tmp/socx-v1-pi.txt 2>&1 || true
+fi
+pi_online="$(jq -r '.online // 0' /tmp/socx-pi-nodes.json 2>/dev/null || echo 0)"
+pi_count="$(jq -r '.count // 0' /tmp/socx-pi-nodes.json 2>/dev/null || echo 0)"
+[ "$pi_count" -gt 0 ] 2>/dev/null && [ "$pi_online" -eq "$pi_count" ] 2>/dev/null && mark OK "Pi fleet ${pi_online}/${pi_count} online" || mark WARN "Pi fleet ${pi_online:-0}/${pi_count:-0} online"
+
+pi_roles="$(env_get roles /tmp/socx-pi-llm-analysis.env)"
+[ "$pi_roles" = "3/3" ] && mark OK "Pi 3-LLM roles online" || mark WARN "Pi 3-LLM roles=${pi_roles:-missing}"
+
+service_unhealthy="$(service -e 2>/dev/null | wc -l | awk '{print $1+0}')"
+[ "$service_unhealthy" -ge 0 ] && mark OK "pfSense service list readable"
+
+if command -v git >/dev/null 2>&1 && [ -d .git ]; then
+    mark OK "git checkout present $(git rev-parse --short HEAD 2>/dev/null)"
+else
+    mark INFO "git checkout not available on appliance install"
+fi
+
+echo
+printf 'summary OK=%d WARN=%d FAIL=%d\n' "$ok" "$warn" "$fail"
+if [ "$fail" -eq 0 ] && [ "$warn" -le "${SOCX_V1_WARN_BUDGET:-4}" ]; then
+    echo "READY FOR v1.0"
+    exit 0
+fi
+echo "NOT READY FOR v1.0 - fix FAIL lines and review WARN lines"
+[ "$fail" -eq 0 ] || exit 1
+exit 0

@@ -78,8 +78,10 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds grouped Now Watching categories such as Streaming, AI Lab, Quantum, and Cloud inside LAN Asset Watch when local DNS/log evidence supports them.
 - Adds an Explain button in the browser Commander for a safe plain-English screen summary.
 - Adds a browser Daily SOC Brief, structured Incident Timeline, and approval-only Rule Assistant for turning live telemetry into a readable investigation story.
+- Adds focused browser detail pages for Speedtest, Devices, Incidents, and AI so the main wall stays clean while deeper evidence is still available.
 - Adds `socx brief`, which writes a timestamped daily SOC summary to `/root/socx-briefs/`.
 - Adds `socx rules`, an approval-only recommendation view for firewall, DNSBL, IDS, and device-profile review. It does not change firewall rules automatically.
+- Adds `socx v1-check`, a readiness gate that verifies the terminal wall, browser API, renderer log, Speedtest paths, incident memory, Label Brain, host naming, Pi fleet, Pi 3-LLM roles, and pfSense service visibility.
 - Adds `socx snapshot`, a read-only evidence bundle for status, why-now, history, timeline, Speedtest paths, topology, unknown services, and web API JSON.
 - Adds `socx snapshot-cron`, a nightly read-only evidence snapshot schedule with retention cleanup.
 - Adds `/api/history` plus a tiny Command Center score sparkline in the browser wall.
@@ -91,6 +93,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds browser Speedtest truth comparison for CLIENT, ROUTER, DIRECT, and VPN paths so router-side under-reporting is visible instead of confusing.
 - Adds dedicated Speedtest history in `/var/db/socx_speedtest_history.jsonl`, `socx speedtest-history`, browser trend rows, and `/api/speedtest-history`.
 - Refuses to label direct Frontier traffic as VPN throughput when `socx speedtest vpn` is run while the VPN path is inactive.
+- Marks Speedtest detail rows as ready, stale, inactive, error, or waiting, so VPN readings are not presented as good data when the VPN path is off.
 - Adds rolling incident memory in `/var/db/socx_incident_memory.jsonl`, `socx incident-memory`, browser memory rows, and `/api/incident-memory` so repeated scan/DNSBL patterns become recognizable.
 - Adds `socx pi-lab`, a safe bridge for starting bounded, read-only Pi 5 AI experiments such as model inventory, LLM pulse, and thermal watch.
 - Adds `/api/commander`, a fixed allowlist endpoint for safe operator actions without arbitrary shell access.
@@ -145,6 +148,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-incident` - short incident command that runs capture and prints the latest bundle manifest.
 - `scripts/socx-report` - daily/weekly text report generator for firewall, DNSBL, IDS, VPN, UPS, Speedtest, hosts, and unknown ports.
 - `scripts/socx-report-cron` - installs/removes a daily SOCX report cron entry with report retention cleanup.
+- `scripts/socx-v1-check` - v1 readiness gate for wall, browser API, Speedtest truth, incident memory, Label Brain, host naming, Pi fleet, Pi roles, and clean renderer logs.
 - `scripts/socx-hosts-audit` - builds a known/unknown LAN device list from host config, ARP, DHCP leases, and PF states.
 - `scripts/socx-explain` - explains short labels such as `tls`, `dnsbl`, `nut`, `sysl`, `game`, and `unk`.
 - `scripts/socx-menu` - interactive SOCX Command Center for common operator workflows.
@@ -173,6 +177,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `pi/socx_pi_llm_orchestrator.py` - optional Raspberry Pi FastAPI receiver that fans SOCX evidence to three local model roles.
 - `pi/socx_pi_sidecar.py` - lightweight standard-library Pi telemetry endpoint for Pi 4/Pi fleet health on port `8096`.
 - Browser wall Command Center - includes safe click/voice actions, Speedtest truth comparison, and the compact Pi Fleet link visualizer.
+- Browser detail pages - `/speedtest`, `/devices`, `/incidents`, and `/ai` expand the wall's main signals into readable evidence views.
 - `scripts/iftopx`, `scripts/tcpdumpx`, `scripts/socx` - convenience launchers.
 - `scripts/socweb` - browser dashboard launcher.
 - `web/socx-web.py` - lightweight Python WebSocket/HTTP backend for the browser wall.
@@ -210,6 +215,15 @@ Open it from the wall display:
 
 ```text
 http://192.168.1.1:8094/
+```
+
+Focused detail views:
+
+```text
+http://192.168.1.1:8094/speedtest
+http://192.168.1.1:8094/devices
+http://192.168.1.1:8094/incidents
+http://192.168.1.1:8094/ai
 ```
 
 Kiosk examples:
@@ -393,6 +407,7 @@ socx-report weekly
 socx-report-cron install
 socx-report-cron status
 socx menu
+socx v1-check
 socx status
 socx autopilot
 socx why-now
@@ -420,9 +435,11 @@ socx-doctor logs
 socx-doctor why-blocked samsungcloudsolution.net
 ```
 
-Reports are written to `/root/socx-reports/` and include firewall blocks, DNSBL samples, IDS samples, VPN/gateway status, Speedtest cache, UPS cache, top PF states, Service Watchdog data, unknown ports, and a host audit.
+Reports are written to `/root/socx-reports/` and include firewall blocks, DNSBL samples, IDS samples, VPN/gateway status, Speedtest cache, UPS cache, top PF states, Service Watchdog data, unknown ports, and a host audit. `socx-report weekly` also adds an executive rollup with Speedtest path trends, repeated incident memory, learned device identities, and `socx v1-check` readiness output.
 
 `socx status` is the fast operator overview. It checks the wall session, renderer errors, Speedtest cache, UPS cache, WAN/VPN gateway truth, DNS, vnstatd, LLDP tools, report/MIRANDA/Pi cron jobs, AI caches, and unknown-service learner noise. It prints `OK`, `WARN`, and `FAIL` lines with the next command to run when something needs attention.
+
+`socx v1-check` is the release/readiness gate. It should end with `READY FOR v1.0` when there are no failures and only expected warnings, such as VPN Speedtest being inactive while the VPN path is intentionally off.
 
 `socx menu` opens the SOCX Command Center. It gives quick access to status, Autopilot, Speedtest paths, VPN details, why-slow, DNSBL/IDS review, unknown services, incident capture, wall restart, collector repair, latest report, timeline, and screen explanation.
 

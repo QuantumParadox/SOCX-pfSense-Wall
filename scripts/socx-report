@@ -34,6 +34,33 @@ echo "Firewall blocks sampled: $fw" >> "$OUT"
 echo "DNSBL lines sampled: $dns" >> "$OUT"
 echo "Suricata alert lines sampled: $ids" >> "$OUT"
 
+if [ "$PERIOD" = "weekly" ]; then
+    section "Weekly Executive Rollup"
+    echo "Purpose: one-page operator summary for SOCX, pfSense, Pi AI, Speedtest, and repeated security noise." >> "$OUT"
+    echo "" >> "$OUT"
+    if command -v socx-speedtest-history >/dev/null 2>&1; then
+        echo "Speedtest path trend:" >> "$OUT"
+        socx-speedtest-history summary 1200 >> "$OUT" 2>&1 || true
+    fi
+    echo "" >> "$OUT"
+    if command -v socx-incident-memory >/dev/null 2>&1; then
+        echo "Repeated incident memory:" >> "$OUT"
+        socx-incident-memory summary 1200 >> "$OUT" 2>&1 || true
+    fi
+    echo "" >> "$OUT"
+    if command -v socx-label-brain >/dev/null 2>&1; then
+        echo "Top learned device identities:" >> "$OUT"
+        socx-label-brain 2>/dev/null | head -18 >> "$OUT" || true
+    fi
+    echo "" >> "$OUT"
+    echo "Recommended v1 gate:" >> "$OUT"
+    if command -v socx-v1-check >/dev/null 2>&1; then
+        socx-v1-check >> "$OUT" 2>&1 || true
+    else
+        echo "socx-v1-check not installed." >> "$OUT"
+    fi
+fi
+
 section "Speedtest"
 if [ -f /tmp/socx-speedtest-cache.env ]; then
     cat /tmp/socx-speedtest-cache.env >> "$OUT"

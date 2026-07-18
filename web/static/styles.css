@@ -101,6 +101,24 @@ body {
   min-width: 0;
 }
 
+.detail-link,
+.detail-nav a {
+  color: var(--cyan);
+  text-decoration: none;
+  border: 1px solid rgba(52, 215, 242, .24);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: rgba(52, 215, 242, .05);
+  font-size: clamp(10px, .72vw, 13px);
+  font-weight: 900;
+}
+
+.detail-link:hover,
+.detail-nav a:hover {
+  color: var(--green);
+  border-color: rgba(118, 242, 125, .56);
+}
+
 .pill,
 .clock,
 .icon-button {
@@ -1071,6 +1089,103 @@ body {
 
 .red {
   color: var(--red);
+}
+
+.detail-body {
+  min-height: 100vh;
+  overflow: auto;
+}
+
+.detail-shell {
+  min-height: 100vh;
+  padding: clamp(10px, 1.2vw, 18px);
+}
+
+.detail-topbar {
+  margin-bottom: 12px;
+}
+
+.detail-nav {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.detail-card {
+  min-width: 0;
+  border: 1px solid rgba(52, 215, 242, .34);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(9, 22, 29, .96), rgba(4, 10, 15, .98));
+  box-shadow: 0 0 24px rgba(52, 215, 242, .08);
+  padding: 12px;
+}
+
+.detail-card h2 {
+  margin: 0 0 10px;
+  color: var(--cyan);
+  font-size: clamp(15px, 1vw, 20px);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.detail-kv {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, .06);
+}
+
+.detail-kv span {
+  color: var(--muted);
+}
+
+.detail-kv b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-table {
+  display: grid;
+  gap: 4px;
+}
+
+.detail-row {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  padding: 6px 7px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, .035);
+  font-size: clamp(11px, .76vw, 14px);
+}
+
+.detail-row.head {
+  color: var(--cyan);
+  font-weight: 950;
+  background: rgba(52, 215, 242, .08);
+}
+
+.detail-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .muted {

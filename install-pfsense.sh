@@ -39,6 +39,7 @@ install -m 0755 "$ROOT/scripts/socx-mode" /usr/local/bin/socx-mode
 install -m 0755 "$ROOT/scripts/socx-host-labels" /usr/local/bin/socx-host-labels
 install -m 0755 "$ROOT/scripts/socx-label-brain" /usr/local/bin/socx-label-brain
 install -m 0755 "$ROOT/scripts/socx-doctor" /usr/local/bin/socx-doctor
+install -m 0755 "$ROOT/scripts/socx-v1-check" /usr/local/bin/socx-v1-check
 install -m 0755 "$ROOT/scripts/socx-ai-explain" /usr/local/bin/socx-ai-explain
 install -m 0755 "$ROOT/scripts/socx-miranda-bridge" /usr/local/bin/socx-miranda-bridge
 install -m 0755 "$ROOT/scripts/socx-miranda-cron" /usr/local/bin/socx-miranda-cron
@@ -58,6 +59,8 @@ install -m 0755 "$ROOT/scripts/socx" /usr/local/bin/socx
 install -m 0755 "$ROOT/scripts/socweb" /usr/local/bin/socweb
 install -m 0755 "$ROOT/web/socx-web.py" /usr/local/share/socx-web/socx-web.py
 install -m 0644 "$ROOT/web/static/index.html" /usr/local/share/socx-web/static/index.html
+install -m 0644 "$ROOT/web/static/detail.html" /usr/local/share/socx-web/static/detail.html
+install -m 0644 "$ROOT/web/static/detail.js" /usr/local/share/socx-web/static/detail.js
 install -m 0644 "$ROOT/web/static/styles.css" /usr/local/share/socx-web/static/styles.css
 install -m 0644 "$ROOT/web/static/app.js" /usr/local/share/socx-web/static/app.js
 ln -sf /usr/local/bin/socx /usr/local/bin/SOCX

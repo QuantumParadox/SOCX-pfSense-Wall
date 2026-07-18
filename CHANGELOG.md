@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.0.0-rc1
+
+- Added `socx v1-check`, a one-command readiness gate for the wall, browser API, Speedtest truth, incident memory, Label Brain, host naming, Pi fleet, Pi 3-LLM roles, and clean renderer logs.
+- Added browser detail pages for `/speedtest`, `/devices`, `/incidents`, and `/ai` so the main wall can stay readable while deeper SOCX evidence remains one click away.
+- Added Speedtest path state labels for browser detail views: `ready`, `stale`, `inactive`, `error`, and `waiting`, including message and external-IP context when available.
+- Added a weekly executive rollup section to `socx-report weekly` with Speedtest path trends, repeated incident memory, learned device identities, and v1 readiness output.
+- Added top navigation links in the browser wall for Speed, Devices, Incidents, and AI without changing the working main layout.
+
 ## v0.1.46
 
 - Added dedicated Speedtest history in `/var/db/socx_speedtest_history.jsonl`, `socx speedtest-history`, browser trend rows, and `/api/speedtest-history`.

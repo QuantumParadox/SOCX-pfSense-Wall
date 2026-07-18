@@ -12,6 +12,10 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-doctor status "$@"
         ;;
+    v1-check|v1|ready|readiness)
+        shift
+        exec /usr/local/bin/socx-v1-check "$@"
+        ;;
     autopilot|auto)
         shift
         /usr/local/bin/socx-doctor autopilot "$@"

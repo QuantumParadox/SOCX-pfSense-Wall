@@ -1551,13 +1551,27 @@ class SocxCollector:
             age = int(max(0, time.time() - updated)) if updated else 0
         except ValueError:
             age = 0
+        status_l = str(status).lower()
+        if status_l == "ok" and age < env_int("SOCX_SPEEDTEST_STALE_SECONDS", 25200):
+            path_state = "ready"
+        elif status_l == "ok":
+            path_state = "stale"
+        elif status_l in {"unavailable", "missing"}:
+            path_state = "inactive"
+        elif status_l in {"error", "failed"}:
+            path_state = "error"
+        else:
+            path_state = "waiting"
         return {
             "label": label,
             "status": status,
+            "path_state": path_state,
             "down": data.get("download_mbps", ""),
             "up": data.get("upload_mbps", ""),
             "ping": data.get("ping_ms", ""),
             "server": data.get("server_name") or data.get("server") or "",
+            "message": data.get("message", ""),
+            "external_ip": data.get("external_ip", ""),
             "age_sec": age,
         }
 
@@ -2102,7 +2116,9 @@ class SocxHandler(BaseHTTPRequestHandler):
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"", "/"}:
+        if path in {"/speedtest", "/devices", "/incidents", "/ai"}:
+            target = STATIC_DIR / "detail.html"
+        elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"
         else:
             clean = Path(path.lstrip("/"))
