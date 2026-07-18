@@ -2186,7 +2186,9 @@ function top_flow_mini_line(?array $flow, int $width): string
     $rate = short_bytes((int)($flow['score'] ?? 0)) . '/s';
     $shortSrc = preg_match('/^LAN\.(\d+)$/', $src, $m) ? 'L' . $m[1] : truncate_text($src, max(3, $width - cell_len('TOP  ' . $svc)));
     $verb = top_flow_direction_word($flow);
+    $friendly = top_flow_friendly_source((string)($flow['src'] ?? ''));
     $candidates = [
+        sprintf('TOP %s %s', $friendly, $svc),
         sprintf('TOP %s %s %s', $src, $verb, $svc),
         sprintf('TOP %s %s', $src, $svc),
         sprintf('TOP %s %s %s', $shortSrc, $verb, $svc),
@@ -2201,6 +2203,22 @@ function top_flow_mini_line(?array $flow, int $width): string
         }
     }
     return truncate_text(end($candidates), $width);
+}
+
+function top_flow_friendly_source(string $label): string
+{
+    $label = trim(preg_replace('/:\d+$/', '', $label) ?? $label);
+    if (str_contains($label, '/LAN.')) {
+        [$name] = explode('/LAN.', $label, 2);
+        $name = preg_replace('/[^A-Za-z0-9._-]/', '', $name) ?? '';
+        if ($name !== '') {
+            return truncate_text($name, 10);
+        }
+    }
+    if (preg_match('/^[A-Za-z][A-Za-z0-9._-]{2,}$/', $label) === 1 && !str_starts_with($label, 'EXT.')) {
+        return truncate_text($label, 10);
+    }
+    return top_flow_source_label($label);
 }
 
 function top_flow_source_label(string $label): string
@@ -2228,7 +2246,10 @@ function top_flow_line(?array $flow, int $width): string
     $svc = service_short((string)($flow['service'] ?? ''));
     $rate = short_bytes((int)($flow['score'] ?? 0)) . '/s';
     $verb = top_flow_direction_word($flow);
+    $friendly = top_flow_friendly_source((string)($flow['src'] ?? ''));
     $candidates = [
+        sprintf('TOP %s %s %s', $friendly, $svc, $rate),
+        sprintf('TOP %s %s', $friendly, $svc),
         sprintf('TOP %s %s %s %s', $verb, $path, $svc, $rate),
         sprintf('TOP %s %s %s', $path, $svc, $rate),
         sprintf('TOP %s %s', $path, $svc),
@@ -2327,11 +2348,12 @@ function modern_speedtest_rows(array $f, array $p): array
         }
 
         if ($w < 22) {
+            $srcTiny = speedtest_source_tiny($speedtest);
             return [
-                truncate_text(sprintf('%s D %sM', $source[0], $down !== '' ? $down : '?'), $w),
-                truncate_text(sprintf('%s U %sM', $source[0], $up !== '' ? $up : '?'), $w),
+                truncate_text(sprintf('%s↓ %sM', $srcTiny, $down !== '' ? $down : '?'), $w),
+                truncate_text(sprintf('%s↑ %sM', $srcTiny, $up !== '' ? $up : '?'), $w),
                 truncate_text(sprintf('LAT %sms', $ping !== '' ? $ping : '?'), $w),
-                truncate_text($context, $w),
+                truncate_text(speedtest_card_footer_text($speedtest, $w, $healthNext, $source, $context), $w),
             ];
         }
 
@@ -2339,7 +2361,7 @@ function modern_speedtest_rows(array $f, array $p): array
             truncate_text(sprintf('%s DOWN %sM ↓', $source, $down !== '' ? $down : '?'), $w),
             truncate_text(sprintf('%s UP   %sM ↑', $source, $up !== '' ? $up : '?'), $w),
             truncate_text(sprintf('PING %sms%s %s', $ping !== '' ? $ping : '?', $jitter !== '' ? ' J' . $jitter . 'ms' : '', $health), $w),
-            truncate_text($context, $w),
+            truncate_text(speedtest_card_footer_text($speedtest, $w, $healthNext, $source, $context), $w),
         ];
     }
 
@@ -2376,6 +2398,36 @@ function modern_speedtest_rows(array $f, array $p): array
             '',
         ],
     };
+}
+
+function speedtest_card_footer_text(array $speedtest, int $width, string $healthNext, string $source, string $context): string
+{
+    $sourceShort = speedtest_source_tiny($speedtest);
+    $pathFull = 'PATH ' . $source;
+    $pathTiny = 'PATH ' . $sourceShort;
+    $context = trim($context);
+    $healthNext = trim($healthNext);
+    $candidates = [];
+    if ($healthNext !== '') {
+        $candidates[] = $healthNext;
+        $candidates[] = $healthNext . ' ' . $pathTiny;
+    }
+    if (preg_match('/^vs\s+direct/i', $context) === 1) {
+        $candidates[] = 'VPN compare';
+        $candidates[] = 'DIRECT cmp';
+    } elseif ($context !== '') {
+        $candidates[] = $context;
+    }
+    $candidates[] = $pathFull;
+    $candidates[] = $pathTiny;
+
+    foreach ($candidates as $candidate) {
+        $candidate = trim($candidate);
+        if ($candidate !== '' && cell_len($candidate) <= $width) {
+            return $candidate;
+        }
+    }
+    return truncate_text($healthNext !== '' ? $healthNext : $pathTiny, $width);
 }
 
 function modern_cpu_card_rows(array $f, array $p): array
@@ -2646,7 +2698,7 @@ function modern_process_rows(array $f, array $p): array
 function modern_pftop_rows(array $f, array $p): array
 {
     $w = modern_content_width($p);
-    $flows = array_values($f['flows'] ?? []);
+    $flows = aggregate_display_flows(array_values($f['flows'] ?? []));
     if (!$flows) {
         return [truncate_text('PF states live - waiting for traffic', $w)];
     }
@@ -2745,6 +2797,16 @@ function pftop_rate(array $flow, int $width = 8): string
     return implode('', array_slice(utf8_cells($rate), 0, max(0, $width)));
 }
 
+function pftop_count_suffix(array $flow, int $width): string
+{
+    $count = (int)($flow['display_count'] ?? 1);
+    if ($count <= 1 || $width < 3) {
+        return '';
+    }
+    $text = 'x' . min(99, $count);
+    return cell_len($text) <= $width ? $text : '';
+}
+
 function pftop_state_short(string $state): string
 {
     $state = strtoupper($state);
@@ -2762,23 +2824,27 @@ function pftop_state_short(string $state): string
 
 function pftop_flow_text(array $flow, int $width): string
 {
-    return endpoint_pair_text((string)($flow['src'] ?? ''), (string)($flow['dst'] ?? ''), $width);
+    $suffix = pftop_count_suffix($flow, $width);
+    $pathWidth = $suffix !== '' ? max(4, $width - cell_len($suffix) - 1) : $width;
+    $path = endpoint_pair_text((string)($flow['src'] ?? ''), (string)($flow['dst'] ?? ''), $pathWidth);
+    return $suffix !== '' ? truncate_text($path . ' ' . $suffix, $width) : $path;
 }
 
 function modern_flow_rows(array $f, array $p): array
 {
     $w = modern_content_width($p);
     $large = modern_density() === 'large';
+    $flows = aggregate_display_flows(array_values($f['flows'] ?? []));
     if ($w < 52 || $large) {
         $rateW = $large && $w >= 58 ? 11 : 8;
         $svcW = $large && $w >= 58 ? 5 : 4;
         $flowW = max(10, $w - $rateW - $svcW - 5);
         $rows = [sprintf('%-2s %-*s %-*s %-*s', '#', $flowW, 'PATH', $rateW, 'TRAFFIC', $svcW, 'APP')];
-        foreach (array_slice($f['flows'], 0, density_row_limit(max(1, $p['height'] - 3))) as $idx => $flow) {
+        foreach (array_slice($flows, 0, density_row_limit(max(1, $p['height'] - 3))) as $idx => $flow) {
             $rows[] = sprintf('%02d %-*s %-*s %-*s',
                 $idx + 1,
                 $flowW,
-                flow_path_text($flow, $flowW),
+                flow_path_with_count($flow, $flowW),
                 $rateW,
                 compact_rate_pair($flow['up'], $flow['down'], $rateW),
                 $svcW,
@@ -2788,11 +2854,11 @@ function modern_flow_rows(array $f, array $p): array
     }
     $rateW = $w >= 74 ? 10 : 8;
     $svcW = $w >= 74 ? 5 : 4;
-    $kindW = $w >= 74 ? 6 : 5;
+    $kindW = 6;
     $flowW = max(14, $w - $rateW - $svcW - $kindW - 7);
     $rows = [sprintf('%-2s %-*s %-*s %-*s %-*s', '#', $flowW, 'PATH', $rateW, 'TRAFFIC', $svcW, 'APP', $kindW, 'TYPE')];
-    foreach (array_slice($f['flows'], 0, density_row_limit(max(1, $p['height'] - 3))) as $idx => $flow) {
-        $flowText = flow_path_text($flow, $flowW);
+    foreach (array_slice($flows, 0, density_row_limit(max(1, $p['height'] - 3))) as $idx => $flow) {
+        $flowText = flow_path_with_count($flow, $flowW);
         $rows[] = sprintf('%02d %-*s %-*s %-*s %-*s',
             $idx + 1,
             $flowW,
@@ -2805,6 +2871,58 @@ function modern_flow_rows(array $f, array $p): array
             truncate_text(flow_class_short($flow['class']), $kindW));
     }
     return $rows;
+}
+
+function aggregate_display_flows(array $flows): array
+{
+    $groups = [];
+    $order = [];
+    foreach ($flows as $flow) {
+        if (!is_array($flow)) {
+            continue;
+        }
+        $key = implode('|', [
+            pftop_direction($flow),
+            strtolower((string)($flow['service'] ?? '')),
+            (string)($flow['src'] ?? ''),
+            (string)($flow['dst'] ?? ''),
+        ]);
+        if (!isset($groups[$key])) {
+            $flow['display_count'] = 0;
+            $flow['display_score'] = 0;
+            $flow['display_up_bytes'] = 0;
+            $flow['display_down_bytes'] = 0;
+            $groups[$key] = $flow;
+            $order[] = $key;
+        }
+        $groups[$key]['display_count'] = (int)($groups[$key]['display_count'] ?? 0) + 1;
+        $groups[$key]['display_score'] = (int)($groups[$key]['display_score'] ?? 0) + (int)($flow['score'] ?? 0);
+        $groups[$key]['display_up_bytes'] = (int)($groups[$key]['display_up_bytes'] ?? 0) + parse_short_bytes((string)($flow['up'] ?? '0'));
+        $groups[$key]['display_down_bytes'] = (int)($groups[$key]['display_down_bytes'] ?? 0) + parse_short_bytes((string)($flow['down'] ?? '0'));
+    }
+    $out = [];
+    foreach ($order as $key) {
+        $row = $groups[$key];
+        if ((int)($row['display_count'] ?? 1) > 1) {
+            $row['score'] = (int)($row['display_score'] ?? $row['score'] ?? 0);
+            $row['up'] = short_bytes((int)($row['display_up_bytes'] ?? 0)) . '/s';
+            $row['down'] = short_bytes((int)($row['display_down_bytes'] ?? 0)) . '/s';
+        }
+        $out[] = $row;
+    }
+    usort($out, static fn(array $a, array $b): int => (int)($b['score'] ?? 0) <=> (int)($a['score'] ?? 0));
+    return $out;
+}
+
+function flow_path_with_count(array $flow, int $width): string
+{
+    $count = (int)($flow['display_count'] ?? 1);
+    if ($count <= 1 || $width < 8) {
+        return flow_path_text($flow, $width);
+    }
+    $suffix = 'x' . min(99, $count);
+    $path = flow_path_text($flow, max(4, $width - cell_len($suffix) - 1));
+    return truncate_text($path . ' ' . $suffix, $width);
 }
 
 function modern_packet_rows(array $f, array $p): array
@@ -8048,9 +8166,9 @@ function packet_radar_aggregate(array $radar): array
         $row['service'] = 'vpn';
         $row['size'] = short_bytes((int)$group['bytes']);
         $row['bytes'] = (int)$group['bytes'];
-        $row['story'] = sprintf('VPN tunnel burst %s -> %s %d packets %s',
-            (string)($row['src'] ?? 'WAN'),
-            (string)($row['dst'] ?? 'remote'),
+        $row['story'] = sprintf('VPN burst %s -> %s x%d %s',
+            compact_endpoint_label((string)($row['src'] ?? 'WAN'), true),
+            compact_endpoint_label((string)($row['dst'] ?? 'remote'), true),
             (int)$group['count'],
             short_bytes((int)$group['bytes']));
         $agg[] = $row;

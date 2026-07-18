@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.1.3
+
+- Polished the photographed terminal wall readability without changing the successful layout.
+- Changed the compact Speedtest card from duplicated source/action labels such as `D D` to readable `D↓` and `D↑` rows.
+- Made the Speedtest footer prioritize `stable`/`stale` plus countdown text instead of clipped `vs DIRECT...` comparisons.
+- Improved the NETWORK top-talker line so friendly host names such as `MIRANDA` or `JupiterLXI` fit before falling back to compact LAN labels.
+- Aggregated repeated PF/IFTopX flow rows into one row with an `xN` count to reduce repeated `MIRANDA -> EXT...` noise.
+- Shortened Packet Radar VPN tunnel burst stories so packet detail rows stay inside the right edge.
+- Widened the Flow Type field enough for labels such as `dnsblk` without ellipses.
+
 ## v1.1.2
 
 - Added `socx hardware`, a live hardware-headroom view for pfSense appliances with CPU model, cores/threads, hottest-core temperature, thermal headroom, AES-NI, powerd, recent temperature trend, and UPS watt trend.
