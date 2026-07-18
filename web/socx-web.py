@@ -3259,7 +3259,7 @@ class SocxHandler(BaseHTTPRequestHandler):
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health", "/why", "/story", "/mission"}:
+        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health", "/why", "/story", "/mission", "/guide"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"

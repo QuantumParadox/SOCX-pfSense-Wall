@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.4.2
+
+- Moved Operator Chat to the top of the browser Command Center so it is visible on the wall display.
+- Slowed and smoothed the bottom ticker, batching text swaps and removing animation resets that caused visible jumps.
+- Added a browser `/guide` page that explains the wall cards, Operator Chat, command buttons, ticker modes, drilldown pages, and safety model.
+- Added tooltips to the main wall cards, navigation links, and Command Center buttons for quick in-interface descriptions.
+- Trimmed the wall Command Center button deck so the chatbox has room without crowding the current layout.
+
 ## v1.4.0
 
 - Added SOCX Operator Chat in the browser Command Center, backed by `/api/chat` and the terminal `socx chat` command.

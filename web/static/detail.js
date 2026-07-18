@@ -20,6 +20,7 @@ const pageName = () => {
   if (path.includes("why")) return "why";
   if (path.includes("story")) return "story";
   if (path.includes("mission")) return "mission";
+  if (path.includes("guide")) return "guide";
   if (path.includes("ai")) return "ai";
   if (path.includes("health")) return "health";
   return "speedtest";
@@ -324,6 +325,69 @@ function renderMission(state, mission) {
   ].join("");
 }
 
+function renderGuide(state) {
+  title.textContent = "SOCX GUIDE";
+  subtitle.textContent = "how to read the wall and talk to pfSense";
+  root.innerHTML = [
+    card("Start Here", [
+      `<div class="detail-reason">SOCX is a read-only pfSense SOC wall. Green means healthy, yellow means watch, red means urgent/failing, magenta means AI or threat-intel context, and cyan is normal telemetry.</div>`,
+      table(["Area", "What It Means"], [
+        ["Top bar", "Time, uptime, WAN, VPN, DNS, UPS, Speedtest, and data freshness."],
+        ["Network", "Live WAN/LAN download and upload rates from pfSense interface counters."],
+        ["Threat Pulse", "Firewall blocks, DNSBL, IDS, and repeated-event pressure summarized into one watch score."],
+        ["Data Truth", "Whether the collectors are fresh enough to trust what the wall is showing."],
+        ["Packet Story", "Human-readable firewall/filterlog packets, not raw tcpdump syntax."],
+      ]),
+    ].join("")),
+    card("Operator Chat", [
+      `<div class="detail-reason">Use the Command Center chatbox or terminal command <b>socx chat "question"</b>. It answers firewall, DNSBL, IDS, VPN, Speedtest, device, and Pi AI questions in plain English.</div>`,
+      table(["Mode", "Behavior"], [
+        ["ANSWER", "Explains current evidence using pfSense/SOCX telemetry."],
+        ["PLAN", "Drafts a configuration plan only. No pfSense change is applied."],
+        ["DENIED", "Refuses destructive, bypass, stealth, or unsafe requests."],
+        ["Pi LLM", "If the Pi is reachable, SOCX asks the Pi model and shows visible steps."],
+        ["Fallback", "If the Pi is stale/offline, SOCX gives a grounded local explanation."],
+      ]),
+    ].join("")),
+    card("Command Center", table(["Button", "Use"], [
+      ["Status", "Fast SOCX/pfSense health check."],
+      ["Incident", "Summarize top firewall, DNSBL, IDS, LAN, and port evidence."],
+      ["Bundle", "Preserve incident evidence for later review."],
+      ["Snapshot", "Capture a read-only troubleshooting bundle."],
+      ["Speed", "Check Speedtest path freshness and profile health."],
+      ["Pi AI", "Trigger the Pi 3-LLM analysis path."],
+      ["Rules", "Draft rule/IDS/DNSBL recommendations without applying them."],
+      ["Doctor", "Run the repair/health doctor view."],
+    ])),
+    card("Ticker", [
+      `<div class="detail-reason">The bottom ticker is a rotating event strip. Slow mode is best for wall viewing. It updates in batches so the sentence does not reset every time a new event count arrives.</div>`,
+      table(["Control", "Meaning"], [
+        ["SLOW", "Room-readable ticker speed."],
+        ["NORMAL", "Balanced speed for a desktop browser."],
+        ["FAST", "More movement when testing or sitting close."],
+        ["BIG", "Larger wall text mode."],
+      ]),
+    ].join("")),
+    card("Drilldowns", table(["Page", "Best For"], [
+      ["Mission", "What matters, what changed, what to check, probable noise."],
+      ["Speed", "Direct vs VPN speed tests and router/client truth."],
+      ["Devices", "Friendly device and application labels."],
+      ["Incidents", "Firewall/DNSBL/IDS evidence tables."],
+      ["Why", "Why an IP, port, or domain was blocked."],
+      ["AI", "Pi/MIRANDA model health and verdict timeline."],
+      ["Health", "Collector freshness and release readiness."],
+    ])),
+    card("Safety", [
+      `<div class="detail-reason">SOCX is monitoring, explanation, and draft-only guidance. Keep the dashboard on your trusted admin LAN.</div>`,
+      table(["Rule", "Reason"], [
+        ["No silent policy changes", "Firewall rules, aliases, DNSBL allowlists, IDS tuning, and services require operator review."],
+        ["Preserve first", "Use Bundle or Snapshot before major investigation changes."],
+        ["Treat AI as advisory", "Model answers summarize telemetry; pfSense remains the enforcement source of truth."],
+      ]),
+    ].join("")),
+  ].join("");
+}
+
 function renderSpeed(state) {
   title.textContent = "SOCX SPEEDTEST";
   const center = state.command_center || {};
@@ -427,6 +491,7 @@ async function refresh() {
   else if (page === "why") renderWhy(state, why || {});
   else if (page === "story") renderStory(state, story || {});
   else if (page === "mission") renderMission(state, mission || state.mission || {});
+  else if (page === "guide") renderGuide(state);
   else renderSpeed(state);
 }
 

@@ -17,14 +17,15 @@
         </div>
       </div>
       <div class="top-metrics">
-        <a class="detail-link" href="/mission">Mission</a>
-        <a class="detail-link" href="/speedtest">Speed</a>
-        <a class="detail-link" href="/devices">Devices</a>
-        <a class="detail-link" href="/incidents">Incidents</a>
-        <a class="detail-link" href="/why">Why</a>
-        <a class="detail-link" href="/story">Story</a>
-        <a class="detail-link" href="/ai">AI</a>
-        <a class="detail-link" href="/health">Health</a>
+        <a class="detail-link" href="/mission" title="Plain-English operator summary of what matters now">Mission</a>
+        <a class="detail-link" href="/speedtest" title="Direct/VPN/router Speedtest history and path truth">Speed</a>
+        <a class="detail-link" href="/devices" title="LAN device names, apps, and learned identity hints">Devices</a>
+        <a class="detail-link" href="/incidents" title="Firewall, DNSBL, IDS, and incident evidence drilldown">Incidents</a>
+        <a class="detail-link" href="/why" title="Ask why a host, domain, or port was blocked">Why</a>
+        <a class="detail-link" href="/story" title="Daily SOC story and archive">Story</a>
+        <a class="detail-link" href="/ai" title="Pi/MIRANDA AI verdict timeline and model health">AI</a>
+        <a class="detail-link" href="/health" title="Release health and collector freshness">Health</a>
+        <a class="detail-link" href="/guide" title="How to read and use SOCX">Guide</a>
         <span class="pill" id="health">connecting</span>
         <span class="pill accent" id="refresh">500ms</span>
         <span class="clock" id="clock">--:--:--</span>
@@ -35,7 +36,7 @@
     </header>
 
     <main class="dashboard">
-      <section class="card network-card">
+      <section class="card network-card" title="Live WAN/LAN receive and transmit rates from pfSense interface counters">
         <div class="card-head">
           <h2>Network</h2>
           <span id="net-ifaces">WAN / LAN</span>
@@ -61,7 +62,7 @@
         <canvas class="spark" id="net-spark"></canvas>
       </section>
 
-      <section class="card pf-card">
+      <section class="card pf-card" title="pf firewall state table size, search rate, and pass/block counters">
         <div class="card-head">
           <h2>Firewall</h2>
           <span>pf</span>
@@ -75,7 +76,7 @@
         <canvas class="spark small" id="pf-spark"></canvas>
       </section>
 
-      <section class="card ups-card">
+      <section class="card ups-card" title="APC UPS load, battery, runtime, voltage, wattage, and trend">
         <div class="card-head">
           <h2>UPS</h2>
           <span id="ups-status">--</span>
@@ -90,7 +91,7 @@
         <canvas class="spark small" id="ups-spark"></canvas>
       </section>
 
-      <section class="card cpu-card">
+      <section class="card cpu-card" title="pfSense CPU load, per-core load, frequency, and temperature">
         <div class="card-head">
           <h2>CPU</h2>
           <span id="cpu-extra">--</span>
@@ -104,7 +105,7 @@
         <canvas class="spark small" id="cpu-spark"></canvas>
       </section>
 
-      <section class="card mem-card">
+      <section class="card mem-card" title="RAM, free memory, ZFS ARC, and memory pressure">
         <div class="card-head">
           <h2>Memory</h2>
           <span id="mem-total">--</span>
@@ -119,7 +120,7 @@
         <canvas class="spark small" id="mem-spark"></canvas>
       </section>
 
-      <section class="card mission-card threat-card">
+      <section class="card mission-card threat-card" title="Security pressure score from firewall blocks, DNSBL, IDS, and repeated events">
         <div class="card-head">
           <h2>Threat Pulse</h2>
           <span id="threat-state">--</span>
@@ -127,7 +128,7 @@
         <div class="pulse-grid" id="threat-pulse"></div>
       </section>
 
-      <section class="card mission-card truth-card">
+      <section class="card mission-card truth-card" title="Collector freshness and confidence that the wall is showing live data">
         <div class="card-head">
           <h2>Data Truth</h2>
           <span id="truth-state">--</span>
@@ -135,7 +136,7 @@
         <div class="truth-grid" id="data-truth"></div>
       </section>
 
-      <section class="card mission-card asset-card">
+      <section class="card mission-card asset-card" title="Friendly LAN names, top apps, Pi fleet, and unknown-service learning">
         <div class="card-head">
           <h2>LAN Asset Watch</h2>
           <span id="asset-state">--</span>
@@ -143,7 +144,7 @@
         <div class="asset-watch" id="asset-watch"></div>
       </section>
 
-      <section class="card mission-card ai-card">
+      <section class="card mission-card ai-card" title="Latest SOCX, Pi, and MIRANDA AI summaries">
         <div class="card-head">
           <h2>AI Verdict Timeline</h2>
           <span id="ai-state">--</span>
@@ -156,26 +157,6 @@
           <h2>Command Center</h2>
           <span id="cmd-note">autopilot</span>
         </div>
-        <div class="commander-buttons">
-          <button data-action="status">Status</button>
-          <button data-action="incident">Incident</button>
-          <button data-action="bundle">Bundle</button>
-          <button data-action="snapshot">Snapshot</button>
-          <button data-action="speedtest">Speed</button>
-          <button data-action="zeek">Zeek</button>
-          <button data-action="pi">Pi AI</button>
-          <button data-action="explain">Explain</button>
-          <button data-action="brief">Brief</button>
-          <button data-action="story">Story</button>
-          <button data-action="timeline">Timeline</button>
-          <button data-action="rules">Rules</button>
-          <button data-action="doctor">Doctor</button>
-          <button data-action="speed-history">Speed Hist</button>
-          <button data-action="memory">Memory</button>
-          <button data-action="lab">Pi Lab</button>
-          <button data-action="voice" id="voice-command">Voice</button>
-        </div>
-        <canvas class="spark mini" id="cmd-spark"></canvas>
         <div class="operator-chat">
           <div class="chat-head">
             <span>Operator Chat</span>
@@ -185,8 +166,21 @@
             <input id="chat-input" aria-label="Ask SOCX" placeholder="Ask SOCX about firewall, IDS, DNSBL, VPN, or a draft config plan">
             <button id="chat-send">Ask</button>
           </div>
-          <div class="chat-output" id="chat-output">Ask in plain English. Configuration requests return draft-only plans.</div>
+          <div class="chat-output" id="chat-output">Ask in plain English. Config requests return draft-only plans.</div>
         </div>
+        <div class="commander-buttons">
+          <button data-action="status" title="Run SOCX health status">Status</button>
+          <button data-action="incident" title="Summarize current firewall/DNSBL/IDS incident pressure">Incident</button>
+          <button data-action="bundle" title="Preserve an evidence bundle without changing policy">Bundle</button>
+          <button data-action="snapshot" title="Capture a read-only troubleshooting snapshot">Snapshot</button>
+          <button data-action="speedtest" title="Check Speedtest profiles and freshness">Speed</button>
+          <button data-action="pi" title="Trigger Pi 3-LLM analysis">Pi AI</button>
+          <button data-action="explain" title="Explain the current wall in plain English">Explain</button>
+          <button data-action="rules" title="Draft rule/IDS/DNSBL recommendations only">Rules</button>
+          <button data-action="doctor" title="Run SOCX health doctor">Doctor</button>
+          <button data-action="voice" id="voice-command" title="Browser voice command if supported">Voice</button>
+        </div>
+        <canvas class="spark mini" id="cmd-spark"></canvas>
         <div class="table command-table" id="command-center"></div>
         <div class="speed-history" id="speed-history"></div>
         <div class="daily-brief" id="daily-brief"></div>
@@ -198,7 +192,7 @@
         <div class="table pi-node-table" id="pi-nodes"></div>
       </section>
 
-      <section class="card table-card incident-card">
+      <section class="card table-card incident-card" title="Current incident pressure and top firewall/DNSBL/IDS evidence">
         <div class="card-head">
           <h2>Incident Cockpit</h2>
           <span id="incident-note">watch</span>
@@ -211,7 +205,7 @@
         <div class="incident-memory" id="incident-memory"></div>
       </section>
 
-      <section class="card table-card flows-card">
+      <section class="card table-card flows-card" title="Top live state-table flows with friendly app labels">
         <div class="card-head">
           <h2>Live Flows</h2>
           <span>state table</span>
@@ -219,7 +213,7 @@
         <div class="table flows-table" id="flows"></div>
       </section>
 
-      <section class="card table-card packets-card">
+      <section class="card table-card packets-card" title="Human-readable filterlog packet story rows">
         <div class="card-head">
           <h2>Packet Story</h2>
           <span>filterlog</span>

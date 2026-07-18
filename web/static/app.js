@@ -6,6 +6,7 @@ let latestState = null;
 let clusterTick = 0;
 let tickerMode = localStorage.getItem("socxTickerMode") || "slow";
 let chatBusy = false;
+let tickerLastSwap = 0;
 
 const fmtPct = (v) => `${Number(v || 0).toFixed(0)}%`;
 const safe = (v, fallback = "--") => (v === undefined || v === null || v === "" ? fallback : String(v));
@@ -564,16 +565,17 @@ function renderTicker(events = []) {
     : ["Waiting for live firewall events"];
   const text = pieces.join("   ◆   ");
   if (text === lastTickerText) return;
+  const now = Date.now();
+  const minSwapMs = tickerMode === "fast" ? 12000 : tickerMode === "normal" ? 18000 : 26000;
+  if (lastTickerText && now - tickerLastSwap < minSwapMs) return;
   lastTickerText = text;
+  tickerLastSwap = now;
   ticker.innerHTML = `<span>${escapeHtml(text)}</span><span aria-hidden="true">${escapeHtml(text)}</span>`;
-  const divisor = tickerMode === "fast" ? 8 : tickerMode === "normal" ? 5.8 : 3.8;
-  const floor = tickerMode === "fast" ? 12 : tickerMode === "normal" ? 20 : 26;
-  const ceiling = tickerMode === "fast" ? 54 : tickerMode === "normal" ? 82 : 110;
+  const divisor = tickerMode === "fast" ? 3.2 : tickerMode === "normal" ? 2.35 : 1.55;
+  const floor = tickerMode === "fast" ? 38 : tickerMode === "normal" ? 62 : 92;
+  const ceiling = tickerMode === "fast" ? 95 : tickerMode === "normal" ? 150 : 240;
   const duration = Math.max(floor, Math.min(ceiling, text.length / divisor));
   document.documentElement.style.setProperty("--ticker-duration", `${duration}s`);
-  ticker.style.animation = "none";
-  ticker.offsetHeight;
-  ticker.style.animation = "";
 }
 
 function applyWallPrefs() {
@@ -817,6 +819,7 @@ $("ticker-speed")?.addEventListener("click", () => {
   tickerMode = tickerMode === "slow" ? "normal" : tickerMode === "normal" ? "fast" : "slow";
   localStorage.setItem("socxTickerMode", tickerMode);
   lastTickerText = "";
+  tickerLastSwap = 0;
   applyWallPrefs();
   renderTicker(latestState?.events || []);
 });
