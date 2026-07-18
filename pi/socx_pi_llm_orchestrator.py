@@ -324,6 +324,9 @@ def summarize_role_text(text: str) -> str:
     text = " ".join(str(text or "").replace("\n", " ").split())
     if not text:
         return "no visible role summary returned"
+    parsed_text = extract_first_json_object(text)
+    if parsed_text:
+        text = parsed_text
     try:
         parsed = json.loads(text)
         if isinstance(parsed, dict):
@@ -342,10 +345,70 @@ def summarize_role_text(text: str) -> str:
                 bits.append(reasons)
             if step:
                 bits.append(f"next: {step}")
-            return " | ".join(bits)[:420] if bits else text[:420]
+            return operator_safe_summary(" | ".join(bits)) if bits else operator_safe_summary(text)
     except json.JSONDecodeError:
         pass
-    return text[:420]
+    return operator_safe_summary(text)
+
+
+def extract_first_json_object(text: str) -> str:
+    start = text.find("{")
+    if start < 0:
+        return ""
+    depth = 0
+    in_string = False
+    escape = False
+    for index, char in enumerate(text[start:], start):
+        if escape:
+            escape = False
+            continue
+        if char == "\\" and in_string:
+            escape = True
+            continue
+        if char == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                candidate = text[start:index + 1]
+                try:
+                    json.loads(candidate)
+                    return candidate
+                except json.JSONDecodeError:
+                    return ""
+    return ""
+
+
+def operator_safe_summary(text: str, limit: int = 180) -> str:
+    text = " ".join(str(text or "").split())
+    if not text:
+        return "no visible role summary returned"
+    lower = text.lower()
+    if lower in {"{}", "[]", "null", "none"}:
+        return "Model route online, but no clear role finding returned."
+    if re.fullmatch(r"[0-9.\s\\nrt,:;_-]{3,}", text):
+        return "Model route online, but output was token noise; use heuristic SOCX verdict."
+    if "done_reason" in lower and ("created_at" in lower or "total_duration" in lower):
+        return "Model route online, but returned transport metadata instead of a SOC finding."
+    low_signal_patterns = [
+        "i'm not sure",
+        "i am not sure",
+        "based on the information provided",
+        "cannot determine",
+        "as an ai",
+    ]
+    if any(pattern in lower for pattern in low_signal_patterns):
+        return "No clear finding from model output; use heuristic SOCX verdict and latest evidence."
+    text = re.sub(r"\(\s*[A-Z0-9]\s*\)(?:\s*\(\s*[A-Z0-9]\s*\)){3,}", " repeated token noise", text)
+    text = re.sub(r"\s+", " ", text).strip(" |")
+    if len(text) > limit:
+        text = text[: limit - 1].rstrip(" ,;|") + "…"
+    return text
 
 
 def clean_model_text(text: str) -> str:
@@ -969,22 +1032,23 @@ DASHBOARD_HTML = r"""<!doctype html>
 <style>
 :root{color-scheme:dark;--bg:#05070a;--panel:#091116;--ink:#e8fbff;--muted:#88a3aa;--cyan:#49fff4;--green:#66ff7c;--yellow:#ffe35b;--red:#ff5e78;--mag:#ff56f4;--blue:#6687ff;--lcars:#ff9f43;--lcars2:#c76dff}
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 50% -10%,#15313a 0,#05070a 48%,#020304 100%);color:var(--ink);font-family:Inter,system-ui,Segoe UI,Arial,sans-serif;overflow:hidden}
-.shell{height:100vh;display:grid;grid-template-rows:54px 1fr 146px;gap:10px;padding:12px}
-.top{display:grid;grid-template-columns:1fr auto;align-items:center;border:1px solid #1cfff355;background:linear-gradient(90deg,#071215,#0b1218);box-shadow:0 0 22px #1cfff322;padding:8px 12px}
-.brand{font-weight:800;letter-spacing:.08em;color:var(--cyan);font-size:18px}.brand:before{content:'◖ ';color:var(--lcars)}.status{display:flex;gap:14px;align-items:center;font-weight:800}.pill{padding:3px 8px;border:1px solid #ffffff22;background:#ffffff08}.ok{color:var(--green)}.warn{color:var(--yellow)}.bad{color:var(--red)}.mag{color:var(--mag)}.muted{color:var(--muted)}
-.main{display:grid;grid-template-columns:minmax(360px,1.1fr) minmax(420px,1.4fr) minmax(360px,1.1fr);gap:10px;min-height:0}
-.panel{border:1px solid #1cfff355;background:linear-gradient(180deg,#071116dd,#05090ddd);box-shadow:inset 0 0 22px #1cfff310,0 0 18px #1cfff314;min-height:0;padding:12px;overflow:auto}
-h2{margin:0 0 8px;color:var(--cyan);font-size:15px;letter-spacing:.08em}.metric{display:grid;grid-template-columns:140px 1fr;gap:8px;margin:6px 0;color:var(--muted)}.metric b{color:var(--ink)}
-.role{display:grid;grid-template-columns:88px 1fr;gap:10px;border-top:1px solid #ffffff17;padding:10px 0}.role:first-of-type{border-top:0}.role-name{font-weight:900;color:var(--blue);text-transform:uppercase}.role.ok .role-name{color:var(--green)}.role.fail .role-name{color:var(--red)}.role-text{font-size:14px;line-height:1.32;white-space:normal}.role-meta{font-size:12px;color:var(--muted);margin-top:4px}
+.shell{height:100vh;display:grid;grid-template-rows:48px minmax(0,1fr) 124px;gap:8px;padding:10px}
+.top{display:grid;grid-template-columns:1fr auto;align-items:center;border:1px solid #1cfff355;background:linear-gradient(90deg,#071215,#0b1218);box-shadow:0 0 22px #1cfff322;padding:7px 11px;min-width:0}
+.brand{font-weight:800;letter-spacing:.08em;color:var(--cyan);font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.brand:before{content:'◖ ';color:var(--lcars)}.status{display:flex;gap:10px;align-items:center;font-weight:800;min-width:0}.pill{padding:3px 8px;border:1px solid #ffffff22;background:#ffffff08;white-space:nowrap}.ok{color:var(--green)}.warn{color:var(--yellow)}.bad{color:var(--red)}.mag{color:var(--mag)}.muted{color:var(--muted)}
+.main{display:grid;grid-template-columns:minmax(340px,1.05fr) minmax(430px,1.45fr) minmax(340px,1.05fr);gap:8px;min-height:0}
+.panel{border:1px solid #1cfff355;background:linear-gradient(180deg,#071116dd,#05090ddd);box-shadow:inset 0 0 22px #1cfff310,0 0 18px #1cfff314;min-height:0;padding:10px;overflow:hidden}
+.panel.scroll{overflow:auto}
+h2{margin:0 0 7px;color:var(--cyan);font-size:14px;letter-spacing:.08em}.metric{display:grid;grid-template-columns:122px 1fr;gap:8px;margin:5px 0;color:var(--muted)}.metric b{color:var(--ink)}
+.role{display:grid;grid-template-columns:84px 1fr;gap:10px;border-top:1px solid #ffffff17;padding:8px 0;min-width:0}.role:first-of-type{border-top:0}.role-name{font-weight:900;color:var(--blue);text-transform:uppercase}.role.ok .role-name{color:var(--green)}.role.fail .role-name{color:var(--red)}.role-text{font-size:13px;line-height:1.26;white-space:normal;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}.role-meta{font-size:11px;color:var(--muted);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .viz{position:relative;height:100%;min-height:360px;overflow:hidden}.viz canvas{position:absolute;inset:0;width:100%;height:100%}.core{position:absolute;left:50%;top:50%;width:132px;height:132px;margin:-66px;border:2px solid var(--cyan);border-radius:50%;display:grid;place-items:center;text-align:center;font-weight:900;color:var(--cyan);box-shadow:0 0 36px #49fff466, inset 0 0 24px #49fff41e;animation:pulse 2.2s infinite}
 .vizhud{position:absolute;left:12px;right:12px;bottom:12px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px;pointer-events:none}.vizstat{border:1px solid #ffffff22;background:#02080caa;padding:7px 8px;font:700 12px ui-monospace,Consolas,monospace;color:var(--muted)}.vizstat b{display:block;color:var(--ink);font-size:16px;margin-top:2px}.twin-status{position:absolute;top:12px;left:12px;border:1px solid #ff9f4366;background:#1b1018cc;color:var(--lcars);padding:6px 8px;font:700 11px ui-monospace,Consolas,monospace;letter-spacing:.05em}
 @keyframes pulse{50%{transform:scale(1.045);box-shadow:0 0 54px #49fff488,inset 0 0 34px #49fff433}}
-.feed{display:grid;grid-template-columns:1fr 1fr;gap:10px;min-height:0}.events{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:14px;line-height:1.45;overflow:hidden}.event{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.json{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;color:#d8fbff;overflow:hidden;white-space:pre-wrap}
+.feed{display:grid;grid-template-columns:1fr 1fr;gap:8px;min-height:0}.events{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;line-height:1.34;overflow:hidden}.event{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.json{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;color:#d8fbff;overflow:hidden;white-space:pre-wrap}
 .bar{height:9px;background:#ffffff16;margin-top:6px;overflow:hidden}.bar span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--lcars),var(--cyan),var(--green))}
 .lab{border:1px solid #ff9f4355;background:#1b1018;padding:9px 10px;margin-top:10px}.lab-title{display:flex;justify-content:space-between;color:var(--lcars);font-weight:900;letter-spacing:.06em}.lab-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}.lab button{border:1px solid #49fff466;background:#071c21;color:var(--cyan);padding:7px 5px;font:700 11px ui-monospace,Consolas,monospace;cursor:pointer}.lab button:hover{background:#49fff422;color:#fff}.lab button.stop{color:var(--red);border-color:#ff5e7866}.lab-status{margin-top:8px;font:12px ui-monospace,Consolas,monospace;color:var(--ink);white-space:normal}.lab-history{margin-top:6px;color:var(--muted);font:11px ui-monospace,Consolas,monospace}
 .command{border:1px solid #c76dff66;background:#130d1b;padding:9px 10px;margin-top:10px}.command-title{display:flex;justify-content:space-between;color:var(--lcars2);font-weight:900;letter-spacing:.06em}.command-row{display:grid;grid-template-columns:1fr auto;gap:6px;margin-top:7px}.command input{min-width:0;border:1px solid #ffffff22;background:#020609;color:var(--ink);padding:7px;font:12px ui-monospace,Consolas,monospace}.command button{border:1px solid #c76dff88;background:#21102d;color:var(--lcars2);padding:6px 8px;font:700 11px ui-monospace,Consolas,monospace;cursor:pointer}.command-output{margin-top:7px;min-height:42px;white-space:pre-wrap;color:var(--ink);font:12px/1.4 ui-monospace,Consolas,monospace}.command-help{color:var(--muted);font:10px ui-monospace,Consolas,monospace;margin-top:5px}
 .review{border:1px solid #ffe35b66;background:#1d180b;padding:9px 10px;margin-top:10px}.review-title{display:flex;justify-content:space-between;color:var(--yellow);font-weight:900;letter-spacing:.06em}.review-item{border-top:1px solid #ffffff17;padding:7px 0;font:12px/1.35 ui-monospace,Consolas,monospace}.review-item:first-child{border-top:0}.review-item b{color:var(--ink)}.review button{float:right;border:1px solid #66ff7c88;background:#0e2815;color:var(--green);padding:4px 6px;font:700 10px ui-monospace,Consolas,monospace;cursor:pointer}
-.model-grid,.summary-grid,.experiment-grid{display:grid;gap:8px}.model-card,.summary-card,.experiment-card{border:1px solid #ffffff1f;background:#ffffff08;padding:8px 10px}.model-card{display:grid;grid-template-columns:92px 1fr auto;gap:8px;align-items:center}.model-role{font-weight:900;text-transform:uppercase;color:var(--cyan)}.model-name{font-weight:800}.summary-grid{grid-template-columns:1fr 1fr}.summary-card span{display:block;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em}.summary-card b{display:block;color:var(--ink);font-size:20px;margin-top:2px}.plain{font-size:14px;line-height:1.45;color:var(--ink)}.autopilot{border:1px solid #ff56f455;background:#210a2438;padding:9px 10px;margin-top:10px}.autopilot-title{display:flex;justify-content:space-between;gap:10px;font-weight:900;color:var(--mag);letter-spacing:.06em}.experiment-card{font-size:13px}.experiment-card b{display:block;color:var(--ink)}.trend{height:34px;width:100%;margin-top:8px}
+.model-grid,.summary-grid,.experiment-grid{display:grid;gap:7px}.model-card,.summary-card,.experiment-card{border:1px solid #ffffff1f;background:#ffffff08;padding:7px 9px}.model-card{display:grid;grid-template-columns:84px 1fr auto;gap:8px;align-items:center}.model-role{font-weight:900;text-transform:uppercase;color:var(--cyan)}.model-name{font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.summary-grid{grid-template-columns:repeat(5,1fr)}.summary-card span{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.summary-card b{display:block;color:var(--ink);font-size:18px;margin-top:1px}.summary-card small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.plain{font-size:13px;line-height:1.36;color:var(--ink)}.autopilot{border:1px solid #ff56f455;background:#210a2438;padding:8px 9px;margin-top:8px}.autopilot-title{display:flex;justify-content:space-between;gap:10px;font-weight:900;color:var(--mag);letter-spacing:.06em}.experiment-card{font-size:12px}.experiment-card b{display:block;color:var(--ink)}.trend{height:28px;width:100%;margin-top:6px}
 @media(max-width:1100px){.main{grid-template-columns:1fr}.shell{overflow:auto;height:auto}.viz{height:360px}.feed{grid-template-columns:1fr}body{overflow:auto}}
 </style>
 </head>
@@ -1064,6 +1128,19 @@ function cls(sev){return sev==='INFO'||sev==='OK'?'ok':(sev==='WARN'?'warn':'bad
 function fmt(n){n=Number(n||0);return n>=1000?(n/1000).toFixed(n>=10000?0:1)+'K':String(n)}
 function ms(v){v=Number(v||0);return v>=1000?(v/1000).toFixed(1)+'s':v+'ms'}
 function healthWord(x){return x?'online':'offline'}
+function cleanRoleText(s){
+  s=String(s??'').replace(/\s+/g,' ').trim();
+  if(!s)return 'waiting for role output';
+  const start=s.indexOf('{'), end=s.lastIndexOf('}');
+  if(start>=0&&end>start){try{const j=JSON.parse(s.slice(start,end+1));const bits=[];if(j.severity)bits.push('severity '+j.severity);if(j.confidence!==undefined)bits.push('confidence '+j.confidence);if(Array.isArray(j.reasons)&&j.reasons.length)bits.push(j.reasons.slice(0,2).join('; '));else if(j.reasons)bits.push(String(j.reasons));if(j.recommended_next_step)bits.push('next: '+j.recommended_next_step);if(bits.length)s=bits.join(' | ')}catch(_){}}
+  const low=s.toLowerCase();
+  if(s==='{}'||s==='[]'||low==='null'||low==='none')return 'Model route online, but no clear role finding returned.';
+  if(/^[0-9.\s\\nrt,:;_-]{3,}$/.test(s))return 'Model route online, but output was token noise; use SOCX verdict.';
+  if(low.includes('done_reason')&&(low.includes('created_at')||low.includes('total_duration')))return 'Model route online, but returned transport metadata instead of a SOC finding.';
+  if(low.includes("i'm not sure")||low.includes('i am not sure')||low.includes('based on the information provided')||low.includes('as an ai'))return 'No clear model finding; use SOCX verdict, reasons, and latest evidence.';
+  s=s.replace(/\(\s*[A-Z0-9]\s*\)(?:\s*\(\s*[A-Z0-9]\s*\)){3,}/g,'repeated token noise');
+  return s.length>170?s.slice(0,169).replace(/[ ,;|]+$/,'')+'…':s;
+}
 function render(d){
   state=d; $('clock').textContent=new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
   $('svc').textContent=(d.status||'waiting').toUpperCase(); $('svc').className='pill '+(d.status==='ok'?'ok':d.status==='degraded'?'warn':'muted');
@@ -1073,7 +1150,7 @@ function render(d){
   $('confidence').textContent=Math.round((d.confidence||0)*100)+'%'; $('confbar').style.width=Math.max(0,Math.min(100,(d.confidence||0)*100))+'%';
   $('elapsed').textContent=ms(d.elapsed_ms||0); $('evidence').textContent=(d.payload_summary?Object.keys(d.payload_summary).length:0)+' signal groups';
   $('next').textContent=d.recommended_next_step||'waiting';
-  const roles=d.role_results||{}; $('rolebox').innerHTML=['triage','evidence','action'].map(r=>{const x=roles[r]||{};return `<div class="role ${x.ok?'ok':'fail'}"><div class="role-name">${r}</div><div><div class="role-text">${esc(x.summary||x.error||'waiting for role output')}</div><div class="role-meta">${esc(x.model||'model?')} | ${esc(x.backend||'route?')} | ${x.ok?'online':'offline'} ${x.error?' | '+esc(x.error):''}</div></div></div>`}).join('');
+  const roles=d.role_results||{}; $('rolebox').innerHTML=['triage','evidence','action'].map(r=>{const x=roles[r]||{};return `<div class="role ${x.ok?'ok':'fail'}"><div class="role-name">${r}</div><div><div class="role-text">${esc(cleanRoleText(x.summary||x.error||'waiting for role output'))}</div><div class="role-meta">${esc(x.model||'model?')} | ${esc(x.backend||'route?')} | ${x.ok?'online':'offline'} ${x.error?' | '+esc(x.error):''}</div></div></div>`}).join('');
   const models=d.models||{}; const ollama=d.ollama||{}; $('models').innerHTML=['triage','evidence','action'].map(r=>{const x=roles[r]||{};const ok=!!x.ok;return `<div class="model-card"><div class="model-role">${r}</div><div><div class="model-name">${esc(models[r]||x.model||'not set')}</div><div class="muted">${ok?'last role completed':'waiting or timed out'}</div></div><b class="${ok?'ok':'warn'}">${healthWord(ok)}</b></div>`}).join('')+`<div class="model-card"><div class="model-role">ollama</div><div><div class="model-name">${ollama.ok?fmt(ollama.model_count)+' local models':'not reachable'}</div><div class="muted">${esc((ollama.models||[]).slice(0,3).join(', ')||ollama.error||'local model server')}</div></div><b class="${ollama.ok?'ok':'bad'}">${ollama.ok?'online':'offline'}</b></div>`;
   $('reasons').innerHTML=(d.reasons||[]).map(r=>`<div class="event">${esc(r)}</div>`).join('');
   $('events').innerHTML=(d.events||[]).slice(-8).reverse().map(e=>`<div class="event"><span class="${cls(e.severity)}">[${esc(e.kind)}]</span> ${esc(e.message)}</div>`).join('');
