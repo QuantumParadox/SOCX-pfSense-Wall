@@ -38,6 +38,24 @@ json_count() {
     wc -l < "$file" 2>/dev/null | awk '{print $1+0}'
 }
 
+json_field() {
+    file="$1"
+    key="$2"
+    [ -f "$file" ] || { echo 0; return; }
+    /usr/local/bin/python3.11 - "$file" "$key" <<'PY' 2>/dev/null || echo 0
+import json
+import sys
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    value = data.get(sys.argv[2], 0)
+    print(int(value) if isinstance(value, (int, float, str)) and str(value).isdigit() else 0)
+except Exception:
+    print(0)
+PY
+}
+
 echo "SOCX release readiness gate"
 echo "generated $(date)"
 echo
@@ -95,8 +113,8 @@ fi
 if command -v socx-pi-nodes >/dev/null 2>&1; then
     socx-pi-nodes >/tmp/socx-v1-pi.txt 2>&1 || true
 fi
-pi_online="$(jq -r '.online // 0' /tmp/socx-pi-nodes.json 2>/dev/null || echo 0)"
-pi_count="$(jq -r '.count // 0' /tmp/socx-pi-nodes.json 2>/dev/null || echo 0)"
+pi_online="$(json_field /tmp/socx-pi-nodes.json online)"
+pi_count="$(json_field /tmp/socx-pi-nodes.json count)"
 [ "$pi_count" -gt 0 ] 2>/dev/null && [ "$pi_online" -eq "$pi_count" ] 2>/dev/null && mark OK "Pi fleet ${pi_online}/${pi_count} online" || mark WARN "Pi fleet ${pi_online:-0}/${pi_count:-0} online"
 
 pi_roles="$(env_get roles /tmp/socx-pi-llm-analysis.env)"

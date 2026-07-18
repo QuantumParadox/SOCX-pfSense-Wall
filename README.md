@@ -51,6 +51,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 
 - Live wall sample: [`docs/socx-live-wall-capture.md`](docs/socx-live-wall-capture.md)
 - v1 release notes: [`docs/v1.0.0-release-notes.md`](docs/v1.0.0-release-notes.md)
+- Latest hardware/stability notes: [`docs/v1.1.2-release-notes.md`](docs/v1.1.2-release-notes.md)
 
 - Starts a full-screen tmux dashboard called `socx`.
 - Adds `socweb`, a local browser dashboard for the modern btop-style SOC wall when terminal rendering is too limiting.
@@ -81,6 +82,8 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds a browser Daily SOC Brief, structured Incident Timeline, and approval-only Rule Assistant for turning live telemetry into a readable investigation story.
 - Adds a browser Daily Story page, `/api/story`, `/api/story-archive`, and `socx story` so SOCX can explain the day in plain English and preserve a timestamped narrative under `/root/socx-stories/`.
 - Adds hardware-health visibility for pfSense appliance upgrades such as the Lenovo ThinkCentre M910t i7-7700: CPU profile, core/thread count, hottest core, AES-NI, powerd, and thermal thresholds appear in `/health` and `/story`.
+- Adds `socx hardware`, `socx stability-watch`, and `socx baseline` for thermal headroom, UPS watt trend, short/overnight stability evidence, and appliance performance baselines.
+- Adds VPN crypto headroom on the browser Speedtest page so DIRECT/VPN throughput can be read beside current CPU temperature and thermal headroom.
 - Adds focused browser detail pages for Speedtest, Devices, Incidents, AI, and Release Health so the main wall stays clean while deeper evidence is still available.
 - Adds Data Truth freshness scoring, a plain-English Data Truth reason, and a What Changed timeline so collector age, inactive VPN tests, Pi discovery state, UPS freshness, and meaningful state changes are visible.
 - Adds `/health` and `/api/health` for release readiness, wall error state, fixed service checks, and Pi AI role visibility.
@@ -167,6 +170,9 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-repair` - safe collector repair for SOCX wall helpers, vnstatd, LLDP, and Pi discovery without changing firewall policy.
 - `scripts/socx-explain-screen` - plain-English explanation of the current wall state and Autopilot mode.
 - `scripts/socx-history` - appends compact SOCX trend samples to `/var/db/socx_history.jsonl` and tails recent history.
+- `scripts/socx-hardware` - live hardware and thermal headroom summary for the pfSense appliance.
+- `scripts/socx-stability-watch` - bounded stability sampler that writes JSONL evidence plus a plain summary.
+- `scripts/socx-baseline` - performance baseline report for system profile, CPU, BIOS, Speedtest, readiness, story, and hardware evidence.
 - `scripts/socx-notify` - optional webhook notification hook for manual or future automated alerts.
 - `scripts/socx-why-now` - plain-English current-state explanation from Autopilot, Speedtest, and AI caches.
 - `scripts/socx-mode` - wall mode preset helper for normal, incident, speedtest, AI, UPS, and quiet-night operation.

@@ -29,8 +29,13 @@ append)
     vpn_ping="$(env_get ping_ms /tmp/socx-speedtest-vpn.env)"
     ups_watts="$(env_get watts /tmp/socx-ups-cache.env)"
     ups_load="$(env_get load /tmp/socx-ups-cache.env)"
-    printf '{"ts":%s,"mode":"%s","score":%s,"network_score":%s,"security_score":%s,"ai_score":%s,"sensor_score":%s,"fw_recent":%s,"dnsbl_recent":%s,"ids_recent":%s,"direct_down":%s,"direct_up":%s,"vpn_down":%s,"vpn_up":%s,"vpn_ping":%s,"ups_watts":%s,"ups_load":%s}\n' \
-        "$ts" "${auto_mode:-UNKNOWN}" "${auto_score:-0}" "${network_score:-0}" "${security_score:-0}" "${ai_score:-0}" "${sensor_score:-0}" "${fw_recent:-0}" "${dnsbl_recent:-0}" "${ids_recent:-0}" "${direct_down:-0}" "${direct_up:-0}" "${vpn_down:-0}" "${vpn_up:-0}" "${vpn_ping:-0}" "${ups_watts:-0}" "${ups_load:-0}" >> "$OUT"
+    cpu_temp_max="$(sysctl -a 2>/dev/null | sed -n 's/^dev\.cpu\.[0-9][0-9]*\.temperature: \([0-9.][0-9.]*\)C/\1/p' | awk 'NF { if ($1+0>m) m=$1+0 } END { printf "%.1f", m }')"
+    cpu_temp_avg="$(sysctl -a 2>/dev/null | sed -n 's/^dev\.cpu\.[0-9][0-9]*\.temperature: \([0-9.][0-9.]*\)C/\1/p' | awk 'NF { s+=$1; n++ } END { if (n) printf "%.1f", s/n; else printf "0.0" }')"
+    cpu_freq_mhz="$(sysctl -n dev.cpu.0.freq 2>/dev/null || echo 0)"
+    cpu_warn_c="${SOCX_CPU_WARN_C:-75}"
+    cpu_headroom="$(awk -v w="$cpu_warn_c" -v t="$cpu_temp_max" 'BEGIN{printf "%.1f", (w+0)-(t+0)}')"
+    printf '{"ts":%s,"mode":"%s","score":%s,"network_score":%s,"security_score":%s,"ai_score":%s,"sensor_score":%s,"fw_recent":%s,"dnsbl_recent":%s,"ids_recent":%s,"direct_down":%s,"direct_up":%s,"vpn_down":%s,"vpn_up":%s,"vpn_ping":%s,"ups_watts":%s,"ups_load":%s,"cpu_temp_max":%s,"cpu_temp_avg":%s,"cpu_freq_mhz":%s,"cpu_headroom_c":%s}\n' \
+        "$ts" "${auto_mode:-UNKNOWN}" "${auto_score:-0}" "${network_score:-0}" "${security_score:-0}" "${ai_score:-0}" "${sensor_score:-0}" "${fw_recent:-0}" "${dnsbl_recent:-0}" "${ids_recent:-0}" "${direct_down:-0}" "${direct_up:-0}" "${vpn_down:-0}" "${vpn_up:-0}" "${vpn_ping:-0}" "${ups_watts:-0}" "${ups_load:-0}" "${cpu_temp_max:-0}" "${cpu_temp_avg:-0}" "${cpu_freq_mhz:-0}" "${cpu_headroom:-0}" >> "$OUT"
     lines="$(wc -l "$OUT" 2>/dev/null | awk '{print $1}')"
     keep="${SOCX_HISTORY_KEEP_LINES:-5000}"
     if [ "${lines:-0}" -gt "$keep" ] 2>/dev/null; then
@@ -62,6 +67,8 @@ trend|summary)
             vd=field(line,"vpn_down")
             vu=field(line,"vpn_up")
             ups=field(line,"ups_watts")
+            temp=field(line,"cpu_temp_max")
+            head=field(line,"cpu_headroom_c")
             fw=field(line,"fw_recent")
             dns=field(line,"dnsbl_recent")
             ids=field(line,"ids_recent")
@@ -71,6 +78,8 @@ trend|summary)
             if (ai > 0) { ais+=ai; an++ }
             if (sen > 0) { sens+=sen; sen_n++ }
             dds+=dd; dus+=du; vds+=vd; vus+=vu; upss+=ups; fws+=fw; dnss+=dns; idss+=ids
+            if (temp > 0) { temps+=temp; tempn++; if (temp > peaktemp) peaktemp=temp }
+            if (head != 0) { heads+=head; headn++; if (head < minhead || headn == 1) minhead=head }
             if (n==1) { first=score; firstdd=dd; firstvd=vd }
             last=score; lastdd=dd; lastvd=vd
         }
@@ -82,6 +91,7 @@ trend|summary)
             printf "direct avg %.0f/%.0f Mbps trend %s\n", dds/n, dus/n, arrow(lastdd-firstdd)
             printf "vpn avg %.0f/%.0f Mbps trend %s\n", vds/n, vus/n, arrow(lastvd-firstvd)
             printf "events avg FW %.0f DNSBL %.0f IDS %.0f | UPS avg %.0f W\n", fws/n, dnss/n, idss/n, upss/n
+            if (tempn > 0) printf "hardware temp avg %.1fC peak %.1fC | thermal headroom min %.1fC\n", temps/tempn, peaktemp, minhead
         }
         function field(line,key, arr,i,item,kv,n) {
             n=split(line,arr,",")

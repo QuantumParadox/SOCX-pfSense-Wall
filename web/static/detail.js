@@ -163,6 +163,7 @@ function renderHealth(state, health) {
   const truth = health.data_truth || state.data_truth || {};
   const pi = health.pi_nodes || state.pi_nodes || {};
   const hw = state.hardware || {};
+  const ht = hw.trend || {};
   const checks = health.checks || [];
   const wall = health.wall_error || {};
   const roleRows = [];
@@ -196,6 +197,8 @@ function renderHealth(state, health) {
       kv("AES-NI", hw.aesni ? "on" : "unknown", hw.aesni ? "green" : "yellow"),
       kv("Powerd", hw.powerd || "--", String(hw.powerd || "").includes("running") ? "green" : "yellow"),
       kv("Thermal Limits", `${hw.warning_c || "--"}C warn / ${hw.critical_c || "--"}C critical`, "cyan"),
+      kv("Trend", `${ht.label || "--"} avg ${ht.avg_c || "--"}C peak ${ht.peak_c || "--"}C`, ht.label === "rising" ? "yellow" : "green"),
+      kv("Headroom", `${ht.headroom_c ?? "--"}C below warn`, Number(ht.headroom_c || 0) < 5 ? "yellow" : "green"),
     ].join("")),
     card("Checks", table(["Check", "State", "Elapsed", "Output"], checks.map((c) => [
       c.name,
@@ -220,6 +223,7 @@ function renderStory(state, story) {
   title.textContent = "SOCX DAILY STORY";
   const glance = story.at_a_glance || {};
   const hw = story.hardware || state.hardware || {};
+  const ht = hw.trend || {};
   root.innerHTML = [
     ...renderTruthCards(state),
     card("Today So Far", [
@@ -248,6 +252,7 @@ function renderStory(state, story) {
       ["CPU", hw.cpu_model || hw.cpu_sysctl || "--", `${hw.cores || "--"}C/${hw.threads || "--"}T`],
       ["BIOS", hw.bios_version || "--", hw.bios_release_date || "--"],
       ["Thermal", `${hw.max_temp_h || "--"} max / ${hw.avg_temp_c || "--"}C avg`, `${hw.warning_c || "--"}C warn / ${hw.critical_c || "--"}C crit`],
+      ["Trend", `${ht.label || "--"} / avg ${ht.avg_c || "--"}C / peak ${ht.peak_c || "--"}C`, `${ht.headroom_c ?? "--"}C headroom`],
       ["Crypto", hw.aesni ? "AES-NI on" : "AES-NI unknown", hw.powerd || "--"],
     ])),
     card("Repeated Memory", table(["Type", "Name", "Count"], [
@@ -266,6 +271,7 @@ function renderStory(state, story) {
 function renderSpeed(state) {
   title.textContent = "SOCX SPEEDTEST";
   const center = state.command_center || {};
+  const crypto = center.vpn_crypto || {};
   const hist = state.speedtest_history || {};
   const paths = hist.paths || [];
   const pathRows = paths.map((p) => [String(p.path || "").toUpperCase(), p.status, `${p.avg_down || "--"}/${p.avg_up || "--"}`, `${p.best_down || "--"}/${p.worst_down || "--"}`, `${p.avg_ping || "--"}ms`, `${p.ok || 0}/${p.samples || 0}`]);
@@ -276,6 +282,7 @@ function renderSpeed(state) {
       kv("Direct", `${center.direct?.down || "--"}/${center.direct?.up || "--"} Mbps ${center.direct?.ping || "--"}ms`, center.direct?.path_state === "ready" ? "green" : "yellow"),
       kv("VPN", `${center.vpn?.path_state || center.vpn?.status || "WAIT"} ${center.vpn?.down || "--"}/${center.vpn?.up || "--"}`, center.vpn?.path_state === "ready" ? "green" : "yellow"),
       kv("Truth", center.speed_truth?.label || "waiting", "cyan"),
+      kv("VPN Crypto", crypto.summary || "--", crypto.tone || "cyan"),
     ].join("")),
     card("History", table(["Path", "State", "Avg", "Best/Worst", "Ping", "OK/Samples"], pathRows)),
     card("Named VPN Paths", table(["Path", "Status", "Down/Up", "Ping", "Age", "Message"], (center.vpn_paths || []).map((p) => [p.label, p.path_state || p.status, `${p.down || "--"}/${p.up || "--"}`, `${p.ping || "--"}ms`, `${Math.floor((p.age_sec || 0) / 60)}m`, p.message || p.external_ip || "--"]))),

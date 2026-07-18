@@ -353,7 +353,7 @@ class SocxCollector:
         ups = self.collect_ups()
         hardware = self.collect_hardware_health(cpu)
         processes = self.collect_processes()
-        command_center = self.collect_command_center()
+        command_center = self.collect_command_center(hardware)
         incident = self.collect_incident_light(command_center)
         pi_nodes = self.collect_pi_nodes()
         threat_pulse = self.collect_threat_pulse(incident)
@@ -528,6 +528,30 @@ class SocxCollector:
             "warning_c": warning_c,
             "critical_c": critical_c,
             "summary": f"{cpu_name} {cores}C/{threads}T max {max_temp_h} AES-NI {'on' if aesni else 'unknown'}",
+            "trend": self.hardware_trend(max_temp, warning_c),
+        }
+
+    def hardware_trend(self, current_temp: float, warning_c: int) -> dict[str, Any]:
+        rows = self.collect_history(288)
+        temps = [float(row.get("cpu_temp_max") or 0) for row in rows if float(row.get("cpu_temp_max") or 0) > 0]
+        watts = [float(row.get("ups_watts") or 0) for row in rows if float(row.get("ups_watts") or 0) > 0]
+        headroom = warning_c - float(current_temp or 0)
+        trend = "stable"
+        if len(temps) >= 4:
+            delta = temps[-1] - temps[0]
+            if delta >= 3:
+                trend = "rising"
+            elif delta <= -3:
+                trend = "falling"
+        return {
+            "samples": len(temps),
+            "current_c": round(float(current_temp or 0), 1) if current_temp else None,
+            "avg_c": round(sum(temps) / len(temps), 1) if temps else None,
+            "peak_c": round(max(temps), 1) if temps else None,
+            "headroom_c": round(headroom, 1) if current_temp else None,
+            "label": trend,
+            "ups_avg_watts": round(sum(watts) / len(watts)) if watts else None,
+            "ups_peak_watts": round(max(watts)) if watts else None,
         }
 
     def collect_memory(self, top: str) -> dict[str, Any]:
@@ -652,7 +676,7 @@ class SocxCollector:
             "stale": stale,
         }
 
-    def collect_command_center(self) -> dict[str, Any]:
+    def collect_command_center(self, hardware: dict[str, Any] | None = None) -> dict[str, Any]:
         auto = parse_env_file(Path("/tmp/socx-autopilot.env"))
         client = parse_env_file(Path("/tmp/socx-speedtest-client.env"))
         router = parse_env_file(Path("/tmp/socx-speedtest-router.env"))
@@ -694,11 +718,55 @@ class SocxCollector:
             "direct": self.speedtest_summary("DIRECT", direct),
             "vpn": self.speedtest_summary("VPN", vpn),
             "speed_truth": self.speedtest_truth(client, router, direct, vpn),
+            "vpn_crypto": self.vpn_crypto_headroom(direct, vpn, auto, hardware or {}),
             "vpn_paths": named_paths,
             "history_count": len(history_rows),
             "history_trend": self.history_trend(history_rows),
             "history": history_rows,
             "actions": actions[:5],
+        }
+
+    def vpn_crypto_headroom(
+        self,
+        direct: dict[str, str],
+        vpn: dict[str, str],
+        auto: dict[str, str],
+        hardware: dict[str, Any],
+    ) -> dict[str, Any]:
+        def num(data: dict[str, str], key: str) -> float:
+            try:
+                return float(data.get(key, "") or 0)
+            except ValueError:
+                return 0.0
+        dd = num(direct, "download_mbps")
+        du = num(direct, "upload_mbps")
+        vd = num(vpn, "download_mbps")
+        vu = num(vpn, "upload_mbps")
+        trend = hardware.get("trend") if isinstance(hardware.get("trend"), dict) else {}
+        cpu_temp = float(hardware.get("max_temp_c") or auto.get("cpu_temp_max", "0") or 0)
+        cpu_headroom = float(trend.get("headroom_c") or auto.get("cpu_headroom_c", "0") or 0)
+        down_pct = round((vd / dd) * 100) if dd and vd else None
+        up_pct = round((vu / du) * 100) if du and vu else None
+        if down_pct is None and up_pct is None:
+            label = "waiting"
+            tone = "yellow"
+        elif (down_pct or 0) >= 80 and (up_pct or 0) >= 70 and cpu_headroom >= 5:
+            label = "high"
+            tone = "green"
+        elif (down_pct or 0) >= 45 and cpu_headroom >= 0:
+            label = "normal"
+            tone = "cyan"
+        else:
+            label = "watch"
+            tone = "yellow"
+        return {
+            "label": label,
+            "tone": tone,
+            "down_pct": down_pct,
+            "up_pct": up_pct,
+            "cpu_temp_c": cpu_temp or None,
+            "cpu_headroom_c": cpu_headroom,
+            "summary": f"VPN {down_pct or '--'}/{up_pct or '--'}% of direct, CPU {cpu_temp or '--'}C, headroom {cpu_headroom}C",
         }
 
     def speedtest_truth(

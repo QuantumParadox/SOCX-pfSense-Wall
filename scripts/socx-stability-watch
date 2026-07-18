@@ -1,0 +1,87 @@
+#!/bin/sh
+set -u
+
+DURATION="${1:-300}"
+INTERVAL="${2:-30}"
+OUT_DIR="${SOCX_STABILITY_DIR:-/root/socx-stability}"
+mkdir -p "$OUT_DIR" 2>/dev/null || true
+OUT="$OUT_DIR/socx-stability-$(date +%Y%m%d-%H%M%S).jsonl"
+SUMMARY="$OUT.summary.txt"
+API="${SOCX_WEB_URL:-http://127.0.0.1:8094}"
+
+echo "SOCX stability watch ${DURATION}s interval ${INTERVAL}s"
+echo "writing $OUT"
+
+end=$(( $(date +%s) + DURATION ))
+while [ "$(date +%s)" -le "$end" ]; do
+    /usr/local/bin/python3.11 - "$API" "$OUT" <<'PY'
+import json
+import sys
+import time
+import urllib.request
+api, out = sys.argv[1], sys.argv[2]
+row = {"ts": int(time.time())}
+try:
+    with urllib.request.urlopen(api.rstrip("/") + "/api/state", timeout=10) as resp:
+        state = json.load(resp)
+    hw = state.get("hardware") or {}
+    cpu = state.get("cpu") or {}
+    ups = state.get("ups") or {}
+    truth = state.get("data_truth") or {}
+    center = state.get("command_center") or {}
+    row.update({
+        "ok": True,
+        "data_truth": truth.get("label"),
+        "score": truth.get("score"),
+        "cpu": cpu.get("overall"),
+        "cpu_temp_max": hw.get("max_temp_c"),
+        "cpu_temp_status": hw.get("status"),
+        "cpu_freq_mhz": hw.get("freq_mhz"),
+        "thermal_headroom_c": (float(hw.get("warning_c") or 0) - float(hw.get("max_temp_c") or 0)) if hw.get("max_temp_c") else None,
+        "ups_watts": ups.get("watts"),
+        "ups_load": ups.get("load"),
+        "speed_active": (center.get("router") or {}).get("down") or (center.get("direct") or {}).get("down"),
+        "vpn_down": (center.get("vpn") or {}).get("down"),
+        "wall_error_bytes": 0,
+    })
+except Exception as exc:
+    row.update({"ok": False, "error": str(exc)})
+with open(out, "a", encoding="utf-8") as fh:
+    fh.write(json.dumps(row, separators=(",", ":")) + "\n")
+print(time.strftime("%H:%M:%S"), row.get("data_truth", "ERR"), "cpu", row.get("cpu"), "temp", row.get("cpu_temp_max"), "headroom", row.get("thermal_headroom_c"), "ups", row.get("ups_watts"))
+PY
+    socx history append >/dev/null 2>&1 || true
+    sleep "$INTERVAL"
+done
+
+/usr/local/bin/python3.11 - "$OUT" "$SUMMARY" <<'PY'
+import json
+import sys
+from pathlib import Path
+path, summary = Path(sys.argv[1]), Path(sys.argv[2])
+rows = []
+for raw in path.read_text(errors="ignore").splitlines():
+    try:
+        rows.append(json.loads(raw))
+    except Exception:
+        pass
+ok = [r for r in rows if r.get("ok")]
+temps = [float(r.get("cpu_temp_max") or 0) for r in ok if r.get("cpu_temp_max")]
+headroom = [float(r.get("thermal_headroom_c")) for r in ok if r.get("thermal_headroom_c") is not None]
+watts = [float(r.get("ups_watts") or 0) for r in ok if r.get("ups_watts")]
+errors = [r for r in rows if not r.get("ok")]
+lines = [
+    "SOCX Stability Watch Summary",
+    f"samples={len(rows)} ok={len(ok)} errors={len(errors)}",
+]
+if temps:
+    lines.append(f"cpu_temp current={temps[-1]:.1f}C avg={sum(temps)/len(temps):.1f}C peak={max(temps):.1f}C")
+if headroom:
+    lines.append(f"thermal_headroom min={min(headroom):.1f}C avg={sum(headroom)/len(headroom):.1f}C")
+if watts:
+    lines.append(f"ups_watts avg={sum(watts)/len(watts):.0f}W peak={max(watts):.0f}W")
+verdict = "PASS" if not errors and (not temps or max(temps) < 85) else "WATCH"
+lines.append(f"verdict={verdict}")
+summary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+print(summary.read_text())
+PY

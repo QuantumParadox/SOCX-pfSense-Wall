@@ -51,6 +51,18 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-history "$@"
         ;;
+    hardware|hw|thermal|headroom)
+        shift
+        exec /usr/local/bin/socx-hardware "$@"
+        ;;
+    stability-watch|watch-stability|overnight)
+        shift
+        exec /usr/local/bin/socx-stability-watch "$@"
+        ;;
+    baseline|perf-baseline|performance-baseline)
+        shift
+        exec /usr/local/bin/socx-baseline "$@"
+        ;;
     speedtest-history|speed-history|speedtrend)
         shift
         exec /usr/local/bin/socx-speedtest-history "$@"

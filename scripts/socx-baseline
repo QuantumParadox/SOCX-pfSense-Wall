@@ -1,0 +1,40 @@
+#!/bin/sh
+set -u
+
+OUT_DIR="${SOCX_BASELINE_DIR:-/root/socx-baselines}"
+mkdir -p "$OUT_DIR" 2>/dev/null || true
+OUT="$OUT_DIR/socx-baseline-$(date +%Y%m%d-%H%M%S).txt"
+API="${SOCX_WEB_URL:-http://127.0.0.1:8094}"
+
+{
+echo "SOCX Performance Baseline"
+echo "Generated: $(date)"
+echo
+echo "System"
+cat /usr/local/etc/socx_system_profile.env 2>/dev/null || true
+echo
+echo "pfSense CPU"
+sysctl -n hw.model 2>/dev/null | sed 's/^/model: /'
+sysctl -n hw.ncpu 2>/dev/null | sed 's/^/threads: /'
+sysctl -a 2>/dev/null | egrep '^dev.cpu.[0-9]+.(temperature|freq):' | sort
+echo
+echo "BIOS"
+kenv smbios.bios.version smbios.bios.reldate 2>/dev/null || true
+echo
+echo "Crypto"
+kldstat 2>/dev/null | egrep 'aesni|coretemp|cpuctl' || true
+echo
+echo "Speedtest History"
+socx speedtest-history summary 20 2>&1 || true
+echo
+echo "SOCX Hardware"
+socx hardware 2>&1 || true
+echo
+echo "Readiness"
+socx v1-check 2>&1 || true
+echo
+echo "Daily Story"
+socx story 2>&1 || true
+} > "$OUT"
+
+echo "$OUT"

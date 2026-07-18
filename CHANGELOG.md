@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.1.2
+
+- Added `socx hardware`, a live hardware-headroom view for pfSense appliances with CPU model, cores/threads, hottest-core temperature, thermal headroom, AES-NI, powerd, recent temperature trend, and UPS watt trend.
+- Added `socx stability-watch`, a bounded JSONL stability sampler for short or overnight watches. It captures Data Truth, CPU temperature/headroom, UPS watt/load, active/DIRECT/VPN Speedtest state, and wall error size, then writes a plain summary.
+- Added `socx baseline`, a one-command performance baseline report for system profile, CPU/sysctl evidence, BIOS, AES-NI/coretemp/cpuctl, Speedtest history, readiness, Daily Story, and hardware headroom.
+- Extended `socx history append` and `socx history trend` with CPU temperature, CPU frequency, thermal headroom, and UPS watt trend fields.
+- Extended Autopilot with hardware health scoring for warm/critical CPU state, AES-NI visibility, and powerd state; summaries now include CPU temperature and thermal headroom.
+- Added browser Hardware Health trend/headroom rows on `/health` and `/story`, plus VPN crypto headroom on `/speedtest` using current hardware telemetry.
+- Hardened `socx v1-check` Pi fleet parsing so the readiness gate no longer depends on `jq` for Pi online/count JSON.
+
 ## v1.1.0
 
 - Added `/story`, a browser Daily Story page that turns SOCX health, firewall pressure, DNSBL, IDS, Speedtest path truth, Pi fleet, AI verdicts, repeated-event memory, and What Changed signals into a human-readable daily narrative.

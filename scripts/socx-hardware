@@ -1,0 +1,66 @@
+#!/bin/sh
+set -u
+
+API="${SOCX_WEB_URL:-http://127.0.0.1:8094}"
+HISTORY="${SOCX_HISTORY_FILE:-/var/db/socx_history.jsonl}"
+
+exec /usr/local/bin/python3.11 - "$API" "$HISTORY" "${1:-summary}" "${2:-96}" <<'PY'
+import json
+import sys
+import time
+import urllib.request
+from pathlib import Path
+
+api, history_path, mode, limit = sys.argv[1], Path(sys.argv[2]), sys.argv[3], int(sys.argv[4])
+
+def fetch_state():
+    with urllib.request.urlopen(api.rstrip("/") + "/api/state", timeout=10) as resp:
+        return json.load(resp)
+
+def rows():
+    if not history_path.exists():
+        return []
+    out = []
+    for raw in history_path.read_text(errors="ignore").splitlines()[-limit:]:
+        try:
+            out.append(json.loads(raw))
+        except Exception:
+            pass
+    return out
+
+def fmt_temp(c):
+    if c in ("", None):
+        return "--"
+    return f"{float(c):.0f}C/{(float(c) * 9 / 5 + 32):.0f}F"
+
+state = fetch_state()
+hw = state.get("hardware") or {}
+hist = rows()
+temps = [float(r.get("cpu_temp_max") or 0) for r in hist if float(r.get("cpu_temp_max") or 0) > 0]
+watts = [float(r.get("ups_watts") or 0) for r in hist if float(r.get("ups_watts") or 0) > 0]
+warn = float(hw.get("warning_c") or 75)
+cur = float(hw.get("max_temp_c") or 0)
+headroom = warn - cur if cur else None
+
+if mode in {"json", "api"}:
+    print(json.dumps({"hardware": hw, "history_samples": len(hist), "temp_samples": len(temps), "ups_samples": len(watts)}, indent=2))
+else:
+    print("SOCX Hardware Headroom")
+    print("Generated:", time.strftime("%Y-%m-%d %H:%M:%S"))
+    print("System:", " ".join(str(x) for x in [hw.get("vendor"), hw.get("model"), hw.get("type_model")] if x) or hw.get("system_name", "--"))
+    print("CPU:", hw.get("cpu_model") or hw.get("cpu_sysctl") or "--", f"{hw.get('cores','--')}C/{hw.get('threads','--')}T")
+    print("BIOS:", hw.get("bios_version", "--"), hw.get("bios_release_date", ""))
+    print("Current:", hw.get("summary", "--"))
+    print("Power:", f"AES-NI={'on' if hw.get('aesni') else 'unknown'}", f"powerd={hw.get('powerd','--')}", f"freq={hw.get('freq_h','--')}")
+    print("Thermal limits:", f"warn={hw.get('warning_c','--')}C", f"critical={hw.get('critical_c','--')}C")
+    if headroom is not None:
+        print("Thermal headroom:", f"{headroom:.0f}C below warning" if headroom >= 0 else f"{abs(headroom):.0f}C over warning")
+    if temps:
+        avg = sum(temps) / len(temps)
+        print(f"Trend last {len(temps)} samples: current {fmt_temp(cur)} avg {fmt_temp(avg)} peak {fmt_temp(max(temps))}")
+    else:
+        print("Trend: waiting for socx history samples")
+    if watts:
+        print(f"UPS watts trend: avg {sum(watts)/len(watts):.0f}W peak {max(watts):.0f}W")
+    print("Recommendation:", "normal" if (headroom is None or headroom >= 5) else "watch cooling / airflow")
+PY

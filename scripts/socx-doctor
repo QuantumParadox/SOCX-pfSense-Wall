@@ -1163,6 +1163,34 @@ doctor_autopilot() {
         actions="${actions} run socx pi-nodes;"
     fi
 
+    cpu_warn="${SOCX_CPU_WARN_C:-75}"
+    cpu_crit="${SOCX_CPU_CRIT_C:-85}"
+    cpu_temp_max="$(sysctl -a 2>/dev/null | sed -n 's/^dev\.cpu\.[0-9][0-9]*\.temperature: \([0-9.][0-9.]*\)C/\1/p' | awk 'NF { if ($1+0>m) m=$1+0 } END { printf "%.1f", m }')"
+    cpu_freq_mhz="$(sysctl -n dev.cpu.0.freq 2>/dev/null || echo 0)"
+    cpu_headroom="$(awk -v w="$cpu_warn" -v t="$cpu_temp_max" 'BEGIN{printf "%.1f", (w+0)-(t+0)}')"
+    aesni_state="$(kldstat 2>/dev/null | grep -q aesni && echo on || echo missing)"
+    powerd_state="$(service powerd status 2>/dev/null | grep -qi running && echo running || echo stopped)"
+    if awk -v t="$cpu_temp_max" -v c="$cpu_crit" 'BEGIN{exit !((t+0) >= (c+0))}'; then
+        score=$((score - 20))
+        class="SENSOR WATCH"
+        reasons="${reasons} cpu-critical"
+        actions="${actions} inspect cooling and reduce load;"
+    elif awk -v t="$cpu_temp_max" -v w="$cpu_warn" 'BEGIN{exit !((t+0) >= (w+0))}'; then
+        score=$((score - 8))
+        [ "$class" = "NORMAL" ] && class="SENSOR WATCH"
+        reasons="${reasons} cpu-warm"
+        actions="${actions} run socx hardware;"
+    fi
+    if [ "$aesni_state" != "on" ]; then
+        score=$((score - 10))
+        reasons="${reasons} aesni-missing"
+    fi
+    if [ "$powerd_state" != "running" ]; then
+        score=$((score - 5))
+        reasons="${reasons} powerd-stopped"
+        actions="${actions} check powerd;"
+    fi
+
     fw_recent="$(tail -250 /var/log/filter.log 2>/dev/null | grep -Eic 'block|drop|reject' || true)"
     dns_recent="$(tail -1000 /var/log/pfblockerng/dnsbl.log /var/log/pfblockerng/dns_reply.log 2>/dev/null | grep -Eic 'DNSBL|sinkhole|blocked|deny' || true)"
     ids_recent="$(find /var/log/suricata -maxdepth 2 -type f \( -name alerts.log -o -name fast.log \) 2>/dev/null | xargs tail -300 2>/dev/null | grep -Eiv 'SURICATA (Stream|Ethertype unknown|TCPv[46] invalid checksum|UDPv[46] invalid checksum|ICMPv[46] invalid checksum|QUIC failed decrypt)|Generic Protocol Command Decode|Raw pkt:|invalid ack|invalid timestamp|bad window|wrong seq|retransmission|decoder event|HTTP unable to match response to request' | grep -Eic 'malware|trojan|ransom|command.?and.?control|c2 beacon|cnc|callback|exploit|shellcode|botnet|coinminer|credential|phish|blacklist|known.?bad' || true)"
@@ -1200,6 +1228,7 @@ doctor_autopilot() {
     printf '%s' "$reasons" | grep -Eq 'ai-high|ai-critical|ai-crit' && ai_score=$((ai_score - 25))
     sensor_score=100
     printf '%s' "$reasons" | grep -q 'wall-errors' && sensor_score=$((sensor_score - 25))
+    printf '%s' "$reasons" | grep -Eq 'cpu-critical|cpu-warm|aesni-missing|powerd-stopped' && sensor_score=$((sensor_score - 15))
     if [ -f /tmp/socx-ups-cache.env ]; then
         ups_age="$(age_file /tmp/socx-ups-cache.env)"
         [ "${ups_age:-0}" -gt 30 ] 2>/dev/null && sensor_score=$((sensor_score - 10))
@@ -1230,7 +1259,7 @@ doctor_autopilot() {
 
     [ -n "$reasons" ] || reasons="nominal"
     [ -n "$actions" ] || actions="keep monitoring;"
-    summary="FW ${fw_recent:-0} DNSBL ${dns_recent:-0} IDS ${ids_recent:-0} | ${reasons# }"
+    summary="FW ${fw_recent:-0} DNSBL ${dns_recent:-0} IDS ${ids_recent:-0} | CPU ${cpu_temp_max:-0}C headroom ${cpu_headroom:-0}C | ${reasons# }"
     {
         echo "updated=$(date +%s)"
         echo "mode=$mode"
@@ -1240,6 +1269,11 @@ doctor_autopilot() {
         echo "security_score=$security_score"
         echo "ai_score=$ai_score"
         echo "sensor_score=$sensor_score"
+        echo "cpu_temp_max=$cpu_temp_max"
+        echo "cpu_headroom_c=$cpu_headroom"
+        echo "cpu_freq_mhz=$cpu_freq_mhz"
+        echo "aesni=$aesni_state"
+        echo "powerd=$powerd_state"
         echo "fw_recent=${fw_recent:-0}"
         echo "dnsbl_recent=${dns_recent:-0}"
         echo "ids_recent=${ids_recent:-0}"
