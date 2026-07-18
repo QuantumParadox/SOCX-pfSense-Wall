@@ -874,6 +874,7 @@ def polish_operator_answer(question: str, answer: str) -> str:
     text = re.sub(r"DNSBL\s+means\s+Domain[- ]based Denial of Service", "DNSBL means DNS Block List", text, flags=re.I)
     text = re.sub(r"Domain[- ]based Denial of Service", "DNS Block List", text, flags=re.I)
     text = re.sub(r"\bD3[- ]FEND framework\b", "SOCX defensive-intel layer", text, flags=re.I)
+    text = re.sub(r"\bD3[- ]DNSDL technique\b", "DNS/DNSBL defensive evidence", text, flags=re.I)
     if "dnsbl" in question.lower() and "dns block list" not in text.lower():
         text = "DNSBL means DNS Block List: pfBlockerNG blocked a domain lookup because it matched a reputation or category list. " + text
     return text
