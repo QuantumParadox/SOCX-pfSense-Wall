@@ -89,6 +89,10 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - Adds a compact Pi Fleet visualizer in the browser wall for pfSense, Pi 5 AI, Pi 4 telemetry, online count, temperature, memory, load, and service state.
 - Adds browser voice Commander support for the same fixed allowlist as the buttons: status, incident, snapshot, speedtest, Zeek, and Pi AI.
 - Adds browser Speedtest truth comparison for CLIENT, ROUTER, DIRECT, and VPN paths so router-side under-reporting is visible instead of confusing.
+- Adds dedicated Speedtest history in `/var/db/socx_speedtest_history.jsonl`, `socx speedtest-history`, browser trend rows, and `/api/speedtest-history`.
+- Refuses to label direct Frontier traffic as VPN throughput when `socx speedtest vpn` is run while the VPN path is inactive.
+- Adds rolling incident memory in `/var/db/socx_incident_memory.jsonl`, `socx incident-memory`, browser memory rows, and `/api/incident-memory` so repeated scan/DNSBL patterns become recognizable.
+- Adds `socx pi-lab`, a safe bridge for starting bounded, read-only Pi 5 AI experiments such as model inventory, LLM pulse, and thermal watch.
 - Adds `/api/commander`, a fixed allowlist endpoint for safe operator actions without arbitrary shell access.
 - Adds `socx notify-cron` to install/remove/status a five-minute notification-rule cron job.
 - Adds `socx-doctor php-services` to catch malformed pfSense service entries that can cause PHP service-status crash reports.
@@ -135,6 +139,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-ups-status` - compact NUT/APC UPS status widget for the tmux status bar.
 - `scripts/socx-ups-cache` - background UPS collector that keeps `/tmp/socx-ups-cache.env` fresh without blocking wall rendering.
 - `scripts/socx-speedtest-cache` - scheduled Speedtest collector/importer that keeps active, client, and router Speedtest cache files.
+- `scripts/socx-speedtest-history` - summarizes Speedtest JSONL history by DIRECT/VPN path.
 - `scripts/socx-iftop-color` and `scripts/socx_iftop_color.pl` - color flow radar wrapper and renderer.
 - `scripts/socx-tcpdump-color` and `scripts/socx_tcpdump_color.pl` - color packet story wrapper and renderer.
 - `scripts/socx-incident` - short incident command that runs capture and prints the latest bundle manifest.
@@ -144,6 +149,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-explain` - explains short labels such as `tls`, `dnsbl`, `nut`, `sysl`, `game`, and `unk`.
 - `scripts/socx-menu` - interactive SOCX Command Center for common operator workflows.
 - `scripts/socx-timeline` - compact incident timeline from recent VPN, Speedtest, firewall, DNSBL, IDS, and AI signals.
+- `scripts/socx-incident-memory` - rolling repeated-event memory for top scanner, top port, DNSBL domain, and IDS pressure.
 - `scripts/socx-brief` - daily SOC brief generator with Autopilot, Label Brain, timeline, Speedtest, and Pi AI context.
 - `scripts/socx-rule-assistant` - approval-only rule recommendation assistant for evidence-backed policy review.
 - `scripts/socx-repair` - safe collector repair for SOCX wall helpers, vnstatd, LLDP, and Pi discovery without changing firewall policy.
@@ -161,6 +167,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - `scripts/socx-miranda-bridge` - exports a compact JSON summary for MIRANDA or another local-AI/SOC collector.
 - `scripts/socx-pi-llm-bridge` - posts the compact SOCX summary to a Raspberry Pi 5 AI HAT+ 3-LLM orchestration endpoint and caches the verdict.
 - `scripts/socx-pi-llm-cron` - installs/removes the scheduled Pi 3-LLM export.
+- `scripts/socx-pi-lab` - starts/statuses bounded read-only experiments on the Pi 5 SOCX AI dashboard.
 - `scripts/socx-pi-nodes` - discovers Pi-class LAN nodes such as the Pi 5 AI endpoint and Pi 4 node-exporter telemetry node.
 - `scripts/socx-ai-explain` - operator command that refreshes Pi/MIRANDA analysis and prints a plain-English summary.
 - `pi/socx_pi_llm_orchestrator.py` - optional Raspberry Pi FastAPI receiver that fans SOCX evidence to three local model roles.

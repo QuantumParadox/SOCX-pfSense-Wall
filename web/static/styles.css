@@ -897,7 +897,9 @@ body {
 
 .daily-brief,
 .incident-timeline,
-.rule-assistant {
+.rule-assistant,
+.speed-history,
+.incident-memory {
   margin-top: 8px;
   display: grid;
   gap: 5px;
@@ -912,7 +914,9 @@ body {
 
 .brief-title,
 .timeline-row,
-.rule-row {
+.rule-row,
+.speed-row,
+.memory-row {
   display: grid;
   align-items: center;
   gap: 8px;
@@ -929,7 +933,11 @@ body {
 .brief-next,
 .timeline-row em,
 .rule-row span,
-.rule-row em {
+.rule-row em,
+.speed-row span,
+.speed-row em,
+.memory-row span,
+.memory-row em {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -967,7 +975,11 @@ body {
 
 .timeline-row em,
 .rule-row span,
-.rule-row em {
+.rule-row em,
+.speed-row span,
+.speed-row em,
+.memory-row span,
+.memory-row em {
   font-style: normal;
   color: var(--text);
 }
@@ -984,6 +996,28 @@ body {
 
 .rule-row em {
   color: var(--purple);
+  font-size: clamp(9px, .68vw, 12px);
+}
+
+.speed-row,
+.memory-row {
+  grid-template-columns: 82px minmax(0, 1fr) 120px;
+  min-height: 24px;
+  padding: 4px 7px;
+  border-radius: 5px;
+  border: 1px solid rgba(52, 215, 242, .18);
+  background: rgba(52, 215, 242, .04);
+  font-size: clamp(10px, .72vw, 13px);
+}
+
+.speed-row b,
+.memory-row b {
+  font-weight: 950;
+}
+
+.speed-row em,
+.memory-row em {
+  color: var(--muted);
   font-size: clamp(9px, .68vw, 12px);
 }
 

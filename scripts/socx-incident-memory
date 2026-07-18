@@ -1,0 +1,77 @@
+#!/bin/sh
+set -u
+
+MEMORY="${SOCX_INCIDENT_MEMORY_FILE:-/var/db/socx_incident_memory.jsonl}"
+cmd="${1:-summary}"
+limit="${2:-300}"
+
+mkdir -p "$(dirname "$MEMORY")" 2>/dev/null || true
+
+json_escape() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/[[:cntrl:]]//g'
+}
+
+append_memory() {
+    now="$(date +%s)"
+    fw="$(tail -1200 /var/log/filter.log 2>/dev/null | grep -Ei ',block,|,reject,' | awk -F, '$9 == 4 && $19 ~ /^[0-9.]+$/ {src[$19]++; port[$22]++} END {for(s in src) if(src[s]>sn){ss=s;sn=src[s]} for(p in port) if(p!="" && port[p]>pn){pp=p;pn=port[p]} printf "%s|%d|%s|%d", ss, sn, pp, pn}')"
+    dns="$(tail -1200 /var/log/pfblockerng/dnsbl.log /var/log/pfblockerng/dns_reply.log 2>/dev/null | awk -F, 'NF>=3 {d=$3; gsub(/^ +| +$/, "", d); if(d ~ /\./) c[d]++} END {for(d in c) if(c[d]>n){top=d;n=c[d]} printf "%s|%d", top, n}')"
+    ids="$(find /var/log/suricata -maxdepth 2 -type f \( -name alerts.log -o -name fast.log \) 2>/dev/null | xargs tail -500 2>/dev/null | grep -Eic 'malware|trojan|ransom|command.?and.?control|c2|botnet|exploit|known.?bad' || true)"
+    top_src="$(printf '%s' "$fw" | cut -d'|' -f1)"
+    top_src_count="$(printf '%s' "$fw" | cut -d'|' -f2)"
+    top_port="$(printf '%s' "$fw" | cut -d'|' -f3)"
+    top_port_count="$(printf '%s' "$fw" | cut -d'|' -f4)"
+    top_dns="$(printf '%s' "$dns" | cut -d'|' -f1)"
+    top_dns_count="$(printf '%s' "$dns" | cut -d'|' -f2)"
+    printf '{"ts":%s,"top_source":"%s","top_source_count":%s,"top_port":"%s","top_port_count":%s,"top_dnsbl":"%s","top_dnsbl_count":%s,"ids_high":%s}\n' \
+        "$now" \
+        "$(json_escape "$top_src")" "${top_src_count:-0}" \
+        "$(json_escape "$top_port")" "${top_port_count:-0}" \
+        "$(json_escape "$top_dns")" "${top_dns_count:-0}" \
+        "${ids:-0}" >> "$MEMORY"
+    lines="$(wc -l < "$MEMORY" 2>/dev/null || echo 0)"
+    if [ "$lines" -gt "${SOCX_INCIDENT_MEMORY_MAX_LINES:-2000}" ] 2>/dev/null; then
+        tail -"${SOCX_INCIDENT_MEMORY_MAX_LINES:-2000}" "$MEMORY" > "$MEMORY.tmp" 2>/dev/null && mv "$MEMORY.tmp" "$MEMORY" 2>/dev/null || true
+    fi
+}
+
+summary_memory() {
+    if [ ! -f "$MEMORY" ]; then
+        echo "no incident memory yet: $MEMORY"
+        return
+    fi
+    if ! command -v jq >/dev/null 2>&1; then
+        echo "jq required for incident memory summary"
+        return 1
+    fi
+    tail -"${limit:-300}" "$MEMORY" | jq -r -s '
+      def top($key):
+        map(.[$key] // empty) | map(select(. != "")) | group_by(.) | map({name: .[0], count: length}) | sort_by(.count) | reverse | .[0] // {name:"--",count:0};
+      . as $rows |
+      top("top_source") as $src |
+      top("top_port") as $port |
+      top("top_dnsbl") as $dns |
+      "SOCX incident memory last \($rows|length) samples",
+      "repeat source: \($src.name) x\($src.count)",
+      "repeat port:   \($port.name) x\($port.count)",
+      "repeat DNSBL:  \($dns.name) x\($dns.count)",
+      "IDS high seen: \([$rows[] | select((.ids_high//0)>0)] | length) samples"'
+}
+
+case "$cmd" in
+append)
+    append_memory
+    ;;
+show|tail)
+    tail -"${limit:-80}" "$MEMORY" 2>/dev/null || echo "no incident memory yet: $MEMORY"
+    ;;
+json)
+    if [ -f "$MEMORY" ]; then
+        tail -"${limit:-300}" "$MEMORY" | awk 'BEGIN{print "["} {if(n++) print ","; printf "%s",$0} END{print "\n]"}'
+    else
+        echo "[]"
+    fi
+    ;;
+summary|trend|*)
+    summary_memory
+    ;;
+esac

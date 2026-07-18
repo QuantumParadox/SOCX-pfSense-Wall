@@ -2,6 +2,10 @@
 
 ## v0.1.46
 
+- Added dedicated Speedtest history in `/var/db/socx_speedtest_history.jsonl`, `socx speedtest-history`, browser trend rows, and `/api/speedtest-history`.
+- Added VPN speedtest truth guarding so `socx speedtest vpn` does not overwrite the active DIRECT cache or pretend direct Frontier traffic is a VPN path when VPN is off.
+- Added rolling incident memory in `/var/db/socx_incident_memory.jsonl`, `socx incident-memory`, browser memory rows, and `/api/incident-memory` for repeated source/port/DNSBL awareness.
+- Added `socx pi-lab` and a browser Commander Pi Lab action for bounded, read-only Pi 5 experiments against the SOCX 3-LLM dashboard.
 - Added a structured browser Incident Timeline that links firewall pressure, DNSBL hits, IDS buckets, learned-normal device anomalies, and Pi/MIRANDA AI verdicts into one readable story.
 - Added a Daily SOC Brief card and `socx brief`, which saves a timestamped report under `/root/socx-briefs/` with Autopilot, Label Brain, timeline, Speedtest, and Pi AI context.
 - Added approval-only `socx rules` / Rule Assistant recommendations for firewall, DNSBL, IDS, and device-profile review without automatically changing pfSense policy.

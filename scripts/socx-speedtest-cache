@@ -11,6 +11,7 @@ DIRECT_CACHE=${SOCX_SPEEDTEST_DIRECT_CACHE_FILE:-/tmp/socx-speedtest-direct.env}
 VPN_CACHE=${SOCX_SPEEDTEST_VPN_CACHE_FILE:-/tmp/socx-speedtest-vpn.env}
 LOCK=${SOCX_SPEEDTEST_LOCK_FILE:-/tmp/socx-speedtest-cache.lock}
 LOG=${SOCX_SPEEDTEST_LOG:-/tmp/socx-speedtest-cache.log}
+HISTORY=${SOCX_SPEEDTEST_HISTORY_FILE:-/var/db/socx_speedtest_history.jsonl}
 SERVER_ID=${SOCX_SPEEDTEST_FRONTIER_SERVER_ID:-56485}
 SERVER_NAME=${SOCX_SPEEDTEST_FRONTIER_SERVER_NAME:-Frontier}
 SERVER_LOCATION=${SOCX_SPEEDTEST_FRONTIER_SERVER_LOCATION:-Secaucus, NJ}
@@ -85,6 +86,7 @@ write_cache() {
         printf 'result_url=%s\n' "$(clean_value "${14}")"
         printf 'interval_seconds=%s\n' "$(interval_seconds)"
     } > "$tmp"
+    append_history "$1" "$2" "$3" "$profile" "$path_name" "$path_slug" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}" "${12}" "${13}" "${14}"
     case "$3" in
     client)
         cp "$tmp" "$CLIENT_CACHE" 2>/dev/null || true
@@ -103,8 +105,12 @@ write_cache() {
     vpn|vpn-auto)
         cp "$tmp" "$VPN_CACHE" 2>/dev/null || true
         [ -n "$path_slug" ] && cp "$tmp" "/tmp/socx-speedtest-vpn-${path_slug}.env" 2>/dev/null || true
-        cp "$tmp" "$ROUTER_CACHE" 2>/dev/null || true
-        mv "$tmp" "$CACHE"
+        if [ "$1" = ok ]; then
+            cp "$tmp" "$ROUTER_CACHE" 2>/dev/null || true
+            mv "$tmp" "$CACHE"
+        else
+            rm -f "$tmp"
+        fi
         ;;
     *)
         cp "$tmp" "$ROUTER_CACHE" 2>/dev/null || true
@@ -115,6 +121,45 @@ write_cache() {
         fi
         ;;
     esac
+}
+
+json_escape() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/[[:cntrl:]]//g'
+}
+
+append_history() {
+    [ "${SOCX_SPEEDTEST_HISTORY:-true}" = "true" ] || return 0
+    status=$(clean_value "$1")
+    [ "$status" = "running" ] && return 0
+    message=$(clean_value "$2")
+    mode=$(clean_value "$3")
+    profile=$(clean_value "$4")
+    path_name=$(clean_value "$5")
+    path_slug=$(clean_value "$6")
+    tool=$(clean_value "$7")
+    down=$(clean_value "$8")
+    up=$(clean_value "$9")
+    ping=$(clean_value "${10}")
+    jitter=$(clean_value "${11}")
+    sid=$(clean_value "${12}")
+    sname=$(clean_value "${13}")
+    sloc=$(clean_value "${14}")
+    isp=$(clean_value "${15}")
+    ip=$(clean_value "${16}")
+    url=$(clean_value "${17}")
+    mkdir -p "$(dirname "$HISTORY")" 2>/dev/null || true
+    printf '{"ts":%s,"status":"%s","message":"%s","mode":"%s","profile":"%s","path_name":"%s","path_slug":"%s","tool":"%s","download_mbps":%s,"upload_mbps":%s,"ping_ms":%s,"jitter_ms":%s,"server_id":"%s","server_name":"%s","server_location":"%s","isp":"%s","external_ip":"%s","result_url":"%s"}\n' \
+        "$(now_epoch)" \
+        "$(json_escape "$status")" "$(json_escape "$message")" "$(json_escape "$mode")" "$(json_escape "$profile")" "$(json_escape "$path_name")" "$(json_escape "$path_slug")" "$(json_escape "$tool")" \
+        "$(awk -v v="$down" 'BEGIN{printf "%s", (v == "" ? "null" : v + 0)}')" \
+        "$(awk -v v="$up" 'BEGIN{printf "%s", (v == "" ? "null" : v + 0)}')" \
+        "$(awk -v v="$ping" 'BEGIN{printf "%s", (v == "" ? "null" : v + 0)}')" \
+        "$(awk -v v="$jitter" 'BEGIN{printf "%s", (v == "" ? "null" : v + 0)}')" \
+        "$(json_escape "$sid")" "$(json_escape "$sname")" "$(json_escape "$sloc")" "$(json_escape "$isp")" "$(json_escape "$ip")" "$(json_escape "$url")" >> "$HISTORY" 2>/dev/null || true
+    lines=$(wc -l < "$HISTORY" 2>/dev/null || echo 0)
+    if [ "$lines" -gt "${SOCX_SPEEDTEST_HISTORY_MAX_LINES:-2000}" ] 2>/dev/null; then
+        tail -"${SOCX_SPEEDTEST_HISTORY_MAX_LINES:-2000}" "$HISTORY" > "$HISTORY.tmp" 2>/dev/null && mv "$HISTORY.tmp" "$HISTORY" 2>/dev/null || true
+    fi
 }
 
 speedtest_profile_from_mode() {
@@ -258,6 +303,10 @@ run_python_speedtest() {
 run_once() {
     tool=$(speedtest_tool)
     mode=$(selected_mode)
+    if [ "$PROFILE" = "vpn" ] && [ "$(vpn_status_hint)" != "vpn" ]; then
+        write_cache unavailable "VPN path not active; direct path detected" vpn none "" "" "" "" "" "VPN path" "not active" "" "" ""
+        return 1
+    fi
     if [ -z "$tool" ]; then
         write_cache missing "install speedtest or py311-speedtest-cli" "$mode" none "" "" "" "" "" "" "" "" "" ""
         return 1

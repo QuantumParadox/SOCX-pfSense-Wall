@@ -13,6 +13,7 @@ install -m 0755 "$ROOT/scripts/socx-alert-ticker" /usr/local/sbin/socx-alert-tic
 install -m 0755 "$ROOT/scripts/socx-ups-status" /usr/local/sbin/socx-ups-status
 install -m 0755 "$ROOT/scripts/socx-ups-cache" /usr/local/sbin/socx-ups-cache
 install -m 0755 "$ROOT/scripts/socx-speedtest-cache" /usr/local/sbin/socx-speedtest-cache
+install -m 0755 "$ROOT/scripts/socx-speedtest-history" /usr/local/bin/socx-speedtest-history
 install -m 0755 "$ROOT/scripts/socx-packet-radar-cache" /usr/local/sbin/socx-packet-radar-cache
 install -m 0755 "$ROOT/scripts/socx-incident-capture" /usr/local/sbin/socx-incident-capture
 install -m 0755 "$ROOT/scripts/socx-incident" /usr/local/bin/socx-incident
@@ -22,6 +23,7 @@ install -m 0755 "$ROOT/scripts/socx-hosts-audit" /usr/local/bin/socx-hosts-audit
 install -m 0755 "$ROOT/scripts/socx-explain" /usr/local/bin/socx-explain
 install -m 0755 "$ROOT/scripts/socx-menu" /usr/local/bin/socx-menu
 install -m 0755 "$ROOT/scripts/socx-timeline" /usr/local/bin/socx-timeline
+install -m 0755 "$ROOT/scripts/socx-incident-memory" /usr/local/bin/socx-incident-memory
 install -m 0755 "$ROOT/scripts/socx-brief" /usr/local/bin/socx-brief
 install -m 0755 "$ROOT/scripts/socx-rule-assistant" /usr/local/bin/socx-rule-assistant
 install -m 0755 "$ROOT/scripts/socx-repair" /usr/local/bin/socx-repair
@@ -42,6 +44,7 @@ install -m 0755 "$ROOT/scripts/socx-miranda-bridge" /usr/local/bin/socx-miranda-
 install -m 0755 "$ROOT/scripts/socx-miranda-cron" /usr/local/bin/socx-miranda-cron
 install -m 0755 "$ROOT/scripts/socx-pi-llm-bridge" /usr/local/bin/socx-pi-llm-bridge
 install -m 0755 "$ROOT/scripts/socx-pi-llm-cron" /usr/local/bin/socx-pi-llm-cron
+install -m 0755 "$ROOT/scripts/socx-pi-lab" /usr/local/bin/socx-pi-lab
 install -m 0755 "$ROOT/scripts/socx-pi-discover" /usr/local/bin/socx-pi-discover
 install -m 0755 "$ROOT/scripts/socx-pi-nodes" /usr/local/bin/socx-pi-nodes
 install -m 0755 "$ROOT/scripts/socx-iftop-color" /usr/local/sbin/socx-iftop-color

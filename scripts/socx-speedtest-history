@@ -1,0 +1,38 @@
+#!/bin/sh
+set -u
+
+HISTORY="${SOCX_SPEEDTEST_HISTORY_FILE:-/var/db/socx_speedtest_history.jsonl}"
+cmd="${1:-summary}"
+limit="${2:-200}"
+
+if [ ! -f "$HISTORY" ]; then
+    echo "no Speedtest history yet: $HISTORY"
+    exit 0
+fi
+
+case "$cmd" in
+show|tail)
+    tail -"${limit:-80}" "$HISTORY"
+    ;;
+json)
+    awk 'BEGIN{print "["} {if (n++) print ","; printf "%s", $0} END{print "\n]"}' < "$HISTORY"
+    ;;
+summary|trend|*)
+    if ! command -v jq >/dev/null 2>&1; then
+        echo "jq required for Speedtest history summary"
+        exit 1
+    fi
+    echo "SOCX Speedtest history"
+    tail -"${limit:-200}" "$HISTORY" | jq -r -s '
+      group_by(.path_slug // .profile // "unknown")[] |
+      . as $rows |
+      ($rows[0].path_slug // $rows[0].profile // "unknown") as $path |
+      [ .[] | select(.status=="ok" and (.download_mbps//0)>0 and (.upload_mbps//0)>0) ] as $ok |
+      [ .[] | select(.status!="ok" or (.download_mbps//0)<=0 or (.upload_mbps//0)<=0) ] as $err |
+      if ($ok|length) > 0 then
+        "\($path) ok=\($ok|length) err=\($err|length) avg=\(($ok|map(.download_mbps)|add/length)|floor)/\(($ok|map(.upload_mbps)|add/length)|floor) Mbps ping=\(($ok|map(.ping_ms//0)|add/length)|floor)ms best=\($ok|map(.download_mbps)|max|floor) worst=\($ok|map(.download_mbps)|min|floor)"
+      else
+        "\($path) ok=0 err=\($err|length) no valid throughput samples"
+      end'
+    ;;
+esac

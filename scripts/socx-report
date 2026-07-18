@@ -43,6 +43,13 @@ else
     echo "No speedtest cache found." >> "$OUT"
 fi
 
+section "Speedtest History"
+if command -v socx-speedtest-history >/dev/null 2>&1; then
+    run socx-speedtest-history summary 500
+else
+    echo "socx-speedtest-history not installed." >> "$OUT"
+fi
+
 section "UPS"
 if [ -f /tmp/socx-ups-cache.env ]; then
     cat /tmp/socx-ups-cache.env >> "$OUT"
@@ -85,6 +92,13 @@ if command -v socx-timeline >/dev/null 2>&1; then
     run socx-timeline 120
 else
     echo "socx-timeline not installed." >> "$OUT"
+fi
+
+section "SOCX Incident Memory"
+if command -v socx-incident-memory >/dev/null 2>&1; then
+    run socx-incident-memory summary 500
+else
+    echo "socx-incident-memory not installed." >> "$OUT"
 fi
 
 section "SOCX Doctor Traffic Totals"

@@ -221,6 +221,22 @@ function renderDailyBrief(brief = {}) {
   `;
 }
 
+function renderSpeedtestHistory(history = {}) {
+  const root = $("speed-history");
+  if (!root) return;
+  const paths = Array.isArray(history.paths) ? history.paths : [];
+  root.innerHTML = paths.slice(0, 4).map((item) => {
+    const cls = item.status === "stable" ? "green" : item.status === "watch" ? "yellow" : "cyan";
+    return `
+      <div class="speed-row">
+        <b class="${cls}">${escapeHtml(String(item.path || "path").toUpperCase())}</b>
+        <span>${escapeHtml(safe(item.avg_down, "--"))}↓/${escapeHtml(safe(item.avg_up, "--"))}↑ avg</span>
+        <em>best ${escapeHtml(safe(item.best_down, "--"))} worst ${escapeHtml(safe(item.worst_down, "--"))}</em>
+      </div>
+    `;
+  }).join("") || `<div class="speed-row"><b class="cyan">SPD</b><span>waiting for history</span><em>run speedtest</em></div>`;
+}
+
 function renderRuleAssistant(assistant = {}) {
   const root = $("rule-assistant");
   if (!root) return;
@@ -235,6 +251,19 @@ function renderRuleAssistant(assistant = {}) {
       </div>
     `;
   }).join("");
+}
+
+function renderIncidentMemory(memory = {}) {
+  const root = $("incident-memory");
+  if (!root) return;
+  const src = (memory.sources || [])[0] || {};
+  const port = (memory.ports || [])[0] || {};
+  const dns = (memory.dnsbl || [])[0] || {};
+  root.innerHTML = `
+    <div class="memory-row"><b>MEM</b><span>source ${escapeHtml(src.name || "--")} x${escapeHtml(src.count || 0)}</span><em>${escapeHtml(memory.status || "waiting")}</em></div>
+    <div class="memory-row"><b>PORT</b><span>${escapeHtml(port.name || "--")} x${escapeHtml(port.count || 0)}</span><em>IDS ${escapeHtml(memory.ids_high_samples || 0)}</em></div>
+    <div class="memory-row"><b>DNS</b><span title="${escapeHtml(dns.name || "")}">${escapeHtml(dns.name || "--")} x${escapeHtml(dns.count || 0)}</span><em>${escapeHtml(memory.count || 0)} samples</em></div>
+  `;
 }
 
 function renderPiNodes(piNodes = {}) {
@@ -583,6 +612,8 @@ function render(state) {
   renderIncidentTimeline(state.incident_timeline || {});
   renderDailyBrief(state.daily_brief || {});
   renderRuleAssistant(state.rule_assistant || {});
+  renderSpeedtestHistory(state.speedtest_history || {});
+  renderIncidentMemory(state.incident_memory || {});
   renderFlows(state.flows || []);
   renderPackets(state.packets || []);
   renderTicker(state.events || []);
@@ -599,6 +630,9 @@ function commanderActionFromSpeech(text) {
   if (/(brief|daily|morning)/.test(value)) return "brief";
   if (/(timeline|story|history)/.test(value)) return "timeline";
   if (/(rule|draft|recommend)/.test(value)) return "rules";
+  if (/(speed history|bandwidth history|speed trend)/.test(value)) return "speed-history";
+  if (/(memory|repeat|repeated|baseline)/.test(value)) return "memory";
+  if (/(lab|experiment|pulse|benchmark)/.test(value)) return "lab";
   if (/(status|health|doctor)/.test(value)) return "status";
   return "";
 }
@@ -619,13 +653,13 @@ function runVoiceCommand() {
   recognition.interimResults = false;
   recognition.maxAlternatives = 1;
   if (title) title.textContent = "Listening";
-  if (body) body.textContent = "Say: status, incident, snapshot, speed test, Zeek, Pi AI, brief, timeline, rules, or explain.";
+  if (body) body.textContent = "Say: status, incident, snapshot, speed test, Zeek, Pi AI, brief, timeline, rules, memory, lab, or explain.";
   recognition.onresult = (event) => {
     const transcript = event.results?.[0]?.[0]?.transcript || "";
     const action = commanderActionFromSpeech(transcript);
     if (!action) {
       if (title) title.textContent = "Voice command not mapped";
-    if (body) body.textContent = `Heard: ${transcript}\nAllowed: status, incident, snapshot, speedtest, zeek, pi, explain, brief, timeline, rules, doctor.`;
+    if (body) body.textContent = `Heard: ${transcript}\nAllowed: status, incident, snapshot, speedtest, zeek, pi, explain, brief, timeline, rules, doctor, speed-history, memory, lab.`;
       return;
     }
     runCommander(action);

@@ -1,0 +1,85 @@
+#!/bin/sh
+set -u
+
+DISCOVERY="${SOCX_PI_DISCOVERY_CACHE:-/tmp/socx-pi-discovery.env}"
+NODES="${SOCX_PI_NODES_JSON:-/tmp/socx-pi-nodes.json}"
+PI_URL="${SOCX_PI_LLM_URL:-}"
+cmd="${1:-status}"
+kind="${2:-llm_pulse}"
+duration="${3:-30}"
+
+env_get() {
+    key="$1"
+    file="$2"
+    [ -f "$file" ] || { echo ""; return; }
+    sed -n "s/^$key=//p" "$file" 2>/dev/null | tail -1
+}
+
+discover_url() {
+    if [ -n "$PI_URL" ]; then
+        echo "$PI_URL"
+        return
+    fi
+    ip="$(env_get ip "$DISCOVERY")"
+    if [ -z "$ip" ] && [ -f "$NODES" ] && command -v jq >/dev/null 2>&1; then
+        ip="$(jq -r '.nodes[]? | select((.role//""|test("ai|pi-5|llm")) or (.service//""|test("llm|socx"))) | .ip' "$NODES" 2>/dev/null | head -1)"
+    fi
+    [ -n "$ip" ] && echo "http://$ip:8095"
+}
+
+url="$(discover_url)"
+if [ -z "$url" ]; then
+    echo "Pi AI endpoint not discovered. Run: socx pi-nodes"
+    exit 1
+fi
+
+case "$cmd" in
+status)
+    fetch -qo - "$url/api/socx/autonomy" 2>/dev/null || curl -fsS --max-time 8 "$url/api/socx/autonomy"
+    ;;
+thermal|thermal_watch)
+    kind="thermal_watch"
+    ;;
+llm|pulse|llm_pulse)
+    kind="stress_llm"
+    ;;
+models|model_inventory)
+    kind="model_inventory"
+    ;;
+fw|firewall|firewall_summary)
+    kind="stress_llm"
+    ;;
+dns|dnsbl)
+    kind="stress_llm"
+    ;;
+start)
+    kind="${2:-stress_llm}"
+    duration="${3:-30}"
+    ;;
+stop)
+    body='{"action":"stop"}'
+    fetch -qo - --post "$body" --header "Content-Type: application/json" "$url/api/socx/experiment" 2>/dev/null || \
+        curl -fsS --max-time 8 -H 'Content-Type: application/json' -d "$body" "$url/api/socx/experiment"
+    exit $?
+    ;;
+*)
+    echo "Usage: socx pi-lab [status|llm|thermal|models|fw|dns|start <kind> <seconds>|stop]"
+    exit 2
+    ;;
+esac
+
+case "$cmd" in
+status|stop) exit 0 ;;
+esac
+
+case "$kind" in
+thermal_watch|stress_llm|model_inventory) ;;
+*) kind="stress_llm" ;;
+esac
+case "$duration" in *[!0-9]*|"") duration=30 ;; esac
+[ "$duration" -lt 10 ] 2>/dev/null && duration=10
+[ "$duration" -gt 120 ] 2>/dev/null && duration=120
+
+body="$(printf '{"kind":"%s","action":"start","duration":%s}' "$kind" "$duration")"
+fetch -qo - --post "$body" --header "Content-Type: application/json" "$url/api/socx/experiment" 2>/dev/null || \
+    curl -fsS --max-time 8 -H 'Content-Type: application/json' -d "$body" "$url/api/socx/experiment"

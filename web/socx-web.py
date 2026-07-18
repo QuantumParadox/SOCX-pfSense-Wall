@@ -289,6 +289,7 @@ class SocxCollector:
         self.label_history_path = Path(os.environ.get("SOCX_LABEL_BRAIN_HISTORY", "/var/db/socx_label_brain.json"))
         self.label_history_last_write = 0.0
         self.label_history_cache: dict[str, Any] = self.load_label_history()
+        self.last_incident_memory_write = 0.0
         self.state: dict[str, Any] = self.demo_state()
 
     def load_hosts(self) -> dict[str, str]:
@@ -359,6 +360,9 @@ class SocxCollector:
         incident_timeline = self.collect_incident_timeline(incident, label_brain, ai_timeline)
         daily_brief = self.collect_daily_brief(command_center, incident, label_brain, pi_nodes, ai_timeline)
         rule_assistant = self.collect_rule_assistant(incident, label_brain)
+        speedtest_history = self.collect_speedtest_history()
+        incident_memory = self.collect_incident_memory()
+        self.maybe_append_incident_memory()
 
         packets: list[dict[str, Any]] = []
         if time.time() - self.last_event_read > 0.8:
@@ -409,6 +413,8 @@ class SocxCollector:
             "incident_timeline": incident_timeline,
             "daily_brief": daily_brief,
             "rule_assistant": rule_assistant,
+            "speedtest_history": speedtest_history,
+            "incident_memory": incident_memory,
             "flows": flows,
             "packets": packets,
             "events": list(self.events.values())[-self.event_max :],
@@ -1191,6 +1197,110 @@ class SocxCollector:
             })
         return {"mode": "approval-only", "applies_changes": False, "drafts": drafts[:4], "updated_ms": now_ms()}
 
+    def read_jsonl_tail(self, path: Path, limit: int = 240) -> list[dict[str, Any]]:
+        try:
+            lines = path.read_text(errors="ignore").splitlines()[-limit:]
+        except Exception:
+            return []
+        rows: list[dict[str, Any]] = []
+        for raw in lines:
+            try:
+                item = json.loads(raw)
+            except Exception:
+                continue
+            if isinstance(item, dict):
+                rows.append(item)
+        return rows
+
+    def collect_speedtest_history(self) -> dict[str, Any]:
+        path = Path(os.environ.get("SOCX_SPEEDTEST_HISTORY_FILE", "/var/db/socx_speedtest_history.jsonl"))
+        rows = self.read_jsonl_tail(path, 500)
+        now = time.time()
+        windows = {"24h": 86400, "7d": 604800}
+        paths: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            slug = str(row.get("path_slug") or row.get("profile") or "unknown")
+            paths.setdefault(slug, {"path": slug, "samples": 0, "ok": 0, "errors": 0, "download": [], "upload": [], "ping": []})
+            bucket = paths[slug]
+            bucket["samples"] += 1
+            if str(row.get("status") or "").lower() != "ok":
+                bucket["errors"] += 1
+                continue
+            down = float(row.get("download_mbps") or 0)
+            up = float(row.get("upload_mbps") or 0)
+            ping = float(row.get("ping_ms") or 0)
+            if down > 0 and up > 0:
+                bucket["ok"] += 1
+                bucket["download"].append(down)
+                bucket["upload"].append(up)
+                if ping > 0:
+                    bucket["ping"].append(ping)
+        summaries: list[dict[str, Any]] = []
+        for slug, bucket in paths.items():
+            downs = bucket.pop("download")
+            ups = bucket.pop("upload")
+            pings = bucket.pop("ping")
+            if downs:
+                avg_down = sum(downs) / len(downs)
+                worst_down = min(downs)
+                status = "watch" if avg_down and worst_down < avg_down * 0.55 else "stable"
+                summaries.append({
+                    **bucket,
+                    "avg_down": round(avg_down),
+                    "avg_up": round(sum(ups) / len(ups)) if ups else "",
+                    "best_down": round(max(downs)),
+                    "worst_down": round(worst_down),
+                    "avg_ping": round(sum(pings) / len(pings)) if pings else "",
+                    "status": status,
+                })
+            else:
+                summaries.append({**bucket, "avg_down": "", "avg_up": "", "best_down": "", "worst_down": "", "avg_ping": "", "status": "waiting"})
+        latest = rows[-1] if rows else {}
+        age = int(max(0, now - float(latest.get("ts") or 0))) if latest.get("ts") else None
+        by_window: dict[str, int] = {}
+        for label, seconds in windows.items():
+            by_window[label] = sum(1 for row in rows if float(row.get("ts") or 0) >= now - seconds)
+        return {"rows": rows[-80:], "paths": sorted(summaries, key=lambda item: str(item.get("path"))), "count": len(rows), "latest_age_sec": age, "windows": by_window}
+
+    def collect_incident_memory(self) -> dict[str, Any]:
+        path = Path(os.environ.get("SOCX_INCIDENT_MEMORY_FILE", "/var/db/socx_incident_memory.jsonl"))
+        rows = self.read_jsonl_tail(path, 500)
+        counters: dict[str, dict[str, int]] = {"sources": {}, "ports": {}, "dnsbl": {}}
+        ids_seen = 0
+        for row in rows:
+            src = str(row.get("top_source") or "")
+            port = str(row.get("top_port") or "")
+            dns = str(row.get("top_dnsbl") or "")
+            if src:
+                counters["sources"][src] = counters["sources"].get(src, 0) + 1
+            if port:
+                counters["ports"][port] = counters["ports"].get(port, 0) + 1
+            if dns:
+                counters["dnsbl"][dns] = counters["dnsbl"].get(dns, 0) + 1
+            if int(row.get("ids_high") or 0) > 0:
+                ids_seen += 1
+
+        def top(kind: str) -> list[dict[str, Any]]:
+            data = counters.get(kind, {})
+            return [{"name": key, "count": val} for key, val in sorted(data.items(), key=lambda kv: kv[1], reverse=True)[:5]]
+
+        return {
+            "count": len(rows),
+            "sources": top("sources"),
+            "ports": top("ports"),
+            "dnsbl": top("dnsbl"),
+            "ids_high_samples": ids_seen,
+            "rows": rows[-40:],
+            "status": "learning" if rows else "waiting",
+        }
+
+    def maybe_append_incident_memory(self) -> None:
+        now = time.time()
+        if now - self.last_incident_memory_write < env_int("SOCX_INCIDENT_MEMORY_SECONDS", 60):
+            return
+        self.last_incident_memory_write = now
+        run_cmd("/usr/local/bin/socx-incident-memory append 2>/dev/null", timeout=1.8)
+
     def baseline_for_asset(self, history: dict[str, Any], asset: str) -> dict[str, Any]:
         devices = history.get("devices") if isinstance(history.get("devices"), dict) else {}
         row = devices.get(asset) if isinstance(devices.get(asset), dict) else {}
@@ -1940,6 +2050,12 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/rule-assistant":
             self.send_json(self.collector.snapshot().get("rule_assistant", {}))
             return
+        if parsed.path == "/api/speedtest-history":
+            self.send_json(self.collector.snapshot().get("speedtest_history", {}))
+            return
+        if parsed.path == "/api/incident-memory":
+            self.send_json(self.collector.snapshot().get("incident_memory", {}))
+            return
         if parsed.path == "/api/config":
             self.send_json({"refresh_ms": int(self.collector.interval * 1000), "demo": self.collector.demo})
             return
@@ -1975,9 +2091,12 @@ class SocxHandler(BaseHTTPRequestHandler):
             "timeline": (["/usr/local/bin/socx", "timeline", "120"], 35.0, "Incident timeline"),
             "rules": (["/usr/local/bin/socx", "rules"], 35.0, "Rule assistant"),
             "doctor": (["/usr/local/bin/socx", "status"], 35.0, "pfSense health doctor"),
+            "speed-history": (["/usr/local/bin/socx", "speedtest-history", "summary", "500"], 25.0, "Speedtest history"),
+            "memory": (["/usr/local/bin/socx", "incident-memory", "summary", "500"], 25.0, "Incident memory"),
+            "lab": (["/usr/local/bin/socx", "pi-lab", "llm"], 25.0, "Pi lab experiment"),
         }
         if action not in commands:
-            return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, incident, zeek, speedtest, pi, status, explain, brief, timeline, rules, doctor"}
+            return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, incident, zeek, speedtest, pi, status, explain, brief, timeline, rules, doctor, speed-history, memory, lab"}
         args, timeout, title = commands[action]
         result = run_cmd_capture(args, timeout=timeout)
         return {"action": action, "title": title, **result}
