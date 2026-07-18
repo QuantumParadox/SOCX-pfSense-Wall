@@ -15,6 +15,7 @@ const pageName = () => {
   if (path.includes("device")) return "devices";
   if (path.includes("incident")) return "incidents";
   if (path.includes("ai")) return "ai";
+  if (path.includes("health")) return "health";
   return "speedtest";
 };
 
@@ -43,6 +44,7 @@ function renderTruthCards(state) {
   return [
     card("Data Truth", [
       `<div class="detail-score ${truth.tone || "cyan"}">${esc(truth.label || "UNKNOWN")} ${esc(truth.score ?? "--")}/100</div>`,
+      `<div class="detail-reason">${esc(truth.reason || "waiting for collector freshness")}</div>`,
       table(["Signal", "State", "Age", "Source", "Detail"], (truth.signals || []).map((s) => [
         s.name,
         `${s.state || "--"}`,
@@ -58,6 +60,52 @@ function renderTruthCards(state) {
       r.detail || "--",
     ]))),
   ];
+}
+
+function renderHealth(state, health) {
+  title.textContent = "SOCX RELEASE HEALTH";
+  const truth = health.data_truth || state.data_truth || {};
+  const pi = health.pi_nodes || state.pi_nodes || {};
+  const checks = health.checks || [];
+  const wall = health.wall_error || {};
+  const roleRows = [];
+  (pi.nodes || []).forEach((node) => {
+    (node.role_details || []).forEach((role) => {
+      roleRows.push([
+        node.name || node.ip || "--",
+        role.role || "--",
+        role.state || "--",
+        role.model || "--",
+        role.summary || node.autonomy_summary || "--",
+      ]);
+    });
+  });
+  root.innerHTML = [
+    ...renderTruthCards({ ...state, data_truth: truth, what_changed: state.what_changed || {} }),
+    card("Release Gate", [
+      kv("Hostname", health.hostname || state.hostname || "--", "cyan"),
+      kv("API", health.versions?.api || "--", "green"),
+      kv("Refresh", `${health.versions?.refresh_ms || state.status?.refresh_ms || "--"}ms`, "cyan"),
+      kv("Wall Errors", `${wall.bytes ?? "--"} bytes`, wall.clean ? "green" : "red"),
+      kv("Data Reason", truth.reason || "--", truth.tone || "cyan"),
+    ].join("")),
+    card("Checks", table(["Check", "State", "Elapsed", "Output"], checks.map((c) => [
+      c.name,
+      c.ok ? "OK" : "WARN",
+      `${c.elapsed_ms ?? "--"}ms`,
+      c.output || "--",
+    ]))),
+    card("Pi Role Detail", table(["Node", "Role", "State", "Model", "Visible Summary"], roleRows)),
+    card("Pi Fleet", table(["Name", "IP", "Role", "Temp", "Load", "Memory", "Service"], (pi.nodes || []).map((n) => [
+      n.name,
+      n.ip,
+      n.role_h || n.role,
+      n.temperature_h,
+      n.load_h,
+      n.memory_h,
+      n.service_h || n.service,
+    ]))),
+  ].join("");
 }
 
 function renderSpeed(state) {
@@ -110,7 +158,7 @@ function renderIncidents(state) {
       kv("FW/DNSBL/IDS", `${incident.counts?.sources || 0}/${incident.counts?.dnsbl || 0}/${incident.ids?.high_signal || 0}`, "yellow"),
     ].join("")),
     card("Timeline", table(["Time", "Kind", "Severity", "Title", "Evidence"], (timeline.rows || []).map((r) => [r.time, r.kind, r.severity, r.title, r.evidence]))),
-    card("Incident Memory", table(["Type", "Top Repeat", "Count"], [["Source", memory.sources?.[0]?.name, memory.sources?.[0]?.count], ["Port", memory.ports?.[0]?.name, memory.ports?.[0]?.count], ["DNSBL", memory.dnsbl?.[0]?.name, memory.dnsbl?.[0]?.count], ["IDS High Samples", "samples", memory.ids_high_samples || 0]])),
+    card("Incident Memory", table(["Type", "Top Repeat", "Count"], [["Samples", "total", memory.count || memory.samples || 0], ["Source", memory.sources?.[0]?.name, memory.sources?.[0]?.count], ["Port", memory.ports?.[0]?.name, memory.ports?.[0]?.count], ["DNSBL", memory.dnsbl?.[0]?.name, memory.dnsbl?.[0]?.count], ["IDS High Samples", "samples", memory.ids_high_samples || 0]])),
   ].join("");
 }
 
@@ -139,12 +187,16 @@ function renderAi(state) {
 }
 
 async function refresh() {
-  const state = await fetch("/api/state", { cache: "no-store" }).then((r) => r.json());
-  subtitle.textContent = `${state.hostname || "pfSense"} / ${state.mode || "live"} / ${new Date().toLocaleTimeString()}`;
   const page = pageName();
+  const state = await fetch("/api/state", { cache: "no-store" }).then((r) => r.json());
+  const health = page === "health"
+    ? await fetch("/api/health", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  subtitle.textContent = `${state.hostname || "pfSense"} / ${state.mode || "live"} / ${new Date().toLocaleTimeString()}`;
   if (page === "devices") renderDevices(state);
   else if (page === "incidents") renderIncidents(state);
   else if (page === "ai") renderAi(state);
+  else if (page === "health") renderHealth(state, health || {});
   else renderSpeed(state);
 }
 

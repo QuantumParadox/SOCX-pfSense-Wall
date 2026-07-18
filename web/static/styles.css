@@ -445,6 +445,18 @@ body {
   font-weight: 950;
 }
 
+.truth-reason {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: rgba(255, 226, 103, .055);
+  color: var(--text);
+  font-size: clamp(10px, .68vw, 12px);
+}
+
 .truth-row {
   min-width: 0;
   display: grid;
@@ -1200,6 +1212,16 @@ body {
   background: rgba(255, 255, 255, .045);
   font-size: clamp(18px, 1.35vw, 26px);
   font-weight: 950;
+}
+
+.detail-reason {
+  margin: 0 0 10px;
+  padding: 7px 9px;
+  border-left: 3px solid var(--yellow);
+  background: rgba(255, 226, 103, .06);
+  color: var(--text);
+  font-size: clamp(12px, .82vw, 15px);
+  line-height: 1.35;
 }
 
 .detail-pill {

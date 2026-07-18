@@ -287,6 +287,8 @@ class SocxCollector:
         self.pi_fleet_cache: dict[str, Any] = {"updated": 0, "count": 0, "online": 0, "score": 0, "nodes": []}
         self.change_last: dict[str, str] = {}
         self.change_events: deque[dict[str, Any]] = deque(maxlen=36)
+        self.release_health_checked = 0.0
+        self.release_health_cache: dict[str, Any] = {}
         self.ups_samples: deque[float] = deque(maxlen=120)
         self.label_history_path = Path(os.environ.get("SOCX_LABEL_BRAIN_HISTORY", "/var/db/socx_label_brain.json"))
         self.label_history_last_write = 0.0
@@ -768,7 +770,8 @@ class SocxCollector:
         signals.append(self.truth_signal("Pi Fleet", pi_state, pi_nodes.get("age_sec"), "socx-pi-nodes", f"{pi_nodes.get('online', 0)}/{pi_nodes.get('count', 0)} online"))
         signals.append(self.truth_signal("Pi AI", "ready" if any(str(n.get("roles_online") or "") == "3/3" for n in pi_nodes.get("nodes", []) if isinstance(n, dict)) else "waiting", pi_nodes.get("age_sec"), "Pi 3-LLM", "role health from Pi dashboard"))
         signals.append(self.truth_signal("Label Brain", "ready" if label_brain.get("devices") else "waiting", 0, "local memory", f"{len(label_brain.get('devices', []) if isinstance(label_brain.get('devices'), list) else [])} devices"))
-        signals.append(self.truth_signal("Incident Memory", "ready" if incident_memory.get("samples") else "waiting", 0, "jsonl memory", f"{incident_memory.get('samples', 0)} samples"))
+        memory_count = incident_memory.get("count") or incident_memory.get("samples") or 0
+        signals.append(self.truth_signal("Incident Memory", "ready" if memory_count else "waiting", 0, "jsonl memory", f"{memory_count} samples"))
 
         ok = sum(1 for item in signals if item["tone"] == "green")
         warn = sum(1 for item in signals if item["tone"] == "yellow")
@@ -783,7 +786,51 @@ class SocxCollector:
         else:
             label = "LIVE"
             tone = "green"
-        return {"label": label, "tone": tone, "score": score, "ok": ok, "warn": warn, "red": red, "signals": signals, "updated_ms": now_ms()}
+        reason_items = [f"{item['name']} {str(item['state']).lower()}" for item in signals if item["tone"] in {"yellow", "red"}]
+        if reason_items:
+            reason = f"{label} because " + "; ".join(reason_items[:3])
+        else:
+            reason = "LIVE because all primary SOCX collectors are fresh or ready"
+        return {"label": label, "tone": tone, "score": score, "ok": ok, "warn": warn, "red": red, "reason": reason, "signals": signals, "updated_ms": now_ms()}
+
+    def collect_release_health(self) -> dict[str, Any]:
+        now = time.time()
+        if self.release_health_cache and now - self.release_health_checked < env_int("SOCX_RELEASE_HEALTH_TTL_SECONDS", 20):
+            cached = dict(self.release_health_cache)
+            cached["cache_age_sec"] = int(now - self.release_health_checked)
+            return cached
+        snapshot = self.snapshot()
+        data_truth = snapshot.get("data_truth", {}) if isinstance(snapshot, dict) else {}
+        pi_nodes = snapshot.get("pi_nodes", {}) if isinstance(snapshot, dict) else {}
+        status = snapshot.get("status", {}) if isinstance(snapshot, dict) else {}
+        wall_err_age = self.file_age_seconds(Path("/tmp/socx-wall.err"))
+        wall_err_size = 0
+        try:
+            wall_err_size = Path("/tmp/socx-wall.err").stat().st_size
+        except OSError:
+            pass
+        v1 = run_cmd_capture(["/usr/local/bin/socx", "v1-check"], timeout=35.0)
+        svc = run_cmd_capture(["/usr/sbin/service", "socxweb", "status"], timeout=8.0)
+        health = {
+            "generated_ms": now_ms(),
+            "hostname": socket.gethostname(),
+            "status": status,
+            "data_truth": data_truth,
+            "pi_nodes": pi_nodes,
+            "wall_error": {"bytes": wall_err_size, "age_sec": wall_err_age, "clean": wall_err_size == 0},
+            "checks": [
+                {"name": "SOCX Web", "ok": bool(svc.get("ok")), "elapsed_ms": svc.get("elapsed_ms"), "output": svc.get("output", "").strip()},
+                {"name": "v1 Readiness", "ok": bool(v1.get("ok")) and "READY FOR v1.0" in str(v1.get("output", "")), "elapsed_ms": v1.get("elapsed_ms"), "output": v1.get("output", "").strip()},
+            ],
+            "versions": {
+                "web": "SOCXWeb/0.1",
+                "api": "state+health",
+                "refresh_ms": int(self.interval * 1000),
+            },
+        }
+        self.release_health_cache = health
+        self.release_health_checked = now
+        return health
 
     def remember_change(self, key: str, value: str, title: str, detail: str, severity: str = "LOW") -> None:
         old = self.change_last.get(key)
@@ -860,6 +907,7 @@ class SocxCollector:
                 result["memory_used_pct"] = (system.get("memory") or {}).get("used_pct") if isinstance(system.get("memory"), dict) else None
                 result["roles_online"] = data.get("roles_online")
                 result["latest_status"] = data.get("latest_status")
+                result["role_details"] = self.pi_role_details(data)
                 result["hailo_models"] = hailo.get("model_count")
                 result["cpu_models"] = cpu_ollama.get("model_count") or (data.get("ollama") or {}).get("model_count")
                 result["autonomy_mode"] = autonomy.get("mode")
@@ -954,6 +1002,42 @@ class SocxCollector:
             extras.append(f"EXP {result.get('experiments_ok', 0)}/{result.get('experiments_total')}")
         result["service_h"] = " ".join([service, *extras]).strip() or "--"
         return result
+
+    def pi_role_details(self, data: dict[str, Any]) -> list[dict[str, Any]]:
+        raw = data.get("roles")
+        rows: list[dict[str, Any]] = []
+        if isinstance(raw, dict):
+            for name in ("triage", "evidence", "action"):
+                role = raw.get(name)
+                if isinstance(role, dict):
+                    rows.append({
+                        "role": name,
+                        "state": role.get("state") or role.get("status") or data.get("latest_status") or "unknown",
+                        "model": role.get("model") or role.get("model_name") or "",
+                        "summary": role.get("summary") or role.get("reason") or role.get("last") or "",
+                    })
+                elif role:
+                    rows.append({"role": name, "state": str(role), "model": "", "summary": ""})
+        elif isinstance(raw, list):
+            for item in raw:
+                if isinstance(item, dict):
+                    rows.append({
+                        "role": item.get("role") or item.get("name") or "role",
+                        "state": item.get("state") or item.get("status") or "unknown",
+                        "model": item.get("model") or "",
+                        "summary": item.get("summary") or item.get("reason") or "",
+                    })
+        if not rows:
+            status = str(data.get("latest_status") or "online")
+            models = data.get("models") if isinstance(data.get("models"), dict) else {}
+            for name in ("triage", "evidence", "action"):
+                rows.append({
+                    "role": name,
+                    "state": status if str(data.get("roles_online") or "") == "3/3" else "waiting",
+                    "model": models.get(name, ""),
+                    "summary": "visible role summary available from Pi health" if status == "ok" else "waiting for fresh Pi role state",
+                })
+        return rows[:6]
 
     def collect_incident_light(self, center: dict[str, Any] | None = None) -> dict[str, Any]:
         incident = self.collect_incident(center=center, sample_limit=280)
@@ -2204,6 +2288,9 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/state":
             self.send_json(self.collector.snapshot())
             return
+        if parsed.path == "/api/health":
+            self.send_json(self.collector.collect_release_health())
+            return
         if parsed.path == "/api/command-center":
             self.send_json(self.collector.snapshot().get("command_center", {}))
             return
@@ -2281,7 +2368,7 @@ class SocxHandler(BaseHTTPRequestHandler):
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/incidents", "/ai"}:
+        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"

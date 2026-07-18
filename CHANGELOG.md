@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.0.0-rc3
+
+- Cleaned repo noise by ignoring generated Python bytecode and local `work/` scratch output.
+- Added `/health`, a browser Release Health page for SOCX readiness, Data Truth reason, wall error state, service checks, and Pi role detail.
+- Added `/api/health`, a fixed allowlist health endpoint that runs the safe readiness/service checks on demand.
+- Added human-readable Data Truth reasons such as why the wall is in `WATCH` instead of just showing a score.
+- Expanded Pi AI visibility with per-role rows for triage, evidence, and action when the Pi health endpoint exposes them, plus safe synthesized rows when only role count is available.
+
 ## v1.0.0-rc2
 
 - Added Data Truth freshness scoring to the browser wall and detail pages so stale collectors, inactive VPN tests, Pi discovery age, UPS freshness, Label Brain, and incident memory are visible.

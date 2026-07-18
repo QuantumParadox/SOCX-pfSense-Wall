@@ -344,6 +344,7 @@ function renderDataTruth(truth = {}) {
   }).slice(0, 5);
   root.innerHTML = [
     `<div class="truth-score ${escapeHtml(truth.tone || "cyan")}">${escapeHtml(truth.label || "UNKNOWN")} <b>${escapeHtml(truth.score ?? "--")}</b></div>`,
+    `<div class="truth-reason" title="${escapeHtml(truth.reason || "")}">${escapeHtml(truth.reason || "waiting for collector freshness")}</div>`,
     ...priority.map((item) => `
       <div class="truth-row">
         <span>${escapeHtml(item.name || "--")}</span>
