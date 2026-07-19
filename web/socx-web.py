@@ -2631,6 +2631,7 @@ class SocxCollector:
             "intent": intent,
             "answer": answer,
             "phases": phases,
+            "action_cards": self.chat_action_cards(intent, text, context, mode),
             "context": context,
             "pi": pi_answer,
             "read_only": True,
@@ -2643,7 +2644,7 @@ class SocxCollector:
         lower = text.lower()
         if re.search(r"\b(delete|wipe|factory reset|disable firewall|turn off firewall|bypass|exploit|attack|stealth|exfiltrate)\b", lower):
             return "blocked"
-        if re.search(r"\b(configure|change|add rule|open port|block|allow|quarantine|enable|disable|apply|fix)\b", lower):
+        if re.search(r"\b(configure|change|add rule|open port|block|allow|quarantine|enable|disable|apply|fix|draft|plan|recommend|tune|suppress|whitelist|allowlist)\b", lower):
             return "draft"
         if re.search(r"\b(why|diagnose|broken|error|down|slow|stale|crash|not working|fail)\b", lower):
             return "diagnose"
@@ -2733,6 +2734,40 @@ class SocxCollector:
             commands.append("socx rules")
             commands.append("socx snapshot")
         return commands[:6]
+
+    def chat_action_cards(self, intent: str, text: str, context: dict[str, Any], mode: str) -> list[dict[str, Any]]:
+        threat = context.get("threat") or {}
+        incident = context.get("incident") or {}
+        intel = context.get("intel") or {}
+        cards = [
+            {
+                "title": "Current Evidence",
+                "status": "WATCH" if str(threat.get("label", "")).lower() == "watch" else "LIVE",
+                "tone": "yellow" if str(threat.get("label", "")).lower() == "watch" else "green",
+                "detail": f"FW {threat.get('fw_blocks', 0)} | DNSBL {threat.get('dnsbl_hits', 0)} | IDS high {threat.get('ids_high', 0)} | IDS watch {threat.get('ids_watch', 0)}",
+                "command": "socx mission",
+            },
+            {
+                "title": "Intel Context",
+                "status": str((intel.get("priority") or "P4")).upper(),
+                "tone": "yellow" if str(intel.get("priority", "")).upper() in {"P2", "P3"} else "cyan",
+                "detail": f"KEV {(intel.get('kev') or {}).get('status', 'unknown')} | rows {len(intel.get('rows') or [])}",
+                "command": "socx intel",
+            },
+        ]
+        if any(word in text.lower() for word in ["dnsbl", "domain", "blocked dns"]):
+            cards.append({"title": "DNSBL Review", "status": "SAFE", "tone": "purple", "detail": "Review blocked domains and false-positive candidates before allowlisting.", "command": "socx-doctor dnsbl-review"})
+        if any(word in text.lower() for word in ["ids", "suricata", "alert"]):
+            ids = incident.get("ids") or {}
+            cards.append({"title": "IDS Review", "status": "SAFE", "tone": "purple", "detail": f"High {ids.get('high_signal', ids.get('signal', 0))}, watch {ids.get('watch', 0)}, routine {ids.get('routine', 0)}.", "command": "socx-doctor ids"})
+        if intent == "draft":
+            cards.append({"title": "Draft Only", "status": "APPROVAL REQUIRED", "tone": "yellow", "detail": "Chat prepared guidance only. Preserve evidence, then review any pfSense rule or service change manually.", "command": "socx snapshot"})
+            cards.append({"title": "Rule Assistant", "status": "NO CHANGE APPLIED", "tone": "cyan", "detail": "Generate approval-only rule, IDS, DNSBL, or device-profile recommendations.", "command": "socx rules"})
+        elif mode == "DENIED":
+            cards.append({"title": "Safety Guard", "status": "DENIED", "tone": "red", "detail": "SOCX can explain evidence or draft safe plans, but will not help bypass or disable protections.", "command": "socx status"})
+        else:
+            cards.append({"title": "Preserve If Unsure", "status": "OPTIONAL", "tone": "cyan", "detail": "Create an evidence bundle before changing policy or tuning detections.", "command": "socx snapshot"})
+        return cards[:5]
 
     def collect_incident(self, center: dict[str, Any] | None = None, sample_limit: int = 300) -> dict[str, Any]:
         center = center or self.collect_command_center()
@@ -3259,7 +3294,7 @@ class SocxHandler(BaseHTTPRequestHandler):
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health", "/why", "/story", "/mission", "/guide"}:
+        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health", "/why", "/story", "/mission", "/guide", "/chat"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"

@@ -98,6 +98,7 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds SOCX Mission / Operator Intelligence through `/mission`, `/api/mission`, and `socx mission`, summarizing what changed, what matters, what to check, and what is probably noise.
 - Adds SOCX ATT&CK / D3FEND / KEV Intelligence through `/api/intel`, Mission cards, and `socx intel`. It maps current firewall/DNSBL/IDS/asset-drift evidence to conservative ATT&CK context, defensive countermeasure names, CISA KEV status, priority, disposition, and a compact kill-chain story. It is read-only and never changes pfSense policy.
 - Adds SOCX Operator Chat through the browser Command Center, `/api/chat`, and `socx chat`. Ask plain-English questions about firewall blocks, DNSBL, IDS/Suricata, VPN, Speedtest, Pi AI, devices, or draft-only pfSense configuration plans. Chat can delegate to the Pi 5 LLM endpoint when available, shows visible operational steps, and never applies pfSense changes from chat.
+- Adds the full-size `/chat` Operator Chat page with suggested questions, current signal context, readable action cards, and safety mode descriptions. Live Flow and Packet Story rows on the wall can be clicked to ask SOCX to explain that exact row.
 - Adds focused browser detail pages for Speedtest, Devices, Incidents, AI, and Release Health so the main wall stays clean while deeper evidence is still available.
 - Adds Data Truth freshness scoring, a plain-English Data Truth reason, and a What Changed timeline so collector age, inactive VPN tests, Pi discovery state, UPS freshness, and meaningful state changes are visible.
 - Adds `/health` and `/api/health` for release readiness, wall error state, fixed service checks, and Pi AI role visibility.
@@ -482,6 +483,8 @@ Reports are written to `/root/socx-reports/` and include firewall blocks, DNSBL 
 `socx story` shows the Daily Story: Data Truth, Autopilot, firewall pressure, DNSBL, IDS, Speedtest path truth, Pi fleet, repeated-event memory, AI verdicts, and what changed. `socx story archive` preserves the same story as text and JSON under `/root/socx-stories/`. The browser version is available at `/story`.
 
 `socx chat "why is DNSBL high?"` opens the same Operator Chat used by the browser wall. It classifies questions as `ANSWER`, `PLAN`, or `DENIED`, collects current pfSense/SOCX evidence, asks the Pi 5 chat model when available, and falls back to local rule-based explanation when the Pi is stale or offline. Configuration requests are draft-only and return `approval_required=true`; they do not edit pfSense rules, aliases, IDS settings, DNSBL allowlists, or services.
+
+The browser Chat page is available at `/chat`. It is better for longer answers than the compact wall chatbox. It shows visible steps, safe commands, and action cards such as Current Evidence, Intel Context, DNSBL Review, IDS Review, Draft Only, Rule Assistant, and Preserve If Unsure. On the main wall, click a Live Flow or Packet Story row to send that row into Operator Chat for a plain-English explanation.
 
 `socx repair` safely restarts SOCX helper collectors such as UPS cache, Speedtest cache, Packet Radar, vnstatd, LLDP, and Pi discovery. It does not change firewall policy or pfSense rules.
 

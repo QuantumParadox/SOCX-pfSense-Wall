@@ -104,6 +104,12 @@ function row(cells, cls = "") {
   return `<div class="row ${cls}">${cells.map((cell) => `<span title="${escapeHtml(cell)}">${escapeHtml(cell)}</span>`).join("")}</div>`;
 }
 
+function explainRow(question) {
+  const input = $("chat-input");
+  if (input) input.value = question;
+  runOperatorChat(question);
+}
+
 function renderProcesses(processes = []) {
   const root = $("processes");
   if (!root) return;
@@ -521,14 +527,16 @@ function renderFlows(flows = []) {
   const lines = [row(["#", "asset", "peer", "proto", "app/service", "tag"], "header")];
   flows.slice(0, 13).forEach((f, idx) => {
     const service = f.app_hint ? `${f.app_hint}*` : f.service;
-    lines.push(row([
+    const cells = [
       String(idx + 1).padStart(2, "0"),
       f.asset,
       f.peer,
       f.proto,
       service,
       `${f.tag || "state"} x${f.count || 1}`,
-    ]));
+    ];
+    const question = `Explain this network flow: asset ${safe(f.asset)} peer ${safe(f.peer)} protocol ${safe(f.proto)} service ${safe(service)} tag ${safe(f.tag)} count ${safe(f.count, 1)}. Is it normal and what should I check?`;
+    lines.push(`<div class="row explainable" data-question="${escapeHtml(question)}" title="Click to explain this flow">${cells.map((cell) => `<span title="${escapeHtml(cell)}">${escapeHtml(cell)}</span>`).join("")}</div>`);
   });
   root.innerHTML = lines.join("");
 }
@@ -539,8 +547,9 @@ function renderPackets(packets = []) {
   const lines = [row(["time", "act", "proto", "source", "dest", "svc", "info"], "header")];
   packets.slice(0, 13).forEach((p) => {
     const severity = p.severity === "HIGH" ? "red" : p.action === "BLOCK" ? "yellow" : "green";
+    const question = `Explain this packet story: time ${safe(p.time)} action ${safe(p.action)} protocol ${safe(p.proto)} source ${safe(p.src_label)} destination ${safe(p.dst_label)} service ${safe(p.service)} info ${safe(p.info)}. Is it expected, blocked, or suspicious?`;
     lines.push(`
-      <div class="row">
+      <div class="row explainable" data-question="${escapeHtml(question)}" title="Click to explain this packet">
         <span>${escapeHtml(p.time)}</span>
         <span class="${severity}">${escapeHtml(p.action)}</span>
         <span class="cyan">${escapeHtml(p.proto)}</span>
@@ -735,7 +744,7 @@ async function runOperatorChat() {
   const output = $("chat-output");
   const mode = $("chat-mode");
   const button = $("chat-send");
-  const question = String(input?.value || "").trim();
+  const question = String(arguments[0] || input?.value || "").trim();
   if (!question) {
     if (output) output.textContent = "Ask me something like: why is DNSBL high, explain IDS, diagnose VPN, or draft a block plan for this host.";
     return;
@@ -762,16 +771,31 @@ async function runOperatorChat() {
     const phases = Array.isArray(data.phases) && data.phases.length ? `\n\nSteps: ${data.phases.join(" -> ")}` : "";
     const commands = Array.isArray(data.safe_commands) && data.safe_commands.length ? `\n\nUseful: ${data.safe_commands.join(" | ")}` : "";
     if (output) output.textContent = `${data.answer || "No answer returned."}${phases}${commands}`;
+    renderChatCards(data.action_cards || []);
   } catch (err) {
     if (mode) {
       mode.textContent = "error";
       mode.className = "denied";
     }
     if (output) output.textContent = `Chat service unavailable: ${err}`;
+    renderChatCards([]);
   } finally {
     chatBusy = false;
     if (button) button.disabled = false;
   }
+}
+
+function renderChatCards(cards = []) {
+  const root = $("chat-cards");
+  if (!root) return;
+  root.innerHTML = cards.slice(0, 3).map((card) => `
+    <div class="chat-card ${escapeHtml(card.tone || "cyan")}">
+      <b>${escapeHtml(card.title || "SOCX")}</b>
+      <span>${escapeHtml(card.status || "READY")}</span>
+      <em title="${escapeHtml(card.detail || "")}">${escapeHtml(card.detail || "--")}</em>
+      ${card.command ? `<code>${escapeHtml(card.command)}</code>` : ""}
+    </div>
+  `).join("");
 }
 
 async function poll() {
@@ -837,6 +861,13 @@ $("chat-input")?.addEventListener("keydown", (event) => {
 
 document.querySelectorAll(".commander-buttons button").forEach((button) => {
   button.addEventListener("click", () => runCommander(button.dataset.action || ""));
+});
+
+document.addEventListener("click", (event) => {
+  const row = event.target.closest(".explainable");
+  if (!row) return;
+  const question = row.dataset.question || "";
+  if (question) explainRow(question);
 });
 
 $("command-output-close")?.addEventListener("click", () => {

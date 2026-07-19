@@ -242,6 +242,61 @@ body {
   white-space: pre-wrap;
 }
 
+.chat-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.chat-card {
+  min-width: 0;
+  padding: 6px 7px;
+  border: 1px solid rgba(52, 215, 242, .22);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .035);
+  font-size: clamp(9px, .66vw, 12px);
+  line-height: 1.22;
+}
+
+.chat-card.green { border-color: rgba(118, 242, 125, .42); }
+.chat-card.yellow { border-color: rgba(255, 226, 103, .5); }
+.chat-card.red { border-color: rgba(255, 92, 122, .5); }
+.chat-card.purple { border-color: rgba(183, 140, 255, .5); }
+
+.chat-card b,
+.chat-card span,
+.chat-card em,
+.chat-card code {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-card b {
+  color: var(--cyan);
+  font-weight: 950;
+}
+
+.chat-card span {
+  margin-top: 2px;
+  color: var(--yellow);
+  font-weight: 900;
+}
+
+.chat-card em {
+  margin-top: 2px;
+  color: var(--text);
+  font-style: normal;
+}
+
+.chat-card code {
+  margin-top: 3px;
+  color: var(--green);
+}
+
 .big-wall .card-head h2 {
   font-size: clamp(19px, 1.45vw, 27px);
 }
@@ -826,6 +881,15 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.row.explainable {
+  cursor: help;
+}
+
+.row.explainable:hover {
+  outline: 1px solid rgba(183, 140, 255, .48);
+  background: rgba(183, 140, 255, .085);
 }
 
 .command-table {
@@ -1464,6 +1528,59 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.chat-page-shell {
+  display: grid;
+  gap: 10px;
+}
+
+.chat-page-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.chat-page-row input,
+.chat-page-row button {
+  min-width: 0;
+  border: 1px solid rgba(52, 215, 242, .4);
+  border-radius: 6px;
+  background: rgba(5, 13, 20, .9);
+  color: var(--text);
+  font: inherit;
+  font-weight: 850;
+  padding: 10px 12px;
+}
+
+.chat-page-row button {
+  color: var(--purple);
+  border-color: rgba(183, 140, 255, .52);
+  cursor: pointer;
+}
+
+.chat-page-row button:hover {
+  color: var(--green);
+  border-color: rgba(118, 242, 125, .62);
+}
+
+.chat-page-output {
+  min-height: 260px;
+  max-height: 460px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, .3);
+  color: var(--text);
+  font-size: clamp(13px, .9vw, 16px);
+  line-height: 1.42;
+}
+
+.detail-chat-cards {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 @media (max-width: 1100px) {

@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.5.0
+
+- Added a dedicated browser `/chat` page for full-size SOCX Operator Chat with readable answers, suggestions, safety modes, current signals, and action cards.
+- Added chat action cards from `/api/chat` for current evidence, intel context, DNSBL/IDS review, draft-only plans, snapshots, and rule-assistant next steps.
+- Made Live Flows and Packet Story rows clickable on the wall; clicking a row asks Operator Chat to explain that exact flow or packet.
+- Added wall chat action-card rendering so answers include compact next-step cards instead of only text.
+- Kept all chat-driven configuration requests read-only and approval-required; no pfSense policy is applied from chat.
+
 ## v1.4.2
 
 - Moved Operator Chat to the top of the browser Command Center so it is visible on the wall display.

@@ -21,6 +21,7 @@ const pageName = () => {
   if (path.includes("story")) return "story";
   if (path.includes("mission")) return "mission";
   if (path.includes("guide")) return "guide";
+  if (path.includes("chat")) return "chat";
   if (path.includes("ai")) return "ai";
   if (path.includes("health")) return "health";
   return "speedtest";
@@ -388,6 +389,96 @@ function renderGuide(state) {
   ].join("");
 }
 
+function renderChatPage(state) {
+  title.textContent = "SOCX CHAT";
+  subtitle.textContent = "ask pfSense and the Pi LLMs in plain English";
+  if (document.getElementById("detail-chat-input")) return;
+  const suggestions = [
+    "Why are firewall blocks high?",
+    "Explain DNSBL and whether I should worry.",
+    "Diagnose VPN speed and gateway health.",
+    "Explain the top packet story row.",
+    "Draft a safe plan to quarantine a host.",
+    "What should I check before tuning IDS?",
+  ];
+  root.innerHTML = [
+    card("Operator Chat", [
+      `<div class="chat-page-shell">
+        <div class="chat-page-row">
+          <input id="detail-chat-input" aria-label="Ask SOCX" placeholder="Ask SOCX about pfSense, IDS, DNSBL, VPN, Speedtest, devices, or a draft config plan">
+          <button id="detail-chat-send">Ask SOCX</button>
+        </div>
+        <div class="chat-page-output" id="detail-chat-output">Ask a question. Configuration requests return draft-only plans and never apply changes.</div>
+        <div class="chat-cards detail-chat-cards" id="detail-chat-cards"></div>
+      </div>`,
+    ].join("")),
+    card("Try These", `<div class="why-targets">${suggestions.map((q) => `<button class="why-target-button detail-chat-suggestion" data-question="${esc(q)}">${esc(q)}</button>`).join("")}</div>`),
+    card("Safety Modes", table(["Mode", "Meaning"], [
+      ["ANSWER", "Plain-English explanation from SOCX/pfSense telemetry."],
+      ["PLAN", "Draft-only configuration guidance with approval required."],
+      ["DENIED", "Unsafe or destructive request refused."],
+      ["Pi LLM", "SOCX delegates to the Pi when available and shows visible steps."],
+    ])),
+    card("Current Signals", table(["Signal", "Value"], [
+      ["Threat Pulse", `${state.threat_pulse?.label || "--"} ${state.threat_pulse?.score ?? "--"}`],
+      ["Data Truth", `${state.data_truth?.label || "--"} ${state.data_truth?.score ?? "--"}`],
+      ["Pi Fleet", state.pi_nodes?.summary || "--"],
+      ["Top App", state.asset_watch?.headline || "--"],
+      ["Command Mode", `${state.command_center?.mode || "--"} ${state.command_center?.score ?? "--"}`],
+    ])),
+  ].join("");
+  wireDetailChat();
+}
+
+function renderDetailChatCards(cards = []) {
+  const rootCards = document.getElementById("detail-chat-cards");
+  if (!rootCards) return;
+  rootCards.innerHTML = cards.slice(0, 5).map((card) => `
+    <div class="chat-card ${esc(card.tone || "cyan")}">
+      <b>${esc(card.title || "SOCX")}</b>
+      <span>${esc(card.status || "READY")}</span>
+      <em title="${esc(card.detail || "")}">${esc(card.detail || "--")}</em>
+      ${card.command ? `<code>${esc(card.command)}</code>` : ""}
+    </div>
+  `).join("");
+}
+
+async function runDetailChat(questionOverride = "") {
+  const input = document.getElementById("detail-chat-input");
+  const output = document.getElementById("detail-chat-output");
+  const question = String(questionOverride || input?.value || "").trim();
+  if (!question) {
+    output.textContent = "Ask me something like: explain DNSBL, diagnose VPN, why is IDS watch high, or draft a safe rule plan.";
+    return;
+  }
+  if (input) input.value = question;
+  output.textContent = "Collecting SOCX evidence and asking the Pi LLM if available...";
+  renderDetailChatCards([]);
+  try {
+    const result = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    }).then((r) => r.json());
+    const phases = Array.isArray(result.phases) && result.phases.length ? `\n\nVisible steps:\n- ${result.phases.join("\n- ")}` : "";
+    const commands = Array.isArray(result.safe_commands) && result.safe_commands.length ? `\n\nUseful commands:\n- ${result.safe_commands.join("\n- ")}` : "";
+    output.textContent = `${result.mode || "ANSWER"}${result.approval_required ? " / APPROVAL REQUIRED" : ""}\n\n${result.answer || "No answer returned."}${phases}${commands}`;
+    renderDetailChatCards(result.action_cards || []);
+  } catch (err) {
+    output.textContent = `Chat service unavailable: ${err}`;
+  }
+}
+
+function wireDetailChat() {
+  document.getElementById("detail-chat-send")?.addEventListener("click", () => runDetailChat());
+  document.getElementById("detail-chat-input")?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") runDetailChat();
+  });
+  document.querySelectorAll(".detail-chat-suggestion").forEach((button) => {
+    button.addEventListener("click", () => runDetailChat(button.dataset.question || ""));
+  });
+}
+
 function renderSpeed(state) {
   title.textContent = "SOCX SPEEDTEST";
   const center = state.command_center || {};
@@ -492,6 +583,7 @@ async function refresh() {
   else if (page === "story") renderStory(state, story || {});
   else if (page === "mission") renderMission(state, mission || state.mission || {});
   else if (page === "guide") renderGuide(state);
+  else if (page === "chat") renderChatPage(state);
   else renderSpeed(state);
 }
 
