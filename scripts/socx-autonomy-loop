@@ -1,0 +1,75 @@
+#!/bin/sh
+set -u
+
+CACHE="${SOCX_AUTONOMY_CACHE:-/tmp/socx-autonomy-loop.env}"
+LOG="${SOCX_AUTONOMY_LOG:-/tmp/socx-autonomy-loop.log}"
+LOCKDIR="${SOCX_AUTONOMY_LOCKDIR:-/tmp/socx-autonomy-loop.lock}"
+PI_TIMEOUT="${SOCX_AUTONOMY_PI_TIMEOUT:-140}"
+
+write_cache() {
+    status="$1"
+    summary="$2"
+    {
+        echo "updated=$(date +%s)"
+        echo "status=$status"
+        echo "summary=$(printf '%s' "$summary" | sed 's/[;&|`$<>]//g' | cut -c1-260)"
+        echo "log=$LOG"
+    } > "$CACHE"
+}
+
+run_bounded() {
+    seconds="$1"
+    shift
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$seconds" "$@"
+    else
+        "$@"
+    fi
+}
+
+if ! mkdir "$LOCKDIR" 2>/dev/null; then
+    now="$(date +%s)"
+    old="$(stat -f %m "$LOCKDIR" 2>/dev/null || stat -c %Y "$LOCKDIR" 2>/dev/null || echo 0)"
+    if [ "$old" -gt 0 ] 2>/dev/null && [ $((now - old)) -gt "${SOCX_AUTONOMY_LOCK_STALE_SECONDS:-480}" ]; then
+        rm -rf "$LOCKDIR" 2>/dev/null || true
+        mkdir "$LOCKDIR" 2>/dev/null || {
+            write_cache "skipped" "previous autonomy loop still running"
+            exit 0
+        }
+    else
+        write_cache "skipped" "previous autonomy loop still running"
+        exit 0
+    fi
+fi
+trap 'rm -rf "$LOCKDIR"' EXIT INT TERM
+
+started="$(date +%s)"
+{
+    echo "SOCX Autonomy Loop"
+    echo "started=$(date)"
+    echo "read_only=true"
+    echo
+    echo "## Autopilot"
+    /usr/local/bin/socx autopilot 2>&1 || true
+    echo
+    echo "## Metrics Intelligence"
+    /usr/local/bin/socx metrics-intel 2>&1 || true
+    echo
+    echo "## Pi Discovery"
+    /usr/local/bin/socx pi-discover 2>&1 || true
+    echo
+    echo "## Pi 3-LLM"
+    SOCX_PI_LLM_TIMEOUT="$PI_TIMEOUT" run_bounded "$((PI_TIMEOUT + 10))" /usr/local/bin/socx pi-llm 2>&1 || true
+    echo
+    echo "## Morning Brief"
+    /usr/local/bin/socx morning 2>&1 || true
+    echo
+    echo "finished=$(date)"
+} > "$LOG" 2>&1
+
+ended="$(date +%s)"
+pi_roles="$(sed -n 's/^roles=//p' /tmp/socx-pi-llm-analysis.env 2>/dev/null | tail -1)"
+mode="$(sed -n 's/^mode=//p' /tmp/socx-autopilot.env 2>/dev/null | tail -1)"
+metrics="$(sed -n 's/^severity=//p' /tmp/socx-metrics-intel.env 2>/dev/null | tail -1)"
+write_cache "ok" "mode=${mode:-unknown} metrics=${metrics:-unknown} pi_roles=${pi_roles:-unknown} duration=$((ended - started))s"
+echo "$CACHE"

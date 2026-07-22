@@ -221,10 +221,18 @@ function renderDailyBrief(brief = {}) {
   const root = $("daily-brief");
   if (!root) return;
   const summary = Array.isArray(brief.summary) ? brief.summary : [];
+  const sections = Array.isArray(brief.sections) ? brief.sections : [];
   const next = Array.isArray(brief.next) ? brief.next : [];
+  const statusClass = brief.status === "watch" ? "yellow" : "green";
   root.innerHTML = `
-    <div class="brief-title"><span>${escapeHtml(brief.title || "SOCX Brief")}</span><b class="${brief.status === "watch" ? "yellow" : "green"}">${escapeHtml(brief.status || "normal")}</b></div>
-    ${summary.slice(0, 4).map((line) => `<div class="brief-line">${escapeHtml(line)}</div>`).join("")}
+    <div class="brief-title"><span>${escapeHtml(brief.title || "SOCX Brief")}</span><b class="${statusClass}">${escapeHtml(brief.status || "normal")}</b></div>
+    ${brief.headline ? `<div class="brief-headline ${statusClass}">${escapeHtml(brief.headline)}</div>` : ""}
+    ${sections.length ? `<div class="brief-sections">${sections.slice(0, 5).map((item) => `
+      <div class="brief-section">
+        <b class="${escapeHtml(item.tone || "cyan")}">${escapeHtml(item.label || "signal")}</b>
+        <span title="${escapeHtml(item.value || "")}">${escapeHtml(item.value || "--")}</span>
+      </div>
+    `).join("")}</div>` : summary.slice(0, 4).map((line) => `<div class="brief-line">${escapeHtml(line)}</div>`).join("")}
     ${next.length ? `<div class="brief-next">${next.slice(0, 2).map(escapeHtml).join(" | ")}</div>` : ""}
   `;
 }
@@ -243,6 +251,33 @@ function renderSpeedtestHistory(history = {}) {
       </div>
     `;
   }).join("") || `<div class="speed-row"><b class="cyan">SPD</b><span>waiting for history</span><em>run speedtest</em></div>`;
+}
+
+function renderObservability(obs = {}, intel = {}, autonomy = {}) {
+  const root = $("observability");
+  if (!root) return;
+  const intelSeverity = String(intel.severity || "").toUpperCase();
+  const intelTone = intelSeverity === "OK" ? "green" : intelSeverity === "CRITICAL" ? "red" : intelSeverity ? "yellow" : "";
+  const tone = intelTone || obs.tone || (obs.label === "LIVE" ? "green" : obs.label === "DOWN" ? "red" : "yellow");
+  const latest = obs.latest || {};
+  const cpu = latest.cpu || {};
+  const mem = latest.mem || {};
+  const pf = latest.pf || {};
+  const ping = latest.ping || {};
+  const cpuBusy = Number(cpu.last || 0) + Number(cpu.last_1 || 0);
+  const bits = [
+    `<b class="${escapeHtml(tone)}">${escapeHtml(obs.label || "METRICS")}</b>`,
+    `<span>${escapeHtml(obs.host || "Pi metrics")}</span>`,
+    `<span>${escapeHtml((obs.core_measurements || []).length || 0)}/6 series</span>`,
+    cpuBusy ? `<span>cpu ${escapeHtml(cpuBusy.toFixed(0))}%</span>` : "",
+    mem.last !== undefined ? `<span>mem ${escapeHtml(Number(mem.last || 0).toFixed(0))}%</span>` : "",
+    pf.last !== undefined ? `<span>pf ${escapeHtml(Number(pf.last || 0).toFixed(0))}</span>` : "",
+    ping.last !== undefined ? `<span>ping ${escapeHtml(Number(ping.last || 0).toFixed(1))}ms</span>` : "",
+    intel.severity ? `<span title="${escapeHtml(intel.summary || "")}">intel ${escapeHtml(intel.severity)}</span>` : "",
+    autonomy.status ? `<span class="${escapeHtml(autonomy.tone || "cyan")}" title="${escapeHtml(autonomy.summary || "")}">auto ${escapeHtml(autonomy.status)}${autonomy.age_sec !== null && autonomy.age_sec !== undefined ? ` ${escapeHtml(String(autonomy.age_sec))}s` : ""}</span>` : "",
+    obs.grafana_url ? `<a href="${escapeHtml(obs.grafana_url)}" target="_blank" rel="noreferrer">Grafana</a>` : "",
+  ].filter(Boolean);
+  root.innerHTML = bits.join("");
 }
 
 function renderRuleAssistant(assistant = {}) {
@@ -575,14 +610,14 @@ function renderTicker(events = []) {
   const text = pieces.join("   ◆   ");
   if (text === lastTickerText) return;
   const now = Date.now();
-  const minSwapMs = tickerMode === "fast" ? 12000 : tickerMode === "normal" ? 18000 : 26000;
+  const minSwapMs = tickerMode === "fast" ? 18000 : tickerMode === "normal" ? 32000 : 52000;
   if (lastTickerText && now - tickerLastSwap < minSwapMs) return;
   lastTickerText = text;
   tickerLastSwap = now;
   ticker.innerHTML = `<span>${escapeHtml(text)}</span><span aria-hidden="true">${escapeHtml(text)}</span>`;
-  const divisor = tickerMode === "fast" ? 3.2 : tickerMode === "normal" ? 2.35 : 1.55;
-  const floor = tickerMode === "fast" ? 38 : tickerMode === "normal" ? 62 : 92;
-  const ceiling = tickerMode === "fast" ? 95 : tickerMode === "normal" ? 150 : 240;
+  const divisor = tickerMode === "fast" ? 2.55 : tickerMode === "normal" ? 1.65 : 1.05;
+  const floor = tickerMode === "fast" ? 60 : tickerMode === "normal" ? 110 : 175;
+  const ceiling = tickerMode === "fast" ? 140 : tickerMode === "normal" ? 260 : 420;
   const duration = Math.max(floor, Math.min(ceiling, text.length / divisor));
   document.documentElement.style.setProperty("--ticker-duration", `${duration}s`);
 }
@@ -651,6 +686,7 @@ function render(state) {
   renderIncidentTimeline(state.incident_timeline || {});
   renderDailyBrief(state.daily_brief || {});
   renderRuleAssistant(state.rule_assistant || {});
+  renderObservability(state.observability || {}, state.metrics_intel || {}, state.autonomy_loop || {});
   renderSpeedtestHistory(state.speedtest_history || {});
   renderIncidentMemory(state.incident_memory || {});
   renderFlows(state.flows || []);
@@ -665,6 +701,10 @@ function commanderActionFromSpeech(text) {
   if (/(bundle|preserve|package)/.test(value)) return "bundle";
   if (/(snapshot|evidence|capture)/.test(value)) return "snapshot";
   if (/(zeek|logs?)/.test(value)) return "zeek";
+  if (/(metrics ai|metric narrator|grafana ai)/.test(value)) return "metrics-ai";
+  if (/(why metrics|metrics why|metric intelligence|metrics intel)/.test(value)) return "metrics-intel";
+  if (/(grafana|influx|telegraf|metrics|observability)/.test(value)) return "observability";
+  if (/(autonomy loop|brainstem|autonomous|autonomy)/.test(value)) return "autonomy";
   if (/(pi|raspberry|ai|llm)/.test(value)) return "pi";
   if (/(explain|why|summary|plain english)/.test(value)) return "explain";
   if (/(story|daily story|today so far)/.test(value)) return "story";
@@ -857,6 +897,15 @@ $("big-mode")?.addEventListener("click", () => {
 $("chat-send")?.addEventListener("click", runOperatorChat);
 $("chat-input")?.addEventListener("keydown", (event) => {
   if (event.key === "Enter") runOperatorChat();
+});
+
+document.querySelectorAll(".chat-suggestions button").forEach((button) => {
+  button.addEventListener("click", () => {
+    const question = button.dataset.question || button.textContent || "";
+    const input = $("chat-input");
+    if (input) input.value = question;
+    runOperatorChat(question);
+  });
 });
 
 document.querySelectorAll(".commander-buttons button").forEach((button) => {

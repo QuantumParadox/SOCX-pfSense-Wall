@@ -7,7 +7,24 @@ POST_URL="${SOCX_PI_LLM_POST_URL:-}"
 NETWORK_POST_URL="${SOCX_PI_NETWORK_POST_URL:-}"
 INGEST_TOKEN_FILE="${SOCX_PI_INGEST_TOKEN_FILE:-/usr/local/etc/socx_pi_ingest_token}"
 ANALYSIS_CACHE="${SOCX_PI_LLM_ANALYSIS_CACHE:-/tmp/socx-pi-llm-analysis.env}"
-TIMEOUT="${SOCX_PI_LLM_TIMEOUT:-300}"
+TIMEOUT="${SOCX_PI_LLM_TIMEOUT:-125}"
+LOCKDIR="${SOCX_PI_LLM_LOCKDIR:-/tmp/socx-pi-llm-bridge.lock}"
+
+if ! mkdir "$LOCKDIR" 2>/dev/null; then
+    write_stale="$(date +%s)"
+    old="$(stat -f %m "$LOCKDIR" 2>/dev/null || stat -c %Y "$LOCKDIR" 2>/dev/null || echo 0)"
+    if [ "$old" -gt 0 ] 2>/dev/null && [ $((write_stale - old)) -gt "${SOCX_PI_LLM_LOCK_STALE_SECONDS:-420}" ]; then
+        rm -rf "$LOCKDIR" 2>/dev/null || true
+        mkdir "$LOCKDIR" 2>/dev/null || {
+            echo "SOCX Pi LLM bridge already running; stale lock removal failed" >&2
+            exit 0
+        }
+    else
+        echo "SOCX Pi LLM bridge already running; skipping this cycle" >&2
+        exit 0
+    fi
+fi
+trap 'rm -rf "$LOCKDIR"' EXIT INT TERM
 
 discover_pi_url() {
     if command -v socx-pi-discover >/dev/null 2>&1; then
@@ -95,12 +112,26 @@ else
 fi
 
 printf '%s\n' "$resp"
-severity="$(printf '%s' "$resp" | sed -n 's/.*"severity"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
-confidence="$(printf '%s' "$resp" | sed -n 's/.*"confidence"[[:space:]]*:[[:space:]]*\([0-9.][0-9.]*\).*/\1/p' | head -1)"
-reason="$(printf '%s' "$resp" | sed -n 's/.*"reasons"[[:space:]]*:[[:space:]]*\["\([^"]*\)".*/\1/p' | head -1)"
-next="$(printf '%s' "$resp" | sed -n 's/.*"recommended_next_step"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
-source="$(printf '%s' "$resp" | sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
-roles="$(printf '%s' "$resp" | sed -n 's/.*"roles_online"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+parsed="$(printf '%s' "$resp" | python3.11 -c '
+import json,sys
+try:
+    d=json.load(sys.stdin)
+except Exception:
+    d={}
+reasons=d.get("reasons") if isinstance(d.get("reasons"), list) else []
+print("severity=" + str(d.get("severity") or ""))
+print("confidence=" + str(d.get("confidence") or ""))
+print("reason=" + str(reasons[0] if reasons else ""))
+print("next=" + str(d.get("recommended_next_step") or ""))
+print("source=" + str(d.get("source") or "pi-3llm"))
+print("roles=" + str(d.get("roles_online") or ""))
+')"
+severity="$(printf '%s\n' "$parsed" | sed -n 's/^severity=//p' | tail -1)"
+confidence="$(printf '%s\n' "$parsed" | sed -n 's/^confidence=//p' | tail -1)"
+reason="$(printf '%s\n' "$parsed" | sed -n 's/^reason=//p' | tail -1)"
+next="$(printf '%s\n' "$parsed" | sed -n 's/^next=//p' | tail -1)"
+source="$(printf '%s\n' "$parsed" | sed -n 's/^source=//p' | tail -1)"
+roles="$(printf '%s\n' "$parsed" | sed -n 's/^roles=//p' | tail -1)"
 cache_status="ok"
 case "$roles" in
     0/*)

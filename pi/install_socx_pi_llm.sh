@@ -33,9 +33,9 @@ if ! command -v ollama >/dev/null 2>&1; then
 else
     systemctl enable --now ollama >/dev/null 2>&1 || true
     sleep 1
-    ollama pull "${SOCX_PI_CPU_TRIAGE_MODEL:-llama3.2:3b}" || true
-    ollama pull "${SOCX_PI_CPU_EVIDENCE_MODEL:-qwen2.5:3b}" || true
-    ollama pull "${SOCX_PI_CPU_ACTION_MODEL:-llama3.2:3b}" || true
+    ollama pull "${SOCX_PI_CPU_TRIAGE_MODEL:-llama3.2:1b}" || true
+    ollama pull "${SOCX_PI_CPU_EVIDENCE_MODEL:-qwen2.5:1.5b}" || true
+    ollama pull "${SOCX_PI_CPU_ACTION_MODEL:-qwen2.5-coder:1.5b}" || true
 fi
 
 cat > "$SERVICE_FILE" <<EOF
@@ -50,12 +50,19 @@ WorkingDirectory=$APP_DIR
 Environment=SOCX_PI_LLM_TRIAGE_MODEL=${SOCX_PI_LLM_TRIAGE_MODEL:-llama3.2:3b}
 Environment=SOCX_PI_LLM_EVIDENCE_MODEL=${SOCX_PI_LLM_EVIDENCE_MODEL:-qwen2.5-instruct:1.5b}
 Environment=SOCX_PI_LLM_ACTION_MODEL=${SOCX_PI_LLM_ACTION_MODEL:-qwen2.5-coder:1.5b}
-Environment=SOCX_PI_LLM_TIMEOUT=${SOCX_PI_LLM_TIMEOUT:-75}
+Environment=SOCX_PI_CPU_TRIAGE_MODEL=${SOCX_PI_CPU_TRIAGE_MODEL:-llama3.2:1b}
+Environment=SOCX_PI_CPU_EVIDENCE_MODEL=${SOCX_PI_CPU_EVIDENCE_MODEL:-qwen2.5:1.5b}
+Environment=SOCX_PI_CPU_ACTION_MODEL=${SOCX_PI_CPU_ACTION_MODEL:-qwen2.5-coder:1.5b}
+Environment=SOCX_PI_LLM_TIMEOUT=${SOCX_PI_LLM_TIMEOUT:-25}
 Environment=SOCX_PI_HAILO_CHAT_URL=${SOCX_PI_HAILO_CHAT_URL:-http://127.0.0.1:8000/api/chat}
-Environment=SOCX_PI_HAILO_TIMEOUT=${SOCX_PI_HAILO_TIMEOUT:-150}
+Environment=SOCX_PI_HAILO_TIMEOUT=${SOCX_PI_HAILO_TIMEOUT:-3}
+Environment=SOCX_PI_ROLE_MAX_SECONDS=${SOCX_PI_ROLE_MAX_SECONDS:-28}
+Environment=SOCX_PI_TOTAL_TIMEOUT=${SOCX_PI_TOTAL_TIMEOUT:-90}
 Environment=SOCX_PI_LLM_CONCURRENCY=${SOCX_PI_LLM_CONCURRENCY:-1}
-Environment=SOCX_PI_LLM_NUM_PREDICT=${SOCX_PI_LLM_NUM_PREDICT:-96}
-Environment=SOCX_PI_LLM_NUM_CTX=${SOCX_PI_LLM_NUM_CTX:-2048}
+Environment=SOCX_PI_LLM_NUM_PREDICT=${SOCX_PI_LLM_NUM_PREDICT:-32}
+Environment=SOCX_PI_LLM_NUM_CTX=${SOCX_PI_LLM_NUM_CTX:-768}
+Environment=SOCX_PI_HAILO_STREAM=${SOCX_PI_HAILO_STREAM:-false}
+Environment=SOCX_PI_OLLAMA_KEEP_ALIVE=${SOCX_PI_OLLAMA_KEEP_ALIVE:-6h}
 ExecStart=$APP_DIR/.venv/bin/python -m uvicorn socx_pi_llm_orchestrator:app --host 0.0.0.0 --port 8095
 Restart=on-failure
 RestartSec=5

@@ -23,6 +23,14 @@ case "${1:-}" in
         /usr/local/bin/socx-history append >/dev/null 2>&1 || true
         exit "$rc"
         ;;
+    autonomy-loop|autonomy|brainstem)
+        shift
+        exec /usr/local/bin/socx-autonomy-loop "$@"
+        ;;
+    autonomy-cron|autonomy-schedule)
+        shift
+        exec /usr/local/bin/socx-autonomy-cron "$@"
+        ;;
     menu|command|commands)
         shift
         exec /usr/local/bin/socx-menu "$@"
@@ -31,7 +39,7 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-timeline "$@"
         ;;
-    brief|daily-brief|soc-brief)
+    brief|daily-brief|soc-brief|morning-brief|morning)
         shift
         exec /usr/local/bin/socx-brief "$@"
         ;;
@@ -160,6 +168,18 @@ case "${1:-}" in
     speedtest|spd)
         shift
         exec /usr/local/sbin/socx-speedtest-cache "$@"
+        ;;
+    tmux|sessions|lazy-tmux)
+        shift
+        exec /usr/local/bin/socx-tmux-hub "$@"
+        ;;
+    observability|grafana|influx|metrics-stack)
+        shift
+        exec /usr/local/bin/socx-observability "$@"
+        ;;
+    metrics-intel|metrics-ai|why-metrics|metrics-why)
+        shift
+        exec /usr/local/bin/socx-metrics-intel "$@"
         ;;
     why-slow)
         exec /usr/local/bin/socx-doctor why-slow

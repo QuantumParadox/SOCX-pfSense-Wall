@@ -14,6 +14,7 @@ install -m 0755 "$ROOT/scripts/socx-ups-status" /usr/local/sbin/socx-ups-status
 install -m 0755 "$ROOT/scripts/socx-ups-cache" /usr/local/sbin/socx-ups-cache
 install -m 0755 "$ROOT/scripts/socx-speedtest-cache" /usr/local/sbin/socx-speedtest-cache
 install -m 0755 "$ROOT/scripts/socx-speedtest-history" /usr/local/bin/socx-speedtest-history
+install -m 0755 "$ROOT/scripts/socx-telegraf-target.php" /usr/local/sbin/socx-telegraf-target.php
 install -m 0755 "$ROOT/scripts/socx-packet-radar-cache" /usr/local/sbin/socx-packet-radar-cache
 install -m 0755 "$ROOT/scripts/socx-incident-capture" /usr/local/sbin/socx-incident-capture
 install -m 0755 "$ROOT/scripts/socx-incident" /usr/local/bin/socx-incident
@@ -44,6 +45,11 @@ install -m 0755 "$ROOT/scripts/socx-why-now" /usr/local/bin/socx-why-now
 install -m 0755 "$ROOT/scripts/socx-mode" /usr/local/bin/socx-mode
 install -m 0755 "$ROOT/scripts/socx-host-labels" /usr/local/bin/socx-host-labels
 install -m 0755 "$ROOT/scripts/socx-label-brain" /usr/local/bin/socx-label-brain
+install -m 0755 "$ROOT/scripts/socx-tmux-hub" /usr/local/bin/socx-tmux-hub
+install -m 0755 "$ROOT/scripts/socx-observability" /usr/local/bin/socx-observability
+install -m 0755 "$ROOT/scripts/socx-metrics-intel" /usr/local/bin/socx-metrics-intel
+install -m 0755 "$ROOT/scripts/socx-autonomy-loop" /usr/local/bin/socx-autonomy-loop
+install -m 0755 "$ROOT/scripts/socx-autonomy-cron" /usr/local/bin/socx-autonomy-cron
 install -m 0755 "$ROOT/scripts/socx-doctor" /usr/local/bin/socx-doctor
 install -m 0755 "$ROOT/scripts/socx-v1-check" /usr/local/bin/socx-v1-check
 install -m 0755 "$ROOT/scripts/socx-ai-explain" /usr/local/bin/socx-ai-explain
@@ -88,6 +94,9 @@ if [ ! -f /usr/local/etc/socx_watchlist.conf ]; then
 fi
 if [ ! -f /usr/local/etc/socx_speedtest_paths.conf ]; then
     install -m 0644 "$ROOT/config/socx_speedtest_paths.conf.example" /usr/local/etc/socx_speedtest_paths.conf
+fi
+if [ ! -f /usr/local/etc/socx_observability.conf ]; then
+    install -m 0644 "$ROOT/config/socx_observability.conf.example" /usr/local/etc/socx_observability.conf
 fi
 
 echo "SOCX pfSense Wall installed."

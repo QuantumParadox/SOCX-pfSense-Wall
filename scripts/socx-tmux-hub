@@ -1,0 +1,131 @@
+#!/bin/sh
+set -eu
+
+CONF="${SOCX_LAZY_TMUX_CONFIG:-/usr/local/etc/socx-lazy-tmux.toml}"
+LAZY_BIN="${SOCX_LAZY_TMUX_BIN:-}"
+
+if [ -z "$LAZY_BIN" ]; then
+    LAZY_BIN="$(command -v lazy-tmux 2>/dev/null || true)"
+fi
+
+print_sessions() {
+    if tmux list-sessions >/dev/null 2>&1; then
+        tmux list-sessions 2>/dev/null | sed 's/^/  /'
+    else
+        echo "  no tmux sessions are running"
+    fi
+}
+
+write_config() {
+    install -d -m 0755 "$(dirname "$CONF")"
+    if [ -f "$CONF" ] && [ "${1:-}" != "--force" ]; then
+        echo "SOCX lazy-tmux config already exists: $CONF"
+        echo "Use: socx tmux config --force"
+        return 0
+    fi
+
+    umask 077
+    cat > "$CONF" <<'EOF'
+# SOCX lazy-tmux guardrail profile.
+#
+# Keep this conservative on pfSense. SOCX can preserve operator panes and
+# read-only monitoring commands, but firewall-changing commands should not
+# auto-rerun after a reboot or tmux-server restart.
+
+[restore]
+allow = [
+  "^/usr/local/bin/socx($| )",
+  "^/usr/local/bin/soc($| )",
+  "^/usr/local/bin/socweb($| )",
+  "^/usr/local/sbin/socx-wall($| )",
+  "^/usr/local/sbin/pfsense-btop($| )",
+  "^/usr/local/bin/(iftopx|tcpdumpx|packet-radar)($| )",
+  "^/usr/local/sbin/(socx-iftop-color|socx-tcpdump-color)($| )",
+  "^pftop($| )",
+  "^vnstat($| )",
+  "^systat($| )",
+  "^top($| )",
+  "^tail .* /var/log/"
+]
+
+deny = [
+  "(^|[ /])(rm|mv|cp|chmod|chown|kill|pkill|reboot|shutdown|halt)( |$)",
+  "(^|[ /])(pkg|pkg-static|portsnap|freebsd-update)( |$)",
+  "(^|[ /])(pfctl|pfSsh\\.php|configctl|service|sysrc)( |$)",
+  "(^|[ /])(vi|ee|nano|sed|awk|perl|php|python|sh|csh|tcsh)( |$)"
+]
+EOF
+    echo "Wrote SOCX lazy-tmux guardrail config: $CONF"
+}
+
+usage() {
+    cat <<EOF
+SOCX tmux hub
+
+Usage:
+  socx tmux                 show tmux, SOCX, and lazy-tmux status
+  socx tmux list            list tmux sessions
+  socx tmux attach [name]   attach to a tmux session, default: socx
+  socx tmux start           start the SOCX wall
+  socx tmux lazy            open lazy-tmux if installed
+  socx tmux config          write a conservative lazy-tmux config
+
+Notes:
+  lazy-tmux is optional. Install it as a standalone binary only after testing
+  it outside the firewall-critical SOCX wall session.
+EOF
+}
+
+case "${1:-status}" in
+    status)
+        echo "SOCX tmux hub"
+        echo "tmux: $(tmux -V 2>/dev/null || echo unavailable)"
+        if [ -n "$LAZY_BIN" ]; then
+            echo "lazy-tmux: $LAZY_BIN"
+        else
+            echo "lazy-tmux: not installed (SOCX will use plain tmux)"
+        fi
+        if [ -f "$CONF" ]; then
+            echo "lazy-tmux config: $CONF"
+        else
+            echo "lazy-tmux config: missing; run 'socx tmux config'"
+        fi
+        echo "sessions:"
+        print_sessions
+        ;;
+    list|sessions)
+        print_sessions
+        ;;
+    attach)
+        shift
+        exec tmux attach-session -t "${1:-socx}"
+        ;;
+    start|wall)
+        shift
+        exec /usr/local/bin/soc "$@"
+        ;;
+    lazy|picker)
+        if [ -z "$LAZY_BIN" ]; then
+            echo "lazy-tmux is not installed."
+            echo "Recommended path for pfSense: build/copy one FreeBSD amd64 binary, then run:"
+            echo "  socx tmux config"
+            echo "  socx tmux lazy"
+            exit 1
+        fi
+        if [ ! -f "$CONF" ]; then
+            write_config
+        fi
+        exec "$LAZY_BIN"
+        ;;
+    config)
+        shift
+        write_config "${1:-}"
+        ;;
+    help|-h|--help)
+        usage
+        ;;
+    *)
+        usage
+        exit 2
+        ;;
+esac

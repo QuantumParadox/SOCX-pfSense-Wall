@@ -1,0 +1,76 @@
+#!/bin/sh
+set -eu
+
+CONF="${SOCX_OBSERVABILITY_CONF:-/usr/local/etc/socx_observability.conf}"
+
+SOCX_OBSERVABILITY_HOST="${SOCX_OBSERVABILITY_HOST:-ColumbiaPi4}"
+SOCX_GRAFANA_URL="${SOCX_GRAFANA_URL:-http://192.168.1.180:3000}"
+SOCX_INFLUX_URL="${SOCX_INFLUX_URL:-http://192.168.1.180:8086}"
+SOCX_INFLUX_DB="${SOCX_INFLUX_DB:-pfsense}"
+
+if [ -f "$CONF" ]; then
+    # shellcheck disable=SC1090
+    . "$CONF"
+fi
+
+http_code() {
+    url="$1"
+    curl -m 4 -s -o /dev/null -w "%{http_code}" "$url" 2>/dev/null || echo "000"
+}
+
+status() {
+    echo "SOCX observability"
+    echo "host:    $SOCX_OBSERVABILITY_HOST"
+    echo "grafana: $SOCX_GRAFANA_URL"
+    echo "influx:  $SOCX_INFLUX_URL db=$SOCX_INFLUX_DB"
+    echo
+
+    gcode="$(http_code "$SOCX_GRAFANA_URL/api/health")"
+    if [ "$gcode" = "200" ]; then
+        echo "OK    Grafana API healthy"
+    else
+        echo "WARN  Grafana API returned HTTP $gcode"
+    fi
+
+    icode="$(http_code "$SOCX_INFLUX_URL/ping")"
+    if [ "$icode" = "204" ]; then
+        echo "OK    InfluxDB ping healthy"
+    else
+        echo "WARN  InfluxDB ping returned HTTP $icode"
+    fi
+
+    if service telegraf status >/dev/null 2>&1; then
+        echo "OK    Telegraf service running"
+    else
+        echo "WARN  Telegraf service not running"
+    fi
+
+    if grep -q "$SOCX_INFLUX_URL" /usr/local/etc/telegraf.conf 2>/dev/null; then
+        echo "OK    Telegraf points at SOCX InfluxDB"
+    else
+        echo "WARN  Telegraf target does not match $SOCX_INFLUX_URL"
+    fi
+
+    if command -v curl >/dev/null 2>&1; then
+        measurements="$(curl -m 5 -sG "$SOCX_INFLUX_URL/query" --data-urlencode "db=$SOCX_INFLUX_DB" --data-urlencode "q=SHOW MEASUREMENTS" 2>/dev/null | sed 's/,/,\n/g' | grep -o '"[A-Za-z0-9_]*"' | tr -d '"' | grep -E '^(cpu|mem|net|pf|system|ping)$' | sort -u | tr '\n' ' ')"
+        if [ -n "$measurements" ]; then
+            echo "OK    Measurements: $measurements"
+        else
+            echo "WARN  No core measurements returned yet"
+        fi
+    fi
+}
+
+case "${1:-status}" in
+    status)
+        status
+        ;;
+    urls|url)
+        echo "$SOCX_GRAFANA_URL"
+        echo "$SOCX_INFLUX_URL"
+        ;;
+    *)
+        echo "Usage: socx observability [status|urls]"
+        exit 2
+        ;;
+esac

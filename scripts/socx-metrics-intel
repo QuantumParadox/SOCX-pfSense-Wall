@@ -1,0 +1,319 @@
+#!/usr/local/bin/python3.11
+"""SOCX metrics intelligence.
+
+Reads the external Pi 4 InfluxDB/Grafana observability stack and produces a
+plain-English, read-only explanation suitable for SOCX, Grafana, and Pi LLMs.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+import time
+from pathlib import Path
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+
+CONF = Path(os.environ.get("SOCX_OBSERVABILITY_CONF", "/usr/local/etc/socx_observability.conf"))
+CACHE_JSON = Path(os.environ.get("SOCX_METRICS_INTEL_JSON", "/tmp/socx-metrics-intel.json"))
+CACHE_ENV = Path(os.environ.get("SOCX_METRICS_INTEL_ENV", "/tmp/socx-metrics-intel.env"))
+
+
+def parse_env(path: Path) -> dict[str, str]:
+    data: dict[str, str] = {}
+    try:
+        for raw in path.read_text(errors="ignore").splitlines():
+            if "=" not in raw or raw.lstrip().startswith("#"):
+                continue
+            key, value = raw.split("=", 1)
+            data[key.strip()] = value.strip().strip("'\"")
+    except Exception:
+        pass
+    return data
+
+
+def cfg() -> dict[str, str]:
+    data = parse_env(CONF)
+    return {
+        "host": data.get("SOCX_OBSERVABILITY_HOST") or os.environ.get("SOCX_OBSERVABILITY_HOST", "ColumbiaPi4"),
+        "grafana_url": (data.get("SOCX_GRAFANA_URL") or os.environ.get("SOCX_GRAFANA_URL", "http://192.168.1.180:3000")).rstrip("/"),
+        "influx_url": (data.get("SOCX_INFLUX_URL") or os.environ.get("SOCX_INFLUX_URL", "http://192.168.1.180:8086")).rstrip("/"),
+        "database": data.get("SOCX_INFLUX_DB") or os.environ.get("SOCX_INFLUX_DB", "pfsense"),
+    }
+
+
+def http_json(url: str, timeout: float = 5.0) -> dict:
+    req = Request(url, headers={"User-Agent": "SOCX/metrics-intel"})
+    with urlopen(req, timeout=timeout) as resp:
+        raw = resp.read(120000).decode("utf-8", "replace")
+    return json.loads(raw or "{}")
+
+
+def influx_query(base: str, database: str, query: str) -> list[dict[str, object]]:
+    url = f"{base}/query?{urlencode({'db': database, 'q': query})}"
+    data = http_json(url)
+    series = data.get("results", [{}])[0].get("series", [])
+    if not series:
+        return []
+    rows: list[dict[str, object]] = []
+    for item in series:
+        cols = item.get("columns", [])
+        tags = item.get("tags", {})
+        for vals in item.get("values", []):
+            row = dict(tags)
+            for idx, col in enumerate(cols):
+                row[str(col)] = vals[idx] if idx < len(vals) else None
+            rows.append(row)
+    return rows
+
+
+def first_num(rows: list[dict[str, object]], key: str = "last") -> float | None:
+    for row in rows:
+        value = row.get(key)
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                pass
+    return None
+
+
+def tone(value: float | None, warn: float, crit: float, reverse: bool = False) -> str:
+    if value is None:
+        return "unknown"
+    if reverse:
+        if value <= crit:
+            return "critical"
+        if value <= warn:
+            return "warn"
+        return "ok"
+    if value >= crit:
+        return "critical"
+    if value >= warn:
+        return "warn"
+    return "ok"
+
+
+def sev_from_tones(tones: list[str]) -> str:
+    if "critical" in tones:
+        return "CRITICAL"
+    if "warn" in tones:
+        return "WARN"
+    if "unknown" in tones:
+        return "WATCH"
+    return "OK"
+
+
+def fmt_num(value: float | None, unit: str = "", digits: int = 1) -> str:
+    if value is None:
+        return "--"
+    if abs(value) >= 100 or digits == 0:
+        return f"{value:.0f}{unit}"
+    return f"{value:.{digits}f}{unit}"
+
+
+def build_report() -> dict:
+    c = cfg()
+    base = c["influx_url"]
+    db = c["database"]
+    now = int(time.time())
+    alerts: list[dict[str, object]] = []
+    facts: dict[str, object] = {}
+
+    grafana_ok = False
+    grafana_version = ""
+    try:
+        health = http_json(f"{c['grafana_url']}/api/health", timeout=3.0)
+        grafana_ok = health.get("database") == "ok"
+        grafana_version = str(health.get("version") or "")
+    except Exception:
+        pass
+
+    try:
+        cpu_rows = influx_query(base, db, 'SELECT last("usage_user"),last("usage_system") FROM "cpu"')
+        cpu_busy = (first_num(cpu_rows, "last") or 0) + (first_num(cpu_rows, "last_1") or 0)
+        facts["cpu_busy_pct"] = round(cpu_busy, 1)
+        alerts.append({"signal": "CPU", "state": tone(cpu_busy, 75, 90), "value": round(cpu_busy, 1), "why": "pfSense CPU busy percentage from Telegraf"})
+    except Exception as exc:
+        alerts.append({"signal": "CPU", "state": "unknown", "why": f"CPU query failed: {exc}"})
+
+    for signal, query, key, warn, crit, unit in [
+        ("Memory", 'SELECT last("used_percent") FROM "mem"', "last", 75, 90, "%"),
+        ("Swap", 'SELECT last("used_percent") FROM "swap"', "last", 1, 25, "%"),
+        ("PF States", 'SELECT last("entries") FROM "pf"', "last", 10000, 50000, ""),
+        ("PF Search", 'SELECT derivative(last("searches"), 1s) FROM "pf" WHERE time > now() - 20m GROUP BY time(1m) fill(previous)', "derivative", 20000, 75000, "/s"),
+        ("WAN Ping", 'SELECT mean("average_response_ms") FROM "ping" WHERE time > now() - 20m', "mean", 30, 80, "ms"),
+        ("Processes", 'SELECT last("total") FROM "processes"', "last", 350, 550, ""),
+        ("Disk", 'SELECT max("used_percent") FROM "disk"', "max", 70, 90, "%"),
+    ]:
+        try:
+            rows = influx_query(base, db, query)
+            value = first_num(rows, key)
+            facts[re.sub(r"[^a-z0-9]+", "_", signal.lower()).strip("_")] = round(value, 2) if value is not None else None
+            alerts.append({"signal": signal, "state": tone(value, warn, crit), "value": round(value, 2) if value is not None else None, "unit": unit, "why": f"{signal} from InfluxDB/Telegraf"})
+        except Exception as exc:
+            alerts.append({"signal": signal, "state": "unknown", "why": f"{signal} query failed: {exc}"})
+
+    try:
+        net_rows = influx_query(base, db, 'SELECT non_negative_derivative(mean("bytes_recv"), 1s),non_negative_derivative(mean("bytes_sent"), 1s) FROM "net" WHERE time > now() - 20m GROUP BY time(1m), "interface" fill(null)')
+        top = max(net_rows, key=lambda row: float(row.get("non_negative_derivative") or row.get("non_negative_derivative_1") or 0), default={})
+        facts["top_interface"] = top.get("interface") or "--"
+        facts["top_interface_rx_bps"] = round(float(top.get("non_negative_derivative") or 0), 1)
+        facts["top_interface_tx_bps"] = round(float(top.get("non_negative_derivative_1") or 0), 1)
+    except Exception:
+        pass
+
+    core_states = [str(item.get("state")) for item in alerts]
+    severity = sev_from_tones(core_states + (["ok"] if grafana_ok else ["warn"]))
+    watch_items = [item for item in alerts if item.get("state") in {"warn", "critical", "unknown"}]
+    if severity == "OK":
+        summary = "Metrics look stable: Grafana, InfluxDB, Telegraf, CPU, memory, ping, and PF pressure are inside normal bounds."
+    else:
+        parts = [f"{item.get('signal')} {item.get('state')}" for item in watch_items[:4]]
+        summary = "Metrics need a look: " + ", ".join(parts)
+
+    next_steps = []
+    for item in watch_items[:5]:
+        sig = str(item.get("signal"))
+        if sig == "WAN Ping":
+            next_steps.append("Check gateway latency/loss and compare with Speedtest path truth.")
+        elif sig in {"PF States", "PF Search"}:
+            next_steps.append("Review Live Flows and Packet Story for state-table surge or scan bursts.")
+        elif sig in {"CPU", "Memory", "Swap", "Processes"}:
+            next_steps.append("Open /health and Grafana to confirm whether pressure is sustained.")
+        elif sig == "Disk":
+            next_steps.append("Check log retention, InfluxDB growth, and old SOCX bundles before deleting anything.")
+    if not next_steps:
+        next_steps.append("Keep collecting history; no action is needed right now.")
+
+    report = {
+        "generated": now,
+        "host": c["host"],
+        "grafana_url": c["grafana_url"],
+        "influx_url": c["influx_url"],
+        "database": db,
+        "grafana_ok": grafana_ok,
+        "grafana_version": grafana_version,
+        "severity": severity,
+        "summary": summary,
+        "alerts": alerts,
+        "facts": facts,
+        "next_steps": next_steps[:5],
+        "read_only": True,
+    }
+    return report
+
+
+def write_cache(report: dict) -> None:
+    try:
+        CACHE_JSON.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+    try:
+        safe_summary = re.sub(r"[;&|`$<>]", "", str(report.get("summary", "")))[:240]
+        lines = [
+            f"updated={int(report.get('generated') or time.time())}",
+            f"severity={report.get('severity', 'UNKNOWN')}",
+            f"summary={safe_summary}",
+            f"grafana_url={report.get('grafana_url', '')}",
+            f"influx_url={report.get('influx_url', '')}",
+            f"watch_count={sum(1 for a in report.get('alerts', []) if a.get('state') != 'ok')}",
+        ]
+        CACHE_ENV.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
+
+def post_to_pi(report: dict) -> dict:
+    discovery = parse_env(Path(os.environ.get("SOCX_PI_DISCOVERY_CACHE", "/tmp/socx-pi-discovery.env")))
+    base = discovery.get("pi_llm_url", "").replace("/api/socx/triage", "")
+    if not base:
+        return {"ok": False, "error": "Pi LLM URL not discovered; run socx pi-discover"}
+    urls = []
+    if os.environ.get("SOCX_PI_OPERATOR_CHAT_URL"):
+        urls.append(os.environ["SOCX_PI_OPERATOR_CHAT_URL"])
+    urls.extend([f"{base}/api/socx/chat", f"{base}/api/socx/triage"])
+    chat_payload = {
+        "question": "Explain the pfSense Grafana/Influx metrics trend in plain English. Focus on what changed, what matters, what is probably normal, and the safest next action.",
+        "intent": "explain",
+        "context": {"metrics_intel": report, "read_only": True},
+    }
+    triage_payload = {
+        "summary": {
+            "metrics_severity": report.get("severity"),
+            "metrics_summary": report.get("summary"),
+            "metrics_alerts": report.get("alerts", [])[:8],
+            "read_only": True,
+        },
+        "metrics_intel": report,
+    }
+    timeout = float(os.environ.get("SOCX_METRICS_PI_TIMEOUT", "180"))
+    errors: list[str] = []
+    for url in urls:
+        payload = triage_payload if url.endswith("/api/socx/triage") else chat_payload
+        body = json.dumps(payload).encode("utf-8")
+        req = Request(url, data=body, headers={"Content-Type": "application/json", "User-Agent": "SOCX/metrics-intel"}, method="POST")
+        try:
+            with urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8", "replace") or "{}")
+                if isinstance(data, dict):
+                    data["endpoint"] = url
+                    return data
+                return {"ok": True, "endpoint": url, "raw": data}
+        except Exception as exc:
+            errors.append(f"{url}: {str(exc)[:160]}")
+    return {"ok": False, "error": " | ".join(errors)[-700:]}
+
+
+def print_text(report: dict) -> None:
+    print("SOCX Metrics Intelligence")
+    print(f"state: {report.get('severity')} | {report.get('summary')}")
+    print(f"grafana: {report.get('grafana_url')} | influx: {report.get('influx_url')} db={report.get('database')}")
+    print()
+    for item in report.get("alerts", []):
+        value = item.get("value")
+        unit = item.get("unit", "")
+        print(f"{str(item.get('state', 'unknown')).upper():8} {item.get('signal')}: {fmt_num(value if isinstance(value, (int, float)) else None, str(unit))} | {item.get('why')}")
+    print()
+    print("Next:")
+    for step in report.get("next_steps", []):
+        print(f"- {step}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--json", action="store_true", help="print JSON")
+    parser.add_argument("--pi", action="store_true", help="ask the Pi 5 operator chat model to narrate the metrics")
+    args = parser.parse_args()
+    try:
+        report = build_report()
+    except Exception as exc:
+        report = {"generated": int(time.time()), "severity": "WARN", "summary": f"metrics query failed: {exc}", "alerts": [], "next_steps": ["Check socx observability"], "read_only": True}
+    write_cache(report)
+    if args.pi:
+        try:
+            report["pi_narration"] = post_to_pi(report)
+            write_cache(report)
+        except Exception as exc:
+            report["pi_narration"] = {"ok": False, "error": str(exc)[:240]}
+            write_cache(report)
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print_text(report)
+        if args.pi and report.get("pi_narration"):
+            print()
+            print("Pi AI Narration:")
+            pi = report["pi_narration"]
+            print(pi.get("answer") or pi.get("summary") or pi.get("text") or json.dumps(pi)[:1000])
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

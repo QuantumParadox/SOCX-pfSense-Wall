@@ -20,6 +20,7 @@ const pageName = () => {
   if (path.includes("why")) return "why";
   if (path.includes("story")) return "story";
   if (path.includes("mission")) return "mission";
+  if (path.includes("observability") || path.includes("metrics")) return "observability";
   if (path.includes("guide")) return "guide";
   if (path.includes("chat")) return "chat";
   if (path.includes("ai")) return "ai";
@@ -394,10 +395,13 @@ function renderChatPage(state) {
   subtitle.textContent = "ask pfSense and the Pi LLMs in plain English";
   if (document.getElementById("detail-chat-input")) return;
   const suggestions = [
+    "Give me the SOCX morning brief. What changed, what matters, and what should I check first?",
+    "Summarize Grafana and Influx metrics trends and tell me if anything is getting worse.",
+    "Why is SOCX in watch or warning mode? Explain it in plain English.",
     "Why are firewall blocks high?",
     "Explain DNSBL and whether I should worry.",
     "Diagnose VPN speed and gateway health.",
-    "Explain the top packet story row.",
+    "Is my VPN healthy right now? Compare VPN state, latency, and speed truth.",
     "Draft a safe plan to quarantine a host.",
     "What should I check before tuning IDS?",
   ];
@@ -559,6 +563,53 @@ function renderAi(state) {
   ].join("");
 }
 
+function renderObservability(state) {
+  title.textContent = "SOCX OBSERVABILITY";
+  const obs = state.observability || {};
+  const intel = state.metrics_intel || {};
+  const latest = obs.latest || {};
+  const measurementRows = (obs.measurements || []).slice(0, 24).map((m) => [m, (obs.core_measurements || []).includes(m) ? "core" : "extra"]);
+  const sampleRows = [
+    ["CPU", latest.cpu ? `${Number(latest.cpu.last || 0).toFixed(1)} user / ${Number(latest.cpu.last_1 || 0).toFixed(1)} system` : "--"],
+    ["Memory", latest.mem?.last !== undefined ? `${Number(latest.mem.last || 0).toFixed(1)}% used` : "--"],
+    ["PF", latest.pf?.last !== undefined ? `${Number(latest.pf.last || 0).toFixed(0)} states / ${Number(latest.pf.last_1 || 0).toFixed(0)} searches` : "--"],
+    ["Ping", latest.ping?.last !== undefined ? `${Number(latest.ping.last || 0).toFixed(2)} ms` : "--"],
+  ];
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    card("Metrics Stack", [
+      kv("State", obs.label || "--", obs.tone || "cyan"),
+      kv("Host", obs.host || "--", "cyan"),
+      kv("Grafana", obs.grafana_ok ? `OK ${obs.grafana_version || ""}` : "WARN", obs.grafana_ok ? "green" : "yellow"),
+      kv("InfluxDB", obs.influx_ok ? "OK" : "WARN", obs.influx_ok ? "green" : "yellow"),
+      kv("Telegraf", obs.telegraf_ok ? "target ok" : "target mismatch", obs.telegraf_ok ? "green" : "yellow"),
+      kv("Core Series", `${(obs.core_measurements || []).length}/6`, (obs.core_measurements || []).length >= 4 ? "green" : "yellow"),
+      `<div class="detail-links"><a href="${esc(obs.grafana_url || "#")}" target="_blank" rel="noreferrer">Open Grafana</a><a href="/api/observability" target="_blank">Raw JSON</a></div>`,
+    ].join("")),
+    card("Latest pfSense Samples", table(["Signal", "Latest"], sampleRows)),
+    card("Metrics Intelligence", [
+      kv("Severity", intel.severity || "--", intel.severity === "OK" ? "green" : intel.severity === "CRITICAL" ? "red" : "yellow"),
+      kv("Summary", intel.summary || "--", intel.severity === "OK" ? "green" : "yellow"),
+      table(["Signal", "State", "Value", "Why"], (intel.alerts || []).map((a) => [
+        a.signal || "--",
+        a.state || "--",
+        `${a.value ?? "--"}${a.unit || ""}`,
+        a.why || "--",
+      ])),
+    ].join("")),
+    card("Recommended Next Steps", table(["#", "Action"], (intel.next_steps || []).map((step, idx) => [idx + 1, step]))),
+    card("Measurements", table(["Series", "Type"], measurementRows)),
+    card("Targets", [
+      kv("Grafana URL", obs.grafana_url || "--", "cyan"),
+      kv("Influx URL", obs.influx_url || "--", "cyan"),
+      kv("Database", obs.database || "--", "cyan"),
+      kv("Telegraf Target", obs.telegraf_target || "--", obs.telegraf_ok ? "green" : "yellow"),
+      kv("Summary", obs.summary || "--", obs.tone || "cyan"),
+      ...(obs.errors || []).map((err) => kv("Error", err, "red")),
+    ].join("")),
+  ].join("");
+}
+
 async function refresh() {
   const page = pageName();
   const state = await fetch("/api/state", { cache: "no-store" }).then((r) => r.json());
@@ -582,6 +633,7 @@ async function refresh() {
   else if (page === "why") renderWhy(state, why || {});
   else if (page === "story") renderStory(state, story || {});
   else if (page === "mission") renderMission(state, mission || state.mission || {});
+  else if (page === "observability") renderObservability(state);
   else if (page === "guide") renderGuide(state);
   else if (page === "chat") renderChatPage(state);
   else renderSpeed(state);

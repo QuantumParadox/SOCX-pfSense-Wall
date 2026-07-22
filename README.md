@@ -99,12 +99,21 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds SOCX ATT&CK / D3FEND / KEV Intelligence through `/api/intel`, Mission cards, and `socx intel`. It maps current firewall/DNSBL/IDS/asset-drift evidence to conservative ATT&CK context, defensive countermeasure names, CISA KEV status, priority, disposition, and a compact kill-chain story. It is read-only and never changes pfSense policy.
 - Adds SOCX Operator Chat through the browser Command Center, `/api/chat`, and `socx chat`. Ask plain-English questions about firewall blocks, DNSBL, IDS/Suricata, VPN, Speedtest, Pi AI, devices, or draft-only pfSense configuration plans. Chat can delegate to the Pi 5 LLM endpoint when available, shows visible operational steps, and never applies pfSense changes from chat.
 - Adds the full-size `/chat` Operator Chat page with suggested questions, current signal context, readable action cards, and safety mode descriptions. Live Flow and Packet Story rows on the wall can be clicked to ask SOCX to explain that exact row.
+- Adds one-click Operator Chat prompts for Morning Brief, Why Watch, Top Block, VPN Truth, Metrics, and IDS/DNSBL planning.
+- Upgrades the Daily SOC Brief into a wall-safe SOCX Morning Brief with headline, What Changed, Security, Metrics, Speed, AI/Fleet, and safe next steps.
+- Adds `socx tmux`, a pfSense-safe tmux session hub with optional lazy-tmux detection. It can list/attach SOCX sessions, start the wall, and write a conservative lazy-tmux guardrail config without making lazy-tmux a required dependency.
+- Adds Pi 4 observability support with `pi/install_socx_observability.sh` for InfluxDB/Grafana, `socx-telegraf-target.php` for pointing pfSense Telegraf at the external metrics host, and `socx observability` for quick health checks.
+- Adds SOCX Metrics Intelligence with `socx metrics-intel`, `/api/metrics-intel`, and browser Metrics/Observability cards that explain Grafana/Influx trends in plain English.
+- Adds `socx metrics-ai --pi`, a read-only Pi AI narration hook for asking the Pi 5 LLM operator endpoint to explain pfSense metric changes and safest next actions.
+- Adds `socx autonomy-loop` and `socx autonomy-cron`, a read-only brainstem loop that refreshes Autopilot, Metrics Intelligence, Pi discovery, Pi 3-LLM analysis, and the Morning Brief with lock/timeout protection.
+- Adds Pi 3-LLM role watchdogs so slow or stuck model roles show timeout/error status instead of hanging the SOCX refresh path indefinitely.
+- Adds starter Grafana alert rules for WAN ping pressure, memory pressure, and PF state pressure plus a daily retained Pi 4 observability backup.
 - Adds focused browser detail pages for Speedtest, Devices, Incidents, AI, and Release Health so the main wall stays clean while deeper evidence is still available.
 - Adds Data Truth freshness scoring, a plain-English Data Truth reason, and a What Changed timeline so collector age, inactive VPN tests, Pi discovery state, UPS freshness, and meaningful state changes are visible.
 - Adds `/health` and `/api/health` for release readiness, wall error state, fixed service checks, and Pi AI role visibility.
 - Adds `/why` and `/api/why` for plain-English block context by IP, domain, or port using recent SOCX evidence plus the safe `socx why-blocked` helper.
 - Adds a browser `Bundle` action and `/api/incident-bundle` for one-click, evidence-preserving incident capture.
-- Adds `socx brief`, which writes a timestamped daily SOC summary to `/root/socx-briefs/`.
+- Adds `socx brief`, `socx morning`, and `socx morning-brief`, which write a timestamped SOCX Morning Brief to `/root/socx-briefs/`.
 - Adds `socx rules`, an approval-only recommendation view for firewall, DNSBL, IDS, and device-profile review. It does not change firewall rules automatically.
 - Adds `socx v1-check`, a readiness gate that verifies the terminal wall, browser API, Daily Story, renderer log, Speedtest paths, incident memory, Label Brain, host naming, Pi fleet, Pi 3-LLM roles, and pfSense service visibility.
 - Adds `socx snapshot`, a read-only evidence bundle for status, why-now, history, timeline, Speedtest paths, topology, unknown services, and web API JSON.
@@ -113,6 +122,7 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds a browser Incident Cockpit and safe Commander buttons for status, Incident Mode, snapshots, Zeek health, and Pi AI checks.
 - Adds a browser Mission Control strip with Threat Pulse, LAN Asset Watch, and AI Verdict Timeline.
 - Adds local browser controls for ticker speed and big-text wall readability mode.
+- Slows the browser ticker defaults and holds event swaps longer so wall text scrolls smoothly instead of popping when new events arrive.
 - Adds a compact Pi Fleet visualizer in the browser wall for pfSense, Pi 5 AI, Pi 4 telemetry, online count, temperature, memory, load, and service state.
 - Adds browser voice Commander support for the same fixed allowlist as the buttons: status, incident, snapshot, speedtest, Zeek, and Pi AI.
 - Adds browser Speedtest truth comparison for CLIENT, ROUTER, DIRECT, and VPN paths so router-side under-reporting is visible instead of confusing.
@@ -168,6 +178,11 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - `scripts/socx-ups-cache` - background UPS collector that keeps `/tmp/socx-ups-cache.env` fresh without blocking wall rendering.
 - `scripts/socx-speedtest-cache` - scheduled Speedtest collector/importer that keeps active, client, and router Speedtest cache files.
 - `scripts/socx-speedtest-history` - summarizes Speedtest JSONL history by DIRECT/VPN path.
+- `scripts/socx-telegraf-target.php` - pfSense helper that backs up config.xml, updates the Telegraf InfluxDB target, and regenerates/restarts Telegraf through the package hook.
+- `scripts/socx-observability` - quick pfSense-side status check for external Grafana, InfluxDB, Telegraf, and core measurements.
+- `scripts/socx-metrics-intel` - reads the Pi 4 InfluxDB/Grafana stack and explains metric health, watch items, and safe next steps.
+- `scripts/socx-autonomy-loop` - bounded read-only autonomy cycle for Autopilot, metrics, Pi AI, and Morning Brief refresh.
+- `scripts/socx-autonomy-cron` - installs/removes/statuses the SOCX autonomy loop schedule.
 - `scripts/socx-iftop-color` and `scripts/socx_iftop_color.pl` - color flow radar wrapper and renderer.
 - `scripts/socx-tcpdump-color` and `scripts/socx_tcpdump_color.pl` - color packet story wrapper and renderer.
 - `scripts/socx-incident` - short incident command that runs capture and prints the latest bundle manifest.
@@ -193,6 +208,7 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - `scripts/socx-why-now` - plain-English current-state explanation from Autopilot, Speedtest, and AI caches.
 - `scripts/socx-mode` - wall mode preset helper for normal, incident, speedtest, AI, UPS, and quiet-night operation.
 - `scripts/socx-host-labels` - DHCP/ARP/Pi-discovery friendly-name suggestions for `/usr/local/etc/socx_hosts.conf`.
+- `scripts/socx-tmux-hub` - optional lazy-tmux-aware session hub for SOCX operator panes, with conservative restore rules for pfSense.
 - `scripts/socx-snapshot` - read-only SOCX troubleshooting bundle with checksums and optional web API captures.
 - `scripts/socx-snapshot-cron` - installs/removes/status a nightly read-only evidence snapshot cron entry.
 - `scripts/socx-incident-mode` - read-only incident-mode summary for firewall, DNSBL, IDS, and next actions.
@@ -207,6 +223,7 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - `scripts/socx-ai-explain` - operator command that refreshes Pi/MIRANDA analysis and prints a plain-English summary.
 - `pi/socx_pi_llm_orchestrator.py` - optional Raspberry Pi FastAPI receiver that fans SOCX evidence to three local model roles.
 - `pi/socx_pi_sidecar.py` - lightweight standard-library Pi telemetry endpoint for Pi 4/Pi fleet health on port `8096`.
+- `pi/install_socx_observability.sh` - Pi 4 Docker Compose installer for SOCX InfluxDB/Grafana with a starter pfSense dashboard.
 - Browser wall Command Center - includes safe click/voice actions, Speedtest truth comparison, and the compact Pi Fleet link visualizer.
 - Browser detail pages - `/speedtest`, `/devices`, `/incidents`, and `/ai` expand the wall's main signals into readable evidence views.
 - `scripts/iftopx`, `scripts/tcpdumpx`, `scripts/socx` - convenience launchers.
@@ -218,6 +235,7 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - `config/socx_ai_lab.conf.example` - optional AI/MIRANDA endpoint map for local LLMs and external model APIs.
 - `config/socx_watchlist.conf.example` - optional watchlist for important devices, services, domains, ports, and event text.
 - `config/socx_speedtest_paths.conf.example` - optional DIRECT/VPN Speedtest path labels for Frontier, NYC, RCN-DE, RCN-VA, or other policy-routed test paths.
+- `config/socx_observability.conf.example` - optional Grafana/InfluxDB target map for Pi 4 observability.
 - `rc.d/socx` - pfSense/FreeBSD boot script for automatic detached startup.
 - `rc.d/socxweb` - optional pfSense/FreeBSD boot script for the browser dashboard service.
 
@@ -236,6 +254,22 @@ soc
 ```
 
 The installer also keeps `socx` and `SOCX` as aliases, but `soc` is the short command to use.
+
+SOCX tmux helper:
+
+```sh
+socx tmux
+socx tmux list
+socx tmux attach
+socx tmux config
+```
+
+`socx tmux` uses normal tmux by default and only opens lazy-tmux when a tested
+`lazy-tmux` binary is present. On pfSense, avoid one-line third-party install
+scripts and avoid enabling FreeBSD package repositories just to install tmux
+helpers. If you want lazy-tmux, build or download a FreeBSD amd64 binary
+elsewhere, copy it to `/usr/local/bin/lazy-tmux`, then run `socx tmux config`
+before testing it in a non-critical session.
 
 Launch the browser dashboard:
 
@@ -570,20 +604,26 @@ The Pi receiver uses three roles: `triage`, `evidence`, and `action`. On a Raspb
 triage   -> Hailo llama3.2:3b
 evidence -> Hailo qwen2.5-instruct:1.5b
 action   -> Hailo qwen2.5-coder:1.5b
-fallback -> CPU Ollama llama3.2:3b / qwen2.5:3b
+fallback -> CPU Ollama llama3.2:1b / qwen2.5:1.5b / qwen2.5-coder:1.5b
 ```
 
-Hailo model swaps can be slow, especially on the first run after boot, so SOCX gives Hailo a longer role timeout and keeps the CPU fallback visible in the dashboard. Override models or endpoints with:
+Hailo model swaps can be slow or unavailable depending on the local Hailo/Ollama bridge. SOCX therefore treats Hailo as the preferred accelerator but gives it a short wall-safe timeout, then uses smaller CPU Ollama models for live SOC verdicts. The Pi service warms the CPU fallback models at startup and keeps them resident with `SOCX_PI_OLLAMA_KEEP_ALIVE=6h`, which avoids slow cold starts during normal dashboard cycles. Override models or endpoints with:
 
 ```sh
 SOCX_PI_LLM_TRIAGE_MODEL=llama3.2:3b
 SOCX_PI_LLM_EVIDENCE_MODEL=qwen2.5-instruct:1.5b
 SOCX_PI_LLM_ACTION_MODEL=qwen2.5-coder:1.5b
 SOCX_PI_HAILO_CHAT_URL=http://127.0.0.1:8000/api/chat
-SOCX_PI_HAILO_TIMEOUT=150
-SOCX_PI_CPU_TRIAGE_MODEL=llama3.2:3b
-SOCX_PI_CPU_EVIDENCE_MODEL=qwen2.5:3b
-SOCX_PI_CPU_ACTION_MODEL=llama3.2:3b
+SOCX_PI_HAILO_TIMEOUT=3
+SOCX_PI_CPU_TRIAGE_MODEL=llama3.2:1b
+SOCX_PI_CPU_EVIDENCE_MODEL=qwen2.5:1.5b
+SOCX_PI_CPU_ACTION_MODEL=qwen2.5-coder:1.5b
+SOCX_PI_LLM_TIMEOUT=25
+SOCX_PI_ROLE_MAX_SECONDS=28
+SOCX_PI_TOTAL_TIMEOUT=90
+SOCX_PI_LLM_NUM_PREDICT=32
+SOCX_PI_LLM_NUM_CTX=768
+SOCX_PI_OLLAMA_KEEP_ALIVE=6h
 SOCX_PI_LLM_TRIAGE_URL=http://127.0.0.1:11434/api/generate
 SOCX_PI_LLM_EVIDENCE_URL=http://127.0.0.1:11434/api/generate
 SOCX_PI_LLM_ACTION_URL=http://127.0.0.1:11434/api/generate
@@ -643,15 +683,16 @@ Repair the usual CPU Ollama fallback case with:
 ```sh
 curl -fsSL https://ollama.com/install.sh | sh
 sudo systemctl enable --now ollama
-ollama pull llama3.2:3b
-ollama pull qwen2.5:3b
+ollama pull llama3.2:1b
+ollama pull qwen2.5:1.5b
+ollama pull qwen2.5-coder:1.5b
 sudo systemctl restart socx-pi-llm
 ```
 
-The pfSense bridge waits up to 300 seconds by default because the Pi may need time to run three small local model roles. The Pi service runs roles sequentially by default because Hailo generation context swaps and CPU model loads are not instant. Override only if your Pi is much faster or slower:
+The pfSense bridge waits up to 125 seconds by default, while the Pi role watchdog keeps normal analysis bounded to about a minute or so on the Pi 5. The Pi service runs roles sequentially by default because Hailo generation context swaps and CPU model loads are not instant. Override only if your Pi is much faster or slower:
 
 ```sh
-SOCX_PI_LLM_TIMEOUT=180 socx pi-llm
+SOCX_PI_LLM_TIMEOUT=90 socx pi-llm
 ```
 
 Ask SOCX for the current AI explanation:
@@ -682,6 +723,11 @@ SOCX_TICKER_INTERVAL_MS=75
 SOCX_TICKER_MAX_EVENTS=25
 SOCX_TICKER_DEDUPE_SECONDS=10
 ```
+
+The browser wall uses slower room-readable defaults than the terminal ticker.
+Use the `SLOW`/`NORMAL`/`FAST` button in the top bar when you want to tune it
+live. SOCX batches text swaps so the moving line does not jump every time a new
+event count arrives.
 
 Modern-btop defaults to a non-scrolling rotating Event Feed so tmux does not constantly crawl text across the wall:
 

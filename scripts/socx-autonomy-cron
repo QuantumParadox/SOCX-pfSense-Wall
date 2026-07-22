@@ -1,0 +1,39 @@
+#!/bin/sh
+set -eu
+
+ACTION="${1:-install}"
+CRON_FILE="${SOCX_AUTONOMY_CRON_FILE:-/etc/cron.d/socx-autonomy}"
+INTERVAL="${SOCX_AUTONOMY_INTERVAL_MINUTES:-5}"
+
+case "$ACTION" in
+    install|enable)
+        mkdir -p "$(dirname "$CRON_FILE")"
+        cat > "$CRON_FILE" <<EOF
+# SOCX read-only autonomy loop: autopilot, metrics intelligence, Pi AI, morning brief.
+SHELL=/bin/sh
+PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+
+*/$INTERVAL * * * * root /usr/local/bin/socx-autonomy-loop >/dev/null 2>&1
+EOF
+        chmod 0644 "$CRON_FILE"
+        echo "SOCX autonomy cron installed: $CRON_FILE"
+        cat "$CRON_FILE"
+        ;;
+    remove|disable)
+        rm -f "$CRON_FILE"
+        echo "SOCX autonomy cron removed: $CRON_FILE"
+        ;;
+    status)
+        if [ -f "$CRON_FILE" ]; then
+            echo "SOCX autonomy cron enabled: $CRON_FILE"
+            cat "$CRON_FILE"
+            [ -f /tmp/socx-autonomy-loop.env ] && sed 's/^/  /' /tmp/socx-autonomy-loop.env || true
+        else
+            echo "SOCX autonomy cron not installed."
+        fi
+        ;;
+    *)
+        echo "Usage: socx-autonomy-cron install|status|remove" >&2
+        exit 2
+        ;;
+esac

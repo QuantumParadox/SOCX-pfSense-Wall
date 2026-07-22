@@ -1,0 +1,5 @@
+# SOCX external observability target.
+SOCX_OBSERVABILITY_HOST="ColumbiaPi4"
+SOCX_GRAFANA_URL="http://192.168.1.180:3000"
+SOCX_INFLUX_URL="http://192.168.1.180:8086"
+SOCX_INFLUX_DB="pfsense"

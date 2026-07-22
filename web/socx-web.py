@@ -298,6 +298,12 @@ class SocxCollector:
         self.change_events: deque[dict[str, Any]] = deque(maxlen=36)
         self.release_health_checked = 0.0
         self.release_health_cache: dict[str, Any] = {}
+        self.observability_checked = 0.0
+        self.observability_cache: dict[str, Any] = {}
+        self.metrics_intel_checked = 0.0
+        self.metrics_intel_cache: dict[str, Any] = {}
+        self.autonomy_loop_checked = 0.0
+        self.autonomy_loop_cache: dict[str, Any] = {}
         self.ups_samples: deque[float] = deque(maxlen=120)
         self.label_history_path = Path(os.environ.get("SOCX_LABEL_BRAIN_HISTORY", "/var/db/socx_label_brain.json"))
         self.label_history_last_write = 0.0
@@ -364,6 +370,9 @@ class SocxCollector:
         hardware = self.collect_hardware_health(cpu)
         processes = self.collect_processes()
         command_center = self.collect_command_center(hardware)
+        observability = self.collect_observability()
+        metrics_intel = self.collect_metrics_intel()
+        autonomy_loop = self.collect_autonomy_loop()
         incident = self.collect_incident_light(command_center)
         pi_nodes = self.collect_pi_nodes()
         threat_pulse = self.collect_threat_pulse(incident)
@@ -373,12 +382,12 @@ class SocxCollector:
         asset_watch = self.collect_asset_watch(flows, pi_nodes, label_brain)
         ai_timeline = self.collect_ai_timeline(pi_nodes, command_center)
         incident_timeline = self.collect_incident_timeline(incident, label_brain, ai_timeline)
-        daily_brief = self.collect_daily_brief(command_center, incident, label_brain, pi_nodes, ai_timeline)
+        daily_brief = self.collect_daily_brief(command_center, incident, label_brain, pi_nodes, ai_timeline, metrics_intel)
         rule_assistant = self.collect_rule_assistant(incident, label_brain)
         speedtest_history = self.collect_speedtest_history()
         incident_memory = self.collect_incident_memory()
         self.maybe_append_incident_memory()
-        data_truth = self.collect_data_truth(command_center, pi_nodes, ups, incident_memory, label_brain)
+        data_truth = self.collect_data_truth(command_center, pi_nodes, ups, incident_memory, label_brain, observability)
         what_changed = self.collect_what_changed(command_center, incident, label_brain, pi_nodes, net, ups, data_truth, flows)
         intel = self.collect_intel_layer(incident, label_brain, flows, hardware)
         mission = self.collect_mission(command_center, incident, label_brain, pi_nodes, ai_timeline, hardware, data_truth, what_changed, flows, intel)
@@ -424,6 +433,9 @@ class SocxCollector:
             "ups": ups | {"history": list(self.histories["ups_watts"])},
             "processes": processes,
             "command_center": command_center,
+            "observability": observability,
+            "metrics_intel": metrics_intel,
+            "autonomy_loop": autonomy_loop,
             "incident": incident,
             "pi_nodes": pi_nodes,
             "threat_pulse": threat_pulse,
@@ -740,6 +752,172 @@ class SocxCollector:
             "actions": actions[:5],
         }
 
+    def collect_observability(self) -> dict[str, Any]:
+        now = time.time()
+        ttl = env_int("SOCX_OBSERVABILITY_POLL_SECONDS", 8)
+        if self.observability_cache and now - self.observability_checked < ttl:
+            cached = dict(self.observability_cache)
+            cached["age_sec"] = int(max(0, now - float(cached.get("updated") or now)))
+            return cached
+
+        cfg = parse_env_file(Path(os.environ.get("SOCX_OBSERVABILITY_CONF", "/usr/local/etc/socx_observability.conf")))
+        host = cfg.get("SOCX_OBSERVABILITY_HOST") or os.environ.get("SOCX_OBSERVABILITY_HOST", "ColumbiaPi4")
+        grafana_url = (cfg.get("SOCX_GRAFANA_URL") or os.environ.get("SOCX_GRAFANA_URL", "http://192.168.1.180:3000")).rstrip("/")
+        influx_url = (cfg.get("SOCX_INFLUX_URL") or os.environ.get("SOCX_INFLUX_URL", "http://192.168.1.180:8086")).rstrip("/")
+        influx_db = cfg.get("SOCX_INFLUX_DB") or os.environ.get("SOCX_INFLUX_DB", "pfsense")
+
+        def get_json(url: str, timeout: float = 2.5) -> tuple[bool, dict[str, Any], str]:
+            try:
+                req = Request(url, headers={"User-Agent": "SOCX/observability"})
+                with urlopen(req, timeout=timeout) as resp:
+                    raw = resp.read(20000).decode("utf-8", "replace")
+                    return 200 <= resp.status < 300, json.loads(raw or "{}"), ""
+            except Exception as exc:
+                return False, {}, str(exc)[:140]
+
+        def http_ok(url: str, expected: set[int] | None = None, timeout: float = 2.5) -> tuple[bool, str]:
+            expected = expected or {200}
+            try:
+                req = Request(url, headers={"User-Agent": "SOCX/observability"})
+                with urlopen(req, timeout=timeout) as resp:
+                    return resp.status in expected, f"HTTP {resp.status}"
+            except Exception as exc:
+                return False, str(exc)[:140]
+
+        grafana_ok, grafana_health, grafana_error = get_json(f"{grafana_url}/api/health")
+        influx_ok, influx_error = http_ok(f"{influx_url}/ping", {204})
+
+        measurements: list[str] = []
+        latest: dict[str, Any] = {}
+        query_url = f"{influx_url}/query?db={influx_db}&q=SHOW%20MEASUREMENTS"
+        meas_ok, meas_json, meas_error = get_json(query_url)
+        if meas_ok:
+            try:
+                values = meas_json["results"][0]["series"][0]["values"]
+                measurements = [str(row[0]) for row in values if row]
+            except Exception:
+                measurements = []
+        for name, query in {
+            "cpu": 'SELECT last("usage_user"),last("usage_system") FROM "cpu"',
+            "mem": 'SELECT last("used_percent") FROM "mem"',
+            "pf": 'SELECT last("entries"),last("searches") FROM "pf"',
+            "ping": 'SELECT last("average_response_ms") FROM "ping"',
+        }.items():
+            encoded = query.replace(" ", "%20").replace('"', "%22").replace(",", "%2C")
+            ok, data, _ = get_json(f"{influx_url}/query?db={influx_db}&q={encoded}", timeout=2.5)
+            if not ok:
+                continue
+            try:
+                series = data["results"][0]["series"][0]
+                cols = series.get("columns", [])
+                vals = series.get("values", [[]])[0]
+                latest[name] = {str(col): vals[idx] for idx, col in enumerate(cols) if idx < len(vals)}
+            except Exception:
+                continue
+
+        core = {"cpu", "mem", "net", "pf", "ping", "system"}
+        core_present = sorted(core.intersection(set(measurements)))
+        telegraf_target = ""
+        try:
+            conf = Path("/usr/local/etc/telegraf.conf").read_text(errors="ignore")
+            match = re.search(r'urls\s*=\s*\["([^"]+)"\]', conf)
+            telegraf_target = match.group(1) if match else ""
+        except Exception:
+            pass
+        telegraf_ok = bool(telegraf_target == influx_url)
+
+        if grafana_ok and influx_ok and len(core_present) >= 4 and telegraf_ok:
+            label = "LIVE"
+            tone = "green"
+        elif grafana_ok or influx_ok or core_present:
+            label = "WATCH"
+            tone = "yellow"
+        else:
+            label = "DOWN"
+            tone = "red"
+
+        errors = [item for item in [grafana_error, influx_error if not influx_ok else "", meas_error if not meas_ok else ""] if item]
+        result = {
+            "updated": now,
+            "age_sec": 0,
+            "host": host,
+            "grafana_url": grafana_url,
+            "influx_url": influx_url,
+            "database": influx_db,
+            "label": label,
+            "tone": tone,
+            "grafana_ok": grafana_ok,
+            "grafana_version": grafana_health.get("version", ""),
+            "influx_ok": influx_ok,
+            "telegraf_ok": telegraf_ok,
+            "telegraf_target": telegraf_target,
+            "measurements": measurements[:40],
+            "core_measurements": core_present,
+            "latest": latest,
+            "summary": f"{host} metrics {label.lower()} | {len(core_present)}/6 core series | Grafana {'ok' if grafana_ok else 'warn'} | Influx {'ok' if influx_ok else 'warn'}",
+            "errors": errors[:3],
+        }
+        self.observability_cache = result
+        self.observability_checked = now
+        return result
+
+    def collect_metrics_intel(self) -> dict[str, Any]:
+        now = time.time()
+        ttl = env_int("SOCX_METRICS_INTEL_POLL_SECONDS", 30)
+        if self.metrics_intel_cache and now - self.metrics_intel_checked < ttl:
+            cached = dict(self.metrics_intel_cache)
+            cached["age_sec"] = int(max(0, now - float(cached.get("generated") or now)))
+            return cached
+        cache = Path(os.environ.get("SOCX_METRICS_INTEL_JSON", "/tmp/socx-metrics-intel.json"))
+        age = self.file_age_seconds(cache)
+        if age is None or age > ttl:
+            run_cmd("if command -v socx-metrics-intel >/dev/null 2>&1; then socx-metrics-intel --json >/tmp/socx-metrics-intel-web.out 2>/tmp/socx-metrics-intel-web.err; fi", timeout=12.0)
+            age = self.file_age_seconds(cache)
+        data: dict[str, Any] = {"severity": "UNKNOWN", "summary": "Metrics intelligence waiting", "alerts": [], "next_steps": [], "generated": 0}
+        try:
+            parsed = json.loads(cache.read_text(errors="ignore"))
+            if isinstance(parsed, dict):
+                data.update(parsed)
+        except Exception:
+            pass
+        data["age_sec"] = age
+        self.metrics_intel_cache = data
+        self.metrics_intel_checked = now
+        return data
+
+    def collect_autonomy_loop(self) -> dict[str, Any]:
+        now = time.time()
+        ttl = env_int("SOCX_AUTONOMY_POLL_SECONDS", 2)
+        if self.autonomy_loop_cache and now - self.autonomy_loop_checked < ttl:
+            cached = dict(self.autonomy_loop_cache)
+            cached["age_sec"] = int(max(0, now - float(cached.get("updated") or now)))
+            return cached
+        path = Path(os.environ.get("SOCX_AUTONOMY_CACHE", "/tmp/socx-autonomy-loop.env"))
+        data = parse_env_file(path)
+        updated = 0.0
+        try:
+            updated = float(data.get("updated") or 0)
+        except Exception:
+            updated = 0.0
+        age = int(max(0, now - updated)) if updated else None
+        status = str(data.get("status") or ("waiting" if not updated else "unknown"))
+        tone = "green" if status == "ok" and (age is None or age < 600) else "yellow" if status in {"skipped", "waiting", "unknown"} else "red"
+        if age is not None and age > 900:
+            tone = "red"
+            status = "stale"
+        result = {
+            "updated": updated,
+            "age_sec": age,
+            "status": status,
+            "tone": tone,
+            "summary": data.get("summary") or "autonomy loop waiting",
+            "log": data.get("log") or "/tmp/socx-autonomy-loop.log",
+            "read_only": True,
+        }
+        self.autonomy_loop_cache = result
+        self.autonomy_loop_checked = now
+        return result
+
     def vpn_crypto_headroom(
         self,
         direct: dict[str, str],
@@ -904,6 +1082,7 @@ class SocxCollector:
         ups: dict[str, Any],
         incident_memory: dict[str, Any],
         label_brain: dict[str, Any],
+        observability: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         signals: list[dict[str, Any]] = []
         active = center.get("router") if isinstance(center.get("router"), dict) else {}
@@ -925,6 +1104,10 @@ class SocxCollector:
         signals.append(self.truth_signal("Label Brain", "ready" if label_brain.get("devices") else "waiting", 0, "local memory", f"{len(label_brain.get('devices', []) if isinstance(label_brain.get('devices'), list) else [])} devices"))
         memory_count = incident_memory.get("count") or incident_memory.get("samples") or 0
         signals.append(self.truth_signal("Incident Memory", "ready" if memory_count else "waiting", 0, "jsonl memory", f"{memory_count} samples"))
+        obs = observability or {}
+        if obs:
+            obs_state = "ready" if obs.get("label") == "LIVE" else ("warn" if obs.get("label") == "WATCH" else "down")
+            signals.append(self.truth_signal("Grafana/Influx", obs_state, obs.get("age_sec"), obs.get("host", "Pi metrics"), obs.get("summary", "")))
 
         ok = sum(1 for item in signals if item["tone"] == "green")
         warn = sum(1 for item in signals if item["tone"] == "yellow")
@@ -1415,6 +1598,7 @@ class SocxCollector:
         center = snapshot.get("command_center", {}) if isinstance(snapshot, dict) else {}
         pi = snapshot.get("pi_nodes", {}) if isinstance(snapshot, dict) else {}
         hardware = snapshot.get("hardware", {}) if isinstance(snapshot, dict) else {}
+        metrics_intel = snapshot.get("metrics_intel", {}) if isinstance(snapshot, dict) else {}
         ai = snapshot.get("ai_timeline", {}) if isinstance(snapshot, dict) else {}
         brain = snapshot.get("label_brain", {}) if isinstance(snapshot, dict) else {}
         top_source = (incident.get("blocked_sources") or [{}])[0] if isinstance(incident.get("blocked_sources"), list) else {}
@@ -1448,6 +1632,8 @@ class SocxCollector:
         story_lines.append(f"Pi fleet is {pi.get('online', 0)}/{pi.get('count', 0)} online; Pi AI role status is visible in the AI page.")
         if hardware:
             story_lines.append(f"Hardware headroom: {hardware.get('summary', 'hardware profile waiting')}; powerd {hardware.get('powerd', 'unknown')}.")
+        if metrics_intel:
+            story_lines.append(f"Metrics intelligence is {metrics_intel.get('severity', 'UNKNOWN')}: {metrics_intel.get('summary', 'waiting')}")
         if changed_rows:
             story_lines.append(f"Most recent meaningful change: {changed_rows[0].get('title')} - {changed_rows[0].get('detail')}.")
         next_steps = []
@@ -1459,6 +1645,10 @@ class SocxCollector:
             next_steps.append("Build an incident bundle before IDS tuning.")
         if not next_steps:
             next_steps.append("Keep SOCX in watch mode and let history accumulate.")
+        metric_steps = metrics_intel.get("next_steps", []) if isinstance(metrics_intel.get("next_steps"), list) else []
+        for step in metric_steps[:2]:
+            if step not in next_steps:
+                next_steps.append(step)
         return {
             "title": "SOCX Daily Story",
             "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -1474,7 +1664,9 @@ class SocxCollector:
                 "ids": f"high {ids.get('high_signal', 0)} watch {ids.get('watch', 0)}",
                 "pi": f"{pi.get('online', 0)}/{pi.get('count', 0)} online",
                 "hardware": hardware.get("summary", "--") if isinstance(hardware, dict) else "--",
+                "metrics": f"{metrics_intel.get('severity', 'UNKNOWN')} {metrics_intel.get('summary', '')}" if isinstance(metrics_intel, dict) else "--",
             },
+            "metrics_intel": metrics_intel,
             "hardware": hardware,
             "speedtest": {
                 "direct": direct,
@@ -2062,17 +2254,23 @@ class SocxCollector:
         label_brain: dict[str, Any],
         pi_nodes: dict[str, Any],
         ai_timeline: dict[str, Any],
+        metrics_intel: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         ids = incident.get("ids") if isinstance(incident.get("ids"), dict) else {}
         counts = incident.get("counts") if isinstance(incident.get("counts"), dict) else {}
         top_apps = label_brain.get("top_apps") if isinstance(label_brain.get("top_apps"), list) else []
         anomalies = label_brain.get("anomalies") if isinstance(label_brain.get("anomalies"), list) else []
         rows = ai_timeline.get("rows") if isinstance(ai_timeline.get("rows"), list) else []
+        speed_truth = center.get("speed_truth") if isinstance(center.get("speed_truth"), dict) else {}
+        direct = center.get("direct") if isinstance(center.get("direct"), dict) else {}
+        vpn = center.get("vpn") if isinstance(center.get("vpn"), dict) else {}
         summary = [
             f"Autopilot {str(center.get('mode') or 'UNKNOWN').upper()} score {center.get('score', '--')}/100",
             f"FW blocks {counts.get('sources', 0)} | DNSBL {counts.get('dnsbl', 0)} | IDS signal {ids.get('high_signal', 0)}",
             f"Pi fleet {pi_nodes.get('online', 0)}/{pi_nodes.get('count', 0)} online",
         ]
+        if metrics_intel:
+            summary.append(f"Metrics {metrics_intel.get('severity', 'UNKNOWN')}: {metrics_intel.get('summary', 'waiting')}")
         if top_apps:
             summary.append("Now watching " + ", ".join(str(item.get("name")) for item in top_apps[:4]))
         if anomalies:
@@ -2082,12 +2280,32 @@ class SocxCollector:
         else:
             summary.append("No unusual learned-normal changes in the current window")
         mode_text = str(center.get("mode") or "").upper()
+        metric_watch = bool(metrics_intel and str(metrics_intel.get("severity", "")).upper() not in {"", "OK"})
+        watch = metric_watch or bool(anomalies) or int(ids.get("high_signal", 0) or 0) or any(token in mode_text for token in ["WATCH", "DEGRADED", "INCIDENT", "INVESTIGATE"])
+        top_app_text = ", ".join(str(item.get("name")) for item in top_apps[:3]) if top_apps else "local apps still learning"
+        speed_text = str(speed_truth.get("label") or "speed truth waiting")
+        if direct.get("down") or vpn.get("down"):
+            speed_text = f"{speed_text}: direct {direct.get('down', '--')}/{direct.get('up', '--')} Mbps, vpn {vpn.get('down', '--')}/{vpn.get('up', '--')} Mbps"
+        sections = [
+            {"label": "What changed", "value": summary[0], "tone": "yellow" if watch else "green"},
+            {"label": "Security", "value": summary[1], "tone": "red" if int(ids.get("high_signal", 0) or 0) else "yellow" if int(counts.get("sources", 0) or 0) else "green"},
+            {"label": "Metrics", "value": metrics_intel.get("summary", "metrics waiting") if metrics_intel else "metrics waiting", "tone": "green" if metrics_intel and metrics_intel.get("severity") == "OK" else "yellow"},
+            {"label": "Speed", "value": speed_text, "tone": "cyan"},
+            {"label": "AI/Fleet", "value": f"Pi {pi_nodes.get('online', 0)}/{pi_nodes.get('count', 0)} online; apps: {top_app_text}", "tone": "green" if int(pi_nodes.get("online", 0) or 0) else "yellow"},
+        ]
+        next_steps = (center.get("actions") if isinstance(center.get("actions"), list) else ["socx status"])[:4]
+        if metrics_intel and isinstance(metrics_intel.get("next_steps"), list):
+            for step in metrics_intel.get("next_steps", [])[:2]:
+                if step not in next_steps:
+                    next_steps.append(step)
         return {
-            "title": "SOCX Daily SOC Brief",
+            "title": "SOCX Morning Brief",
             "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "headline": "WATCH: review the highlighted signals" if watch else "STABLE: no urgent action needed",
             "summary": summary,
-            "next": (center.get("actions") if isinstance(center.get("actions"), list) else ["socx status"])[:4],
-            "status": "watch" if anomalies or int(ids.get("high_signal", 0) or 0) or any(token in mode_text for token in ["WATCH", "DEGRADED", "INCIDENT", "INVESTIGATE"]) else "normal",
+            "sections": sections,
+            "next": next_steps[:5],
+            "status": "watch" if watch else "normal",
         }
 
     def collect_rule_assistant(self, incident: dict[str, Any], label_brain: dict[str, Any]) -> dict[str, Any]:
@@ -2656,6 +2874,9 @@ class SocxCollector:
         pulse = snap.get("threat_pulse") or {}
         command = snap.get("command_center") or {}
         pi_nodes = snap.get("pi_nodes") or {}
+        brief = snap.get("daily_brief") or {}
+        metrics = snap.get("metrics_intel") or {}
+        observability = snap.get("observability") or {}
         return {
             "generated_at": snap.get("generated_at"),
             "health": snap.get("status", {}).get("health"),
@@ -2666,6 +2887,9 @@ class SocxCollector:
             "threat": {"label": pulse.get("label"), "score": pulse.get("score"), "fw_blocks": pulse.get("fw_blocks"), "dnsbl_hits": pulse.get("dnsbl_hits"), "ids_high": pulse.get("ids_high"), "ids_watch": pulse.get("ids_watch")},
             "incident": {"mode": incident.get("mode"), "summary": incident.get("summary"), "top_sources": incident.get("blocked_sources", [])[:3], "top_ports": incident.get("blocked_ports", [])[:3], "dnsbl": incident.get("dnsbl_domains", [])[:3], "ids": incident.get("ids", {})},
             "intel": {"status": intel.get("status"), "priority": (intel.get("priority") or {}).get("label"), "kev": intel.get("kev", {}), "rows": (intel.get("rows") or [])[:4]},
+            "brief": {"headline": brief.get("headline"), "status": brief.get("status"), "sections": (brief.get("sections") or [])[:5], "next": (brief.get("next") or [])[:5]},
+            "metrics_intel": {"severity": metrics.get("severity"), "summary": metrics.get("summary"), "alerts": (metrics.get("alerts") or [])[:8], "next_steps": (metrics.get("next_steps") or [])[:5]},
+            "observability": {"label": observability.get("label"), "summary": observability.get("summary"), "core_measurements": observability.get("core_measurements"), "grafana_url": observability.get("grafana_url")},
             "flows": (snap.get("flows") or [])[:6],
             "packets": (snap.get("packets") or [])[:6],
             "pi": {"summary": pi_nodes.get("summary"), "nodes": (pi_nodes.get("nodes") or [])[:3]},
@@ -2699,9 +2923,25 @@ class SocxCollector:
         incident = context.get("incident") or {}
         threat = context.get("threat") or {}
         intel = context.get("intel") or {}
+        brief = context.get("brief") or {}
+        metrics = context.get("metrics_intel") or {}
         lines = []
         if intent == "blocked":
             return "I cannot help with destructive, bypass, or stealth requests. I can explain the alert, preserve evidence, or draft a safe approval-only pfSense change plan."
+        if "morning brief" in q or "what changed" in q:
+            lines.append(f"{brief.get('headline') or 'SOCX brief is available.'}")
+            for item in (brief.get("sections") or [])[:5]:
+                lines.append(f"{item.get('label')}: {item.get('value')}")
+            next_steps = brief.get("next") or []
+            if next_steps:
+                lines.append("Safe next steps: " + " | ".join(str(step) for step in next_steps[:3]))
+        if "metric" in q or "grafana" in q or "influx" in q:
+            lines.append(f"Metrics Intelligence is {metrics.get('severity', 'UNKNOWN')}: {metrics.get('summary', 'waiting')}")
+            watch_items = [a for a in (metrics.get("alerts") or []) if str(a.get("state")) != "ok"]
+            if watch_items:
+                lines.append("Metrics to watch: " + ", ".join(f"{a.get('signal')} {a.get('state')}" for a in watch_items[:4]))
+            else:
+                lines.append("Metrics look stable: CPU, memory, swap, PF states/search, WAN ping, processes, and disk are in normal bounds.")
         if "dnsbl" in q:
             lines.append("DNSBL means DNS Block List. pfBlockerNG blocked or redirected a domain lookup because the domain matched a reputation/category list.")
         if "ids" in q or "suricata" in q:
@@ -3189,6 +3429,15 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/health":
             self.send_json(self.collector.collect_release_health())
             return
+        if parsed.path == "/api/observability":
+            self.send_json(self.collector.collect_observability())
+            return
+        if parsed.path == "/api/metrics-intel":
+            self.send_json(self.collector.collect_metrics_intel())
+            return
+        if parsed.path == "/api/autonomy-loop":
+            self.send_json(self.collector.collect_autonomy_loop())
+            return
         if parsed.path == "/api/command-center":
             self.send_json(self.collector.snapshot().get("command_center", {}))
             return
@@ -3286,15 +3535,20 @@ class SocxHandler(BaseHTTPRequestHandler):
             "speed-history": (["/usr/local/bin/socx", "speedtest-history", "summary", "500"], 25.0, "Speedtest history"),
             "memory": (["/usr/local/bin/socx", "incident-memory", "summary", "500"], 25.0, "Incident memory"),
             "lab": (["/usr/local/bin/socx", "pi-lab", "llm"], 25.0, "Pi lab experiment"),
+            "observability": (["/usr/local/bin/socx", "observability"], 25.0, "SOCX observability"),
+            "metrics-intel": (["/usr/local/bin/socx", "metrics-intel"], 35.0, "Metrics intelligence"),
+            "metrics-ai": (["/usr/local/bin/socx", "metrics-ai", "--pi"], 220.0, "Pi metrics narrator"),
+            "autonomy": (["/usr/local/bin/socx", "autonomy-loop"], 170.0, "SOCX autonomy loop"),
+            "autonomy-cron": (["/usr/local/bin/socx", "autonomy-cron", "status"], 20.0, "SOCX autonomy schedule"),
         }
         if action not in commands:
-            return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, bundle, incident, zeek, speedtest, pi, status, explain, brief, story, timeline, rules, doctor, speed-history, memory, lab"}
+            return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, bundle, incident, zeek, speedtest, pi, status, explain, brief, story, timeline, rules, doctor, speed-history, memory, lab, observability, metrics-intel, metrics-ai, autonomy, autonomy-cron"}
         args, timeout, title = commands[action]
         result = run_cmd_capture(args, timeout=timeout)
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health", "/why", "/story", "/mission", "/guide", "/chat"}:
+        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health", "/why", "/story", "/mission", "/observability", "/metrics", "/guide", "/chat"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"

@@ -38,9 +38,9 @@ HAILO_URL = os.getenv("SOCX_PI_HAILO_URL", "http://127.0.0.1:8000/api/generate")
 HAILO_CHAT_URL = os.getenv("SOCX_PI_HAILO_CHAT_URL", "http://127.0.0.1:8000/api/chat")
 CPU_URL = os.getenv("SOCX_PI_CPU_URL", "http://127.0.0.1:11434/api/generate")
 CPU_FALLBACK_MODELS = {
-    "triage": os.getenv("SOCX_PI_CPU_TRIAGE_MODEL", "llama3.2:3b"),
-    "evidence": os.getenv("SOCX_PI_CPU_EVIDENCE_MODEL", "qwen2.5:3b"),
-    "action": os.getenv("SOCX_PI_CPU_ACTION_MODEL", "llama3.2:3b"),
+    "triage": os.getenv("SOCX_PI_CPU_TRIAGE_MODEL", "llama3.2:1b"),
+    "evidence": os.getenv("SOCX_PI_CPU_EVIDENCE_MODEL", "qwen2.5:1.5b"),
+    "action": os.getenv("SOCX_PI_CPU_ACTION_MODEL", "qwen2.5-coder:1.5b"),
 }
 HAILO_CAPABILITIES = {
     "voice": "Whisper",
@@ -49,6 +49,8 @@ HAILO_CAPABILITIES = {
     "fallback": "qwen3:1.7b",
 }
 HAILO_CACHE: dict[str, Any] = {"checked": 0.0, "ok": False, "models": [], "error": "not checked"}
+ROLE_STARTED: dict[str, float] = {}
+ROLE_TIMEOUTS: dict[str, float] = {}
 
 app = FastAPI(title=APP_NAME)
 LATEST_ANALYSIS: dict[str, Any] = {
@@ -734,15 +736,15 @@ def compact_payload(payload: dict[str, Any]) -> str:
         {
             "generated_at": payload.get("generated_at"),
             "summary": summary,
-            "vpn_gateway_status": str(payload.get("vpn_gateway_status", ""))[:700],
-            "speedtest_cache": str(payload.get("speedtest_cache", ""))[:500],
-            "unknown_services": str(payload.get("unknown_services", ""))[:500],
-            "flow_lines": str(payload.get("flow_lines", ""))[:1800],
-            "incident_mode": str(payload.get("incident_mode", ""))[:1400],
-            "intel": payload.get("intel", {}) if isinstance(payload.get("intel"), dict) else str(payload.get("intel", ""))[:1200],
-            "pi_nodes": str(payload.get("pi_nodes", ""))[:1200],
-            "top_talkers": str(payload.get("top_talkers", ""))[:700],
-            "operator_question": str(payload.get("operator_question", ""))[:500],
+            "vpn_gateway_status": str(payload.get("vpn_gateway_status", ""))[:280],
+            "speedtest_cache": str(payload.get("speedtest_cache", ""))[:180],
+            "unknown_services": str(payload.get("unknown_services", ""))[:180],
+            "flow_lines": str(payload.get("flow_lines", ""))[:420],
+            "incident_mode": str(payload.get("incident_mode", ""))[:360],
+            "intel": payload.get("intel", {}) if isinstance(payload.get("intel"), dict) else str(payload.get("intel", ""))[:360],
+            "pi_nodes": str(payload.get("pi_nodes", ""))[:300],
+            "top_talkers": str(payload.get("top_talkers", ""))[:240],
+            "operator_question": str(payload.get("operator_question", ""))[:220],
             "operator_intent": str(payload.get("operator_intent", ""))[:80],
         },
         separators=(",", ":"),
@@ -757,8 +759,8 @@ def build_prompt(role: str, payload: dict[str, Any]) -> str:
     }
     return (
         f"{instructions[role]}\n"
-        "Return only one compact JSON object under 80 words with severity, confidence, reasons, recommended_next_step. "
-        "Keep reasons to two short strings. Do not include markdown.\n"
+        "Return only JSON under 45 words: severity, confidence, reasons, recommended_next_step. "
+        "Use max two very short reasons. No markdown.\n"
         f"SOCX compact evidence: {compact_payload(payload)}"
     )
 
@@ -926,10 +928,11 @@ def call_ollama_generate(url: str, model: str, prompt: str, timeout: float) -> d
         "prompt": prompt,
         "stream": False,
         "format": "json",
+        "keep_alive": os.getenv("SOCX_PI_OLLAMA_KEEP_ALIVE", "6h"),
         "options": {
             "temperature": float(os.getenv("SOCX_PI_LLM_TEMPERATURE", "0.2")),
-            "num_predict": int(os.getenv("SOCX_PI_LLM_NUM_PREDICT", "96")),
-            "num_ctx": int(os.getenv("SOCX_PI_LLM_NUM_CTX", "2048")),
+            "num_predict": int(os.getenv("SOCX_PI_LLM_NUM_PREDICT", "32")),
+            "num_ctx": int(os.getenv("SOCX_PI_LLM_NUM_CTX", "768")),
         },
     }
     body = json.dumps(body_data).encode()
@@ -945,11 +948,11 @@ def call_hailo_chat(url: str, model: str, prompt: str, timeout: float) -> dict[s
     body_data = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "stream": True,
+        "stream": os.getenv("SOCX_PI_HAILO_STREAM", "false").lower() in {"1", "true", "yes"},
         "options": {
             "temperature": float(os.getenv("SOCX_PI_LLM_TEMPERATURE", "0.2")),
-            "num_predict": int(os.getenv("SOCX_PI_LLM_NUM_PREDICT", "96")),
-            "num_ctx": int(os.getenv("SOCX_PI_LLM_NUM_CTX", "2048")),
+            "num_predict": int(os.getenv("SOCX_PI_LLM_NUM_PREDICT", "32")),
+            "num_ctx": int(os.getenv("SOCX_PI_LLM_NUM_CTX", "768")),
         },
     }
     started = time.time()
@@ -987,51 +990,110 @@ def call_hailo_chat(url: str, model: str, prompt: str, timeout: float) -> dict[s
     return {"ok": True, "model": model, "text": text[:1200], "elapsed_ms": round((time.time() - started) * 1000)}
 
 
+async def warm_cpu_fallback_models() -> None:
+    if os.getenv("SOCX_PI_WARM_CPU_MODELS", "true").lower() in {"0", "false", "no"}:
+        return
+    models = list(dict.fromkeys(CPU_FALLBACK_MODELS.values()))
+    timeout = float(os.getenv("SOCX_PI_WARM_TIMEOUT", "180"))
+    for model in models:
+        started = time.time()
+        event("WARMUP", f"warming CPU fallback model {model}", "INFO")
+        try:
+            await asyncio.to_thread(call_ollama_generate, CPU_URL, model, "Return {\"severity\":\"INFO\",\"confidence\":0.5,\"reasons\":[\"warmup\"],\"recommended_next_step\":\"monitor\"}", timeout)
+            event("WARMUP", f"CPU fallback model {model} warm in {round(time.time() - started, 1)}s", "INFO")
+        except Exception as exc:
+            event("WARMUP", f"CPU fallback model {model} warmup failed: {str(exc)[:160]}", "WARN")
+
+
+@app.on_event("startup")
+async def startup_warmup() -> None:
+    asyncio.create_task(warm_cpu_fallback_models())
+
+
 async def run_role(role: str, payload: dict[str, Any]) -> dict[str, Any]:
+    role_started = time.time()
+    ROLE_STARTED[role] = role_started
     inventory = await runtime_inventory()
     preferred = inventory["role_routes"][role]
     hailo_available = bool(preferred.get("available"))
     attempts = []
     if hailo_available:
-        attempts.append((HAILO_CHAT_URL, preferred["preferred"]["model"], "hailo", float(os.getenv("SOCX_PI_HAILO_TIMEOUT", "150"))))
-    attempts.append((role_url(role), CPU_FALLBACK_MODELS[role], "cpu-ollama", float(os.getenv("SOCX_PI_LLM_TIMEOUT", "75"))))
+        attempts.append((HAILO_CHAT_URL, preferred["preferred"]["model"], "hailo", float(os.getenv("SOCX_PI_HAILO_TIMEOUT", "3"))))
+    attempts.append((role_url(role), CPU_FALLBACK_MODELS[role], "cpu-ollama", float(os.getenv("SOCX_PI_LLM_TIMEOUT", "25"))))
     prompt = build_prompt(role, payload)
     errors: list[str] = []
     low_signal_result: dict[str, Any] | None = None
     for url, model, backend, timeout in attempts:
+        timeout = max(3.0, min(timeout, float(os.getenv("SOCX_PI_ROLE_MAX_SECONDS", "28"))))
+        ROLE_TIMEOUTS[role] = timeout
         event("ROLE", f"{role} thinking with {model} [{backend}]", "INFO")
         try:
             if backend == "hailo":
-                result = await asyncio.to_thread(call_hailo_chat, url, model, prompt, timeout)
+                result = await asyncio.wait_for(asyncio.to_thread(call_hailo_chat, url, model, prompt, timeout), timeout=timeout + 3)
             else:
-                result = await asyncio.to_thread(call_ollama_generate, url, model, prompt, timeout)
-            result.update({"role": role, "backend": backend, "summary": summarize_role_text(result.get("text", "")), "url": url})
+                result = await asyncio.wait_for(asyncio.to_thread(call_ollama_generate, url, model, prompt, timeout), timeout=timeout + 3)
+            result.update({
+                "role": role,
+                "backend": backend,
+                "summary": summarize_role_text(result.get("text", "")),
+                "url": url,
+                "status": "ok",
+                "duration_ms": int((time.time() - role_started) * 1000),
+                "timeout_sec": timeout,
+            })
             if backend == "hailo" and is_low_signal_summary(str(result.get("summary") or "")):
                 event("ROUTER", f"{role} Hailo output low-signal; falling back to CPU Ollama", "WARN")
                 errors.append(f"{backend}: low-signal output")
+                result["status"] = "weak"
+                result["summary"] = "Model route online, but returned low-signal output."
                 low_signal_result = dict(result)
+                if os.getenv("SOCX_PI_ACCEPT_WEAK_HAILO", "true").lower() not in {"0", "false", "no"}:
+                    event("ROLE", f"{role} accepted weak Hailo result to keep SOCX responsive", "WARN")
+                    return result
                 continue
             event("ROLE", f"{role} complete with {model} [{backend}]", "INFO")
             return result
-        except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError) as exc:
-            error = str(exc)[:220]
+        except (asyncio.TimeoutError, OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError) as exc:
+            error = ("timeout" if isinstance(exc, asyncio.TimeoutError) else str(exc))[:220]
             event("ROLE", f"{role} failed with {model} [{backend}]: {error}", "WARN")
             if backend == "hailo":
                 event("ROUTER", f"{role} falling back to CPU Ollama", "WARN")
             errors.append(f"{backend}: {error}")
     if low_signal_result:
         low_signal_result["fallback_error"] = "; ".join(errors)[:420]
+        low_signal_result["status"] = "weak"
+        low_signal_result["duration_ms"] = int((time.time() - role_started) * 1000)
         event("ROLE", f"{role} using low-signal Hailo result after fallback exhaustion", "WARN")
         return low_signal_result
-    return {"ok": False, "role": role, "model": CPU_FALLBACK_MODELS[role], "backend": "unavailable", "summary": "Hailo and CPU Ollama unavailable", "error": "; ".join(errors)[:420]}
+    return {
+        "ok": False,
+        "role": role,
+        "model": CPU_FALLBACK_MODELS[role],
+        "backend": "unavailable",
+        "status": "timeout" if any("timeout" in e.lower() for e in errors) else "error",
+        "summary": "Hailo and CPU Ollama unavailable or timed out",
+        "error": "; ".join(errors)[:420],
+        "duration_ms": int((time.time() - role_started) * 1000),
+        "timeout_sec": ROLE_TIMEOUTS.get(role),
+    }
 
 
 async def run_roles(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
     concurrency = max(1, int(os.getenv("SOCX_PI_LLM_CONCURRENCY", "1")))
+    total_timeout = float(os.getenv("SOCX_PI_TOTAL_TIMEOUT", "90"))
+    started = time.time()
     if concurrency <= 1:
         results: dict[str, dict[str, Any]] = {}
         for role in DEFAULT_ROLES:
-            results[role] = await run_role(role, payload)
+            remaining = total_timeout - (time.time() - started)
+            if remaining <= 2:
+                results[role] = {"ok": False, "role": role, "model": DEFAULT_MODELS.get(role), "backend": "watchdog", "status": "timeout", "summary": "Skipped because total Pi analysis budget expired.", "error": "total timeout"}
+                continue
+            try:
+                results[role] = await asyncio.wait_for(run_role(role, payload), timeout=max(2.0, remaining))
+            except asyncio.TimeoutError:
+                event("WATCHDOG", f"{role} exceeded remaining Pi analysis budget", "WARN")
+                results[role] = {"ok": False, "role": role, "model": DEFAULT_MODELS.get(role), "backend": "watchdog", "status": "timeout", "summary": "Role exceeded remaining total Pi analysis budget.", "error": "total timeout", "timeout_sec": round(remaining, 1)}
         return results
     semaphore = asyncio.Semaphore(concurrency)
 
@@ -1039,7 +1101,14 @@ async def run_roles(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
         async with semaphore:
             return role, await run_role(role, payload)
 
-    result_pairs = await asyncio.gather(*(guarded(role) for role in DEFAULT_ROLES))
+    try:
+        result_pairs = await asyncio.wait_for(asyncio.gather(*(guarded(role) for role in DEFAULT_ROLES)), timeout=total_timeout)
+    except asyncio.TimeoutError:
+        event("WATCHDOG", f"Pi role analysis exceeded {total_timeout}s total budget", "WARN")
+        partial = {}
+        for role in DEFAULT_ROLES:
+            partial[role] = {"ok": False, "role": role, "model": DEFAULT_MODELS.get(role), "backend": "watchdog", "status": "timeout", "summary": "Role did not finish inside total Pi analysis budget.", "error": "total timeout"}
+        return partial
     return dict(result_pairs)
 
 

@@ -43,7 +43,7 @@ pi_sev="$(env_value severity /tmp/socx-pi-llm-analysis.env)"
 pi_roles="$(env_value roles /tmp/socx-pi-llm-analysis.env)"
 
 {
-    echo "SOCX Daily SOC Brief"
+    echo "SOCX Morning Brief"
     echo "Generated: $(date)"
     echo "Host: $(hostname 2>/dev/null || echo pfSense)"
     echo
@@ -55,10 +55,19 @@ pi_roles="$(env_value roles /tmp/socx-pi-llm-analysis.env)"
     echo "- Pi AI: ${pi_sev:-unknown} roles ${pi_roles:---}"
 } > "$OUT"
 
+section "Metrics Intelligence"
+if command -v socx-metrics-intel >/dev/null 2>&1; then
+    run socx-metrics-intel
+else
+    echo "socx-metrics-intel not installed." >> "$OUT"
+fi
+
 section "Recommended Next Actions"
 if [ "$ids" -gt 0 ] 2>/dev/null || [ "$fw" -gt 80 ] 2>/dev/null; then
     echo "- Preserve evidence first: socx incident quick" >> "$OUT"
 fi
+echo "- Ask SOCX: what changed overnight?" >> "$OUT"
+echo "- Ask SOCX: summarize Grafana metrics trends" >> "$OUT"
 echo "- Review timeline: socx timeline 120" >> "$OUT"
 echo "- Review rule drafts: socx rules" >> "$OUT"
 echo "- Refresh AI verdict: socx pi-llm" >> "$OUT"
