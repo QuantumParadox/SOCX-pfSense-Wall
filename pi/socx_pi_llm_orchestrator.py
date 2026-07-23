@@ -483,6 +483,63 @@ def model_quality_summary(role_results: dict[str, Any]) -> dict[str, Any]:
     return {"good": good, "weak": weak, "fallback": fallback, "offline": offline, "roles": roles}
 
 
+def role_stage_summary(role_results: dict[str, Any]) -> list[dict[str, Any]]:
+    stages = {
+        "triage": "Classifies severity and decides whether this is routine, watch, or incident.",
+        "evidence": "Checks firewall, DNSBL, IDS, flow, and metric evidence for support.",
+        "action": "Drafts safe next steps and keeps policy changes approval-gated.",
+    }
+    rows = []
+    for role in DEFAULT_ROLES:
+        result = role_results.get(role) if isinstance(role_results, dict) else {}
+        if not isinstance(result, dict):
+            result = {}
+        ok = bool(result.get("ok"))
+        backend = str(result.get("backend") or "waiting")
+        summary = summarize_role_text(str(result.get("summary") or result.get("error") or "waiting for role output"))[:190]
+        if not ok:
+            state = "offline or timed out"
+        elif is_low_signal_summary(summary):
+            state = "weak signal"
+        elif backend == "cpu-ollama":
+            state = "CPU fallback"
+        else:
+            state = "online"
+        rows.append({
+            "role": role,
+            "state": state,
+            "purpose": stages.get(role, "SOCX model role"),
+            "backend": backend,
+            "model": str(result.get("model") or DEFAULT_MODELS.get(role) or ""),
+            "elapsed_ms": int(result.get("elapsed_ms") or 0),
+            "summary": summary,
+        })
+    return rows
+
+
+def wall_bridge_summary(data: dict[str, Any]) -> dict[str, Any]:
+    role_results = data.get("role_results") if isinstance(data.get("role_results"), dict) else {}
+    quality = data.get("model_quality") if isinstance(data.get("model_quality"), dict) else model_quality_summary(role_results)
+    severity = str(data.get("severity") or "INFO").upper()
+    confidence = float(data.get("confidence") or 0)
+    reason = ""
+    reasons = data.get("reasons") if isinstance(data.get("reasons"), list) else []
+    if reasons:
+        reason = summarize_role_text(str(reasons[0]))[:120]
+    elif data.get("recommended_next_step"):
+        reason = summarize_role_text(str(data.get("recommended_next_step")))[:120]
+    text = f"Pi AI {severity} {round(confidence * 100)}% / roles {data.get('roles_online', '0/3')} / {reason or 'waiting for SOCX evidence'}"
+    return {
+        "text": text,
+        "severity": severity,
+        "confidence": round(confidence, 2),
+        "roles": data.get("roles_online", "0/3"),
+        "quality": quality,
+        "age_seconds": int(time.time() - float(data.get("updated") or time.time())),
+        "read_only": True,
+    }
+
+
 def clean_model_text(text: str) -> str:
     cleaned = str(text or "").strip()
     cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
@@ -563,6 +620,9 @@ async def run_experiment(kind: str, duration: int = 30) -> None:
         "thermal_watch": "Thermal watch",
         "stress_llm": "LLM latency pulse",
         "model_inventory": "Model inventory",
+        "role_benchmark": "Role benchmark",
+        "explain_socx": "SOCX explain pulse",
+        "compare_models": "Model comparison",
     }
     label = names.get(kind, "Telemetry probe")
     EXPERIMENT_STATE.update({
@@ -582,7 +642,8 @@ async def run_experiment(kind: str, duration: int = 30) -> None:
         samples.append({"ts": time.time(), **sysm})
         EXPERIMENT_STATE["progress"] = min(99, round((time.time() - started) / duration * 100))
         await asyncio.sleep(1)
-    ollama = await check_ollama_tags() if kind in {"stress_llm", "model_inventory"} else {}
+    ollama = await check_ollama_tags() if kind in {"stress_llm", "model_inventory", "role_benchmark", "compare_models"} else {}
+    hailo = await check_hailo_tags() if kind in {"model_inventory", "role_benchmark", "compare_models"} else {}
     temps = [float(s.get("temp_c")) for s in samples if s.get("temp_c") is not None]
     loads = [float((s.get("load") or {}).get("one") or 0) for s in samples]
     result = (
@@ -590,9 +651,18 @@ async def run_experiment(kind: str, duration: int = 30) -> None:
         f"temp {min(temps):.1f}-{max(temps):.1f}C | load peak {max(loads, default=0):.2f}"
     )
     if kind == "model_inventory":
-        result += f" | Ollama {'online' if ollama.get('ok') else 'offline'} ({ollama.get('model_count', 0)} models)"
+        result += f" | Hailo {'online' if hailo.get('ok') else 'offline'} ({hailo.get('model_count', 0)} models) | Ollama {'online' if ollama.get('ok') else 'offline'} ({ollama.get('model_count', 0)} models)"
     elif kind == "stress_llm":
         result += " | use SOCX triage for the full three-role benchmark"
+    elif kind == "role_benchmark":
+        roles = role_stage_summary(LATEST_ANALYSIS.get("role_results") if isinstance(LATEST_ANALYSIS.get("role_results"), dict) else {})
+        result += " | " + "; ".join(f"{r['role']} {r['state']} {r['elapsed_ms']}ms" for r in roles)
+    elif kind == "explain_socx":
+        bridge = wall_bridge_summary(LATEST_ANALYSIS)
+        result += f" | {bridge.get('text')}"
+    elif kind == "compare_models":
+        quality = model_quality_summary(LATEST_ANALYSIS.get("role_results") if isinstance(LATEST_ANALYSIS.get("role_results"), dict) else {})
+        result += f" | good {quality.get('good', 0)} weak {quality.get('weak', 0)} fallback {quality.get('fallback', 0)} offline {quality.get('offline', 0)}"
     entry = {"kind": kind, "label": label, "finished_iso": now_iso(), "result": result}
     EXPERIMENT_STATE.update({
         "active": False,
@@ -1193,6 +1263,8 @@ async def latest() -> JSONResponse:
     data["runtime"] = await runtime_inventory()
     data["history"] = HISTORY[-18:]
     data["model_quality"] = model_quality_summary(data.get("role_results") if isinstance(data.get("role_results"), dict) else {})
+    data["role_timeline"] = role_stage_summary(data.get("role_results") if isinstance(data.get("role_results"), dict) else {})
+    data["wall_bridge"] = wall_bridge_summary(data)
     return JSONResponse(data)
 
 
@@ -1223,6 +1295,13 @@ async def network_ingest(request: Request) -> JSONResponse:
 @app.get("/api/socx/network/history")
 async def network_history() -> JSONResponse:
     return JSONResponse({"history": NETWORK_HISTORY[-60:]})
+
+
+@app.get("/api/socx/wall-bridge")
+async def wall_bridge() -> JSONResponse:
+    data = dict(LATEST_ANALYSIS)
+    data["model_quality"] = model_quality_summary(data.get("role_results") if isinstance(data.get("role_results"), dict) else {})
+    return JSONResponse(wall_bridge_summary(data))
 
 
 @app.post("/api/socx/draft")
@@ -1266,7 +1345,7 @@ async def experiment(request: Request) -> JSONResponse:
         EXPERIMENT_STATE.update({"active": False, "status": "stopped", "progress": 0, "result": "Experiment stopped by operator."})
         event("LAB", "Experiment stopped by operator", "WARN")
         return JSONResponse(EXPERIMENT_STATE)
-    if kind not in {"thermal_watch", "stress_llm", "model_inventory"}:
+    if kind not in {"thermal_watch", "stress_llm", "model_inventory", "role_benchmark", "explain_socx", "compare_models"}:
         return JSONResponse({"error": "unsupported experiment"}, status_code=400)
     if EXPERIMENT_TASK and not EXPERIMENT_TASK.done():
         return JSONResponse({"error": "an experiment is already running", "experiment": EXPERIMENT_STATE}, status_code=409)
@@ -1315,6 +1394,8 @@ async def stream() -> StreamingResponse:
             data["runtime"] = await runtime_inventory()
             data["history"] = HISTORY[-18:]
             data["model_quality"] = model_quality_summary(data.get("role_results") if isinstance(data.get("role_results"), dict) else {})
+            data["role_timeline"] = role_stage_summary(data.get("role_results") if isinstance(data.get("role_results"), dict) else {})
+            data["wall_bridge"] = wall_bridge_summary(data)
             yield f"data: {json.dumps(data, separators=(',', ':'))}\n\n"
             await asyncio.sleep(1)
 
@@ -1368,6 +1449,7 @@ DASHBOARD_HTML = r"""<!doctype html>
 .panel.scroll{overflow:auto}
 h2{margin:0 0 7px;color:var(--cyan);font-size:14px;letter-spacing:.08em}.metric{display:grid;grid-template-columns:122px 1fr;gap:8px;margin:5px 0;color:var(--muted)}.metric b{color:var(--ink)}
 .role{display:grid;grid-template-columns:84px 1fr;gap:10px;border-top:1px solid #ffffff17;padding:8px 0;min-width:0}.role:first-of-type{border-top:0}.role-name{font-weight:900;color:var(--blue);text-transform:uppercase}.role.ok .role-name{color:var(--green)}.role.fail .role-name{color:var(--red)}.role-text{font-size:13px;line-height:1.26;white-space:normal;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}.role-meta{font-size:11px;color:var(--muted);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.role-timeline{display:grid;gap:7px;margin-top:8px}.role-step{display:grid;grid-template-columns:78px 78px 1fr;gap:8px;align-items:center;border:1px solid #ffffff17;background:#ffffff07;padding:7px 8px}.role-step b{text-transform:uppercase;color:var(--cyan)}.role-step .state{font-weight:900}.role-step .state.good{color:var(--green)}.role-step .state.warn{color:var(--yellow)}.role-step .state.bad{color:var(--red)}.role-step span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
 .viz{position:relative;height:100%;min-height:360px;overflow:hidden}.viz canvas{position:absolute;inset:0;width:100%;height:100%}.core{position:absolute;left:50%;top:50%;width:132px;height:132px;margin:-66px;border:2px solid var(--cyan);border-radius:50%;display:grid;place-items:center;text-align:center;font-weight:900;color:var(--cyan);box-shadow:0 0 36px #49fff466, inset 0 0 24px #49fff41e;animation:pulse 2.2s infinite}
 .vizhud{position:absolute;left:12px;right:12px;bottom:12px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px;pointer-events:none}.vizstat{border:1px solid #ffffff22;background:#02080caa;padding:7px 8px;font:700 12px ui-monospace,Consolas,monospace;color:var(--muted)}.vizstat b{display:block;color:var(--ink);font-size:16px;margin-top:2px}.twin-status{position:absolute;top:12px;left:12px;border:1px solid #ff9f4366;background:#1b1018cc;color:var(--lcars);padding:6px 8px;font:700 11px ui-monospace,Consolas,monospace;letter-spacing:.05em}
 .thermal-strip{position:absolute;left:12px;right:12px;bottom:70px;height:42px;border:1px solid #ffffff20;background:#02080caa;padding:6px 8px;display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center;pointer-events:none}.thermal-strip span{font:700 11px ui-monospace,Consolas,monospace;color:var(--muted);white-space:nowrap}.thermal-strip canvas{position:static;width:100%;height:26px}
@@ -1375,6 +1457,7 @@ h2{margin:0 0 7px;color:var(--cyan);font-size:14px;letter-spacing:.08em}.metric{
 .feed{display:grid;grid-template-columns:1fr 1fr;gap:8px;min-height:0}.events{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;line-height:1.34;overflow:hidden}.event{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.json{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;color:#d8fbff;overflow:hidden;white-space:pre-wrap}
 .bar{height:9px;background:#ffffff16;margin-top:6px;overflow:hidden}.bar span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--lcars),var(--cyan),var(--green))}
 .lab{border:1px solid #ff9f4355;background:#1b1018;padding:9px 10px;margin-top:10px}.lab-title{display:flex;justify-content:space-between;color:var(--lcars);font-weight:900;letter-spacing:.06em}.lab-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}.lab button{border:1px solid #49fff466;background:#071c21;color:var(--cyan);padding:7px 5px;font:700 11px ui-monospace,Consolas,monospace;cursor:pointer}.lab button:hover{background:#49fff422;color:#fff}.lab button.stop{color:var(--red);border-color:#ff5e7866}.lab-status{margin-top:8px;font:12px ui-monospace,Consolas,monospace;color:var(--ink);white-space:normal}.lab-history{margin-top:6px;color:var(--muted);font:11px ui-monospace,Consolas,monospace}
+.route-grid,.bridge-grid{display:grid;gap:7px;margin-top:8px}.route-grid{grid-template-columns:repeat(3,1fr)}.route-card,.bridge-card{border:1px solid #ffffff1f;background:#ffffff08;padding:7px 8px;min-width:0}.route-card b,.bridge-card b{display:block;color:var(--cyan);font-size:11px;text-transform:uppercase;letter-spacing:.05em}.route-card span,.bridge-card span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.bridge-card strong{color:var(--green);font-size:16px}.bridge-grid{grid-template-columns:1fr 1fr}
 .command{border:1px solid #c76dff66;background:#130d1b;padding:9px 10px;margin-top:10px}.command-title{display:flex;justify-content:space-between;color:var(--lcars2);font-weight:900;letter-spacing:.06em}.command-row{display:grid;grid-template-columns:1fr auto;gap:6px;margin-top:7px}.command input{min-width:0;border:1px solid #ffffff22;background:#020609;color:var(--ink);padding:7px;font:12px ui-monospace,Consolas,monospace}.command button{border:1px solid #c76dff88;background:#21102d;color:var(--lcars2);padding:6px 8px;font:700 11px ui-monospace,Consolas,monospace;cursor:pointer}.command-output{margin-top:7px;min-height:42px;white-space:pre-wrap;color:var(--ink);font:12px/1.4 ui-monospace,Consolas,monospace}.command-help{color:var(--muted);font:10px ui-monospace,Consolas,monospace;margin-top:5px}
 .quick-row{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px}.quick-row button{border:1px solid #ffe35b77;background:#231d0a;color:var(--yellow);padding:6px 8px;font:700 10px ui-monospace,Consolas,monospace;cursor:pointer}
 .review{border:1px solid #ffe35b66;background:#1d180b;padding:9px 10px;margin-top:10px}.review-title{display:flex;justify-content:space-between;color:var(--yellow);font-weight:900;letter-spacing:.06em}.review-item{border-top:1px solid #ffffff17;padding:7px 0;font:12px/1.35 ui-monospace,Consolas,monospace}.review-item:first-child{border-top:0}.review-item b{color:var(--ink)}.review button{float:right;border:1px solid #66ff7c88;background:#0e2815;color:var(--green);padding:4px 6px;font:700 10px ui-monospace,Consolas,monospace;cursor:pointer}
@@ -1401,6 +1484,10 @@ body.kiosk .shell{grid-template-rows:48px minmax(0,1fr) 98px}body.kiosk .main{gr
       <div class="bar"><span id="confbar"></span></div>
       <h2 style="margin-top:18px">Visible Role Reasoning</h2>
       <div id="rolebox"></div>
+      <h2 style="margin-top:18px">Role Timeline</h2>
+      <div id="roleTimeline" class="role-timeline"></div>
+      <h2 style="margin-top:18px">SOCX Bridge</h2>
+      <div id="bridge" class="bridge-grid"></div>
     </section>
     <section class="panel viz">
       <canvas id="space"></canvas>
@@ -1432,6 +1519,8 @@ body.kiosk .shell{grid-template-rows:48px minmax(0,1fr) 98px}body.kiosk .main{gr
       <div id="modelQuality" class="quality-grid"></div>
       <h2 class="hide-kiosk" style="margin-top:18px">Model Health</h2>
       <div id="models" class="model-grid"></div>
+      <h2 style="margin-top:18px">Route Health</h2>
+      <div id="routes" class="route-grid"></div>
       <h2 class="hide-kiosk" style="margin-top:18px">Latest Reasons</h2>
       <div id="reasons" class="events"></div>
       <h2 style="margin-top:18px">Autopilot</h2>
@@ -1443,6 +1532,9 @@ body.kiosk .shell{grid-template-rows:48px minmax(0,1fr) 98px}body.kiosk .main{gr
           <button data-experiment="thermal_watch">THERMAL</button>
           <button data-experiment="stress_llm">LLM PULSE</button>
           <button data-experiment="model_inventory">MODELS</button>
+          <button data-experiment="role_benchmark">BENCH</button>
+          <button data-experiment="explain_socx">EXPLAIN</button>
+          <button data-experiment="compare_models">COMPARE</button>
         </div>
         <button class="stop" id="lab-stop" style="width:100%;margin-top:6px">STOP TEST</button>
         <div class="lab-status" id="lab-status">All experiments are bounded and read-only.</div>
@@ -1465,6 +1557,7 @@ function fmt(n){n=Number(n||0);return n>=1000?(n/1000).toFixed(n>=10000?0:1)+'K'
 function ms(v){v=Number(v||0);return v>=1000?(v/1000).toFixed(1)+'s':v+'ms'}
 function healthWord(x){return x?'online':'offline'}
 function tempF(c){c=Number(c||0);return c?Math.round(c*9/5+32):0}
+function shortStateTone(s){s=String(s||'').toLowerCase();return s.includes('online')||s.includes('good')?'good':s.includes('offline')||s.includes('timeout')?'bad':'warn'}
 function cleanRoleText(s){
   s=String(s??'').replace(/\s+/g,' ').trim();
   if(!s)return 'waiting for role output';
@@ -1480,6 +1573,24 @@ function cleanRoleText(s){
   s=s.replace(/\(\s*[A-Z0-9]\s*\)(?:\s*\(\s*[A-Z0-9]\s*\)){3,}/g,'repeated token noise');
   return s.length>170?s.slice(0,169).replace(/[ ,;|]+$/,'')+'…':s;
 }
+function renderRoleTimeline(d){
+  const rows=d.role_timeline||[];
+  $('roleTimeline').innerHTML=rows.map(r=>`<div class="role-step"><b>${esc(r.role)}</b><em class="state ${shortStateTone(r.state)}">${esc(r.state)}</em><span title="${esc(r.purpose+' '+r.summary)}">${esc(r.backend)} · ${esc(r.model)} · ${ms(r.elapsed_ms||0)} · ${esc(r.summary)}</span></div>`).join('')||'<div class="role-step"><b>WAIT</b><em class="state warn">waiting</em><span>Waiting for SOCX role output.</span></div>';
+}
+function renderRoutes(d){
+  const rt=d.runtime||{}, routes=rt.role_routes||{}, hailo=rt.hailo||{}, cpu=rt.cpu_ollama||{};
+  const roleCards=['triage','evidence','action'].map(r=>{const x=routes[r]||{};const pref=x.preferred||{},fb=x.fallback||{};return `<div class="route-card"><b>${r}</b><span class="${x.available?'ok':'warn'}">${x.available?'Hailo ready':'CPU fallback ready'}</span><span title="${esc((pref.model||'')+' -> '+(fb.model||''))}">${esc(pref.model||'hailo')} → ${esc(fb.model||'ollama')}</span></div>`});
+  roleCards.push(`<div class="route-card"><b>Hailo</b><span class="${hailo.ok?'ok':'warn'}">${hailo.ok?'online '+(hailo.model_count||0):'offline'}</span><span>${esc((hailo.models||[]).slice(0,2).join(', ')||hailo.error||'AI HAT route')}</span></div>`);
+  roleCards.push(`<div class="route-card"><b>Ollama</b><span class="${cpu.ok?'ok':'bad'}">${cpu.ok?'online '+(cpu.model_count||0):'offline'}</span><span>${esc((cpu.models||[]).slice(0,2).join(', ')||cpu.error||'CPU fallback')}</span></div>`);
+  $('routes').innerHTML=roleCards.join('');
+}
+function renderBridge(d){
+  const b=d.wall_bridge||{}, obs=((d.network_payload||{}).observability)||{}, net=d.network||{};
+  $('bridge').innerHTML=[
+    `<div class="bridge-card"><b>Wall Line</b><strong>${esc(b.text||'Pi AI waiting for SOCX evidence')}</strong><span>${esc(b.roles||'0/3')} roles · age ${esc(b.age_seconds??0)}s</span></div>`,
+    `<div class="bridge-card"><b>Pi 4 Metrics</b><strong>${esc(obs.label||obs.status||'metrics watch')}</strong><span>${esc(obs.summary||('network twin '+((net.nodes||[]).length)+' nodes / '+((net.links||[]).length)+' links'))}</span></div>`,
+  ].join('');
+}
 function render(d){
   state=d; $('clock').textContent=new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
   $('svc').textContent=(d.status||'waiting').toUpperCase(); $('svc').className='pill '+(d.status==='ok'?'ok':d.status==='degraded'?'warn':'muted');
@@ -1490,7 +1601,9 @@ function render(d){
   $('elapsed').textContent=ms(d.elapsed_ms||0); $('evidence').textContent=(d.payload_summary?Object.keys(d.payload_summary).length:0)+' signal groups';
   $('next').textContent=d.recommended_next_step||'waiting';
   const roles=d.role_results||{}; $('rolebox').innerHTML=['triage','evidence','action'].map(r=>{const x=roles[r]||{};return `<div class="role ${x.ok?'ok':'fail'}"><div class="role-name">${r}</div><div><div class="role-text">${esc(cleanRoleText(x.summary||x.error||'waiting for role output'))}</div><div class="role-meta">${esc(x.model||'model?')} | ${esc(x.backend||'route?')} | ${x.ok?'online':'offline'} ${x.error?' | '+esc(x.error):''}</div></div></div>`}).join('');
+  renderRoleTimeline(d); renderBridge(d);
   const models=d.models||{}; const ollama=d.ollama||{}; $('models').innerHTML=['triage','evidence','action'].map(r=>{const x=roles[r]||{};const ok=!!x.ok;return `<div class="model-card"><div class="model-role">${r}</div><div><div class="model-name">${esc(models[r]||x.model||'not set')}</div><div class="muted">${ok?'last role completed':'waiting or timed out'}</div></div><b class="${ok?'ok':'warn'}">${healthWord(ok)}</b></div>`}).join('')+`<div class="model-card"><div class="model-role">ollama</div><div><div class="model-name">${ollama.ok?fmt(ollama.model_count)+' local models':'not reachable'}</div><div class="muted">${esc((ollama.models||[]).slice(0,3).join(', ')||ollama.error||'local model server')}</div></div><b class="${ollama.ok?'ok':'bad'}">${ollama.ok?'online':'offline'}</b></div>`;
+  renderRoutes(d);
   const q=d.model_quality||{}; $('modelQuality').innerHTML=[['GOOD',q.good||0,'ok'],['WEAK',q.weak||0,'warn'],['FALLBACK',q.fallback||0,'mag'],['OFFLINE',q.offline||0,'bad']].map(([k,v,c])=>`<div class="quality-card"><span>${k}</span><b class="${c}">${v}</b></div>`).join('');
   $('reasons').innerHTML=(d.reasons||[]).map(r=>`<div class="event">${esc(r)}</div>`).join('');
   $('events').innerHTML=(d.events||[]).slice(-8).reverse().map(e=>`<div class="event"><span class="${cls(e.severity)}">[${esc(e.kind)}]</span> ${esc(e.message)}</div>`).join('');
@@ -1517,11 +1630,11 @@ function resize(){c.width=c.clientWidth*devicePixelRatio;c.height=c.clientHeight
 function line(a,b,color,width=1,alpha=1){ctx.strokeStyle=color.replace(')',`,`+alpha+')').replace('rgb','rgba');ctx.lineWidth=width*devicePixelRatio;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke()}
 function drawNode(x,y,label,color,size=8,sub=''){ctx.save();ctx.shadowColor=color;ctx.shadowBlur=14*devicePixelRatio;ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,y,size*devicePixelRatio,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.fillStyle='#d8fbff';ctx.font=`${10*devicePixelRatio}px ui-monospace,Consolas,monospace`;ctx.fillText(String(label).slice(0,18),x+12*devicePixelRatio,y+4*devicePixelRatio);if(sub){ctx.fillStyle='rgba(216,251,255,.62)';ctx.font=`${8*devicePixelRatio}px ui-monospace,Consolas,monospace`;ctx.fillText(String(sub).slice(0,22),x+12*devicePixelRatio,y+16*devicePixelRatio)}ctx.restore()}
 function packet(a,b,phase,color,label){const p=(phase%1);const x=a.x+(b.x-a.x)*p,y=a.y+(b.y-a.y)*p;ctx.save();ctx.shadowColor=color;ctx.shadowBlur=10*devicePixelRatio;ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,y,3.2*devicePixelRatio,0,Math.PI*2);ctx.fill();if(label&&p>.48&&p<.55){ctx.shadowBlur=0;ctx.fillStyle='#e8fbff';ctx.font=`${8*devicePixelRatio}px ui-monospace,Consolas,monospace`;ctx.fillText(label,x+7*devicePixelRatio,y-5*devicePixelRatio)}ctx.restore()}
-function draw(){t+=0.0048;ctx.clearRect(0,0,c.width,c.height);const w=c.width,h=c.height,cx=w/2,cy=h/2;const dpr=devicePixelRatio||1;const roles=['triage','evidence','action'];const online=(state.roles_online||'0/3').split('/')[0]*1;const p=state.payload_summary||{};const auto=state.autonomy||{};const fw=Math.min(1,(p.firewall_blocks_sampled||0)/2200),dns=Math.min(1,(p.dnsbl_lines_sampled||0)/2200),ids=Math.min(1,(p.ids_watch_sampled||0)/500),ascore=Math.min(1,(auto.score||0)/100);const pulse=.5+.5*Math.sin(t*7);const watch=(auto.mode||'observe').toUpperCase();
+function draw(){t+=0.0016;ctx.clearRect(0,0,c.width,c.height);const w=c.width,h=c.height,cx=w/2,cy=h/2;const dpr=devicePixelRatio||1;const roles=['triage','evidence','action'];const online=(state.roles_online||'0/3').split('/')[0]*1;const p=state.payload_summary||{};const auto=state.autonomy||{};const fw=Math.min(1,(p.firewall_blocks_sampled||0)/2200),dns=Math.min(1,(p.dnsbl_lines_sampled||0)/2200),ids=Math.min(1,(p.ids_watch_sampled||0)/500),ascore=Math.min(1,(auto.score||0)/100);const pulse=.5+.5*Math.sin(t*3.2);const watch=(auto.mode||'observe').toUpperCase();
  ctx.fillStyle='rgba(73,255,244,.025)';for(let gx=0;gx<w;gx+=42*dpr){ctx.fillRect(gx,0,1,h)}for(let gy=0;gy<h;gy+=42*dpr){ctx.fillRect(0,gy,w,1)}
  ctx.save();ctx.translate(cx,cy);for(let ring=0;ring<4;ring++){const rx=(72+ring*42+(pulse*5))*dpr,ry=rx*.52;ctx.strokeStyle=`rgba(73,255,244,${.12+ring*.035})`;ctx.lineWidth=(1.2+ring*.2)*dpr;ctx.beginPath();ctx.ellipse(0,0,rx,ry,0,0,Math.PI*2);ctx.stroke()}ctx.restore();
  const core={x:cx,y:cy};const nodes=[{id:'pf',label:'pfSense',x:cx-w*.31,y:cy-h*.13,color:'#ffe35b',sub:'firewall'},{id:'wan',label:'WAN',x:cx+w*.33,y:cy-h*.18,color:'#ff5e78',sub:fmt(p.firewall_blocks_sampled||0)+' blocks'},{id:'lan',label:'LAN',x:cx+w*.34,y:cy+h*.05,color:'#49fff4',sub:'35 nodes'},{id:'pi',label:'Pi 5 AI',x:cx+w*.18,y:cy-h*.34,color:'#ff56f4',sub:(state.roles_online||'0/3')+' roles'},{id:'dns',label:'DNSBL',x:cx-w*.27,y:cy+h*.27,color:'#c76dff',sub:fmt(p.dnsbl_lines_sampled||0)+' hits'},{id:'ids',label:'IDS',x:cx+w*.2,y:cy+h*.31,color:'#ff9f43',sub:fmt(p.ids_watch_sampled||0)+' watch'}];const byId={};nodes.forEach(n=>byId[n.id]=n);
- [['pf','wan',fw,'#ff5e78','FW'],['pf','lan',.45,'#49fff4','LAN'],['pf','pi',ascore,'#ff56f4','AI'],['pf','dns',dns,'#c76dff','DNS'],['pf','ids',ids,'#ff9f43','IDS'],['pi','ids',ids*.7,'#66ff7c','triage']].forEach(([a,b,intensity,color,label],i)=>{line(byId[a],byId[b],color,1.1+Number(intensity)*2,.25+Number(intensity)*.45);packet(byId[a],byId[b],t*(.18+Number(intensity)*.18)+i*.17,color,label)});
+ [['pf','wan',fw,'#ff5e78','FW'],['pf','lan',.45,'#49fff4','LAN'],['pf','pi',ascore,'#ff56f4','AI'],['pf','dns',dns,'#c76dff','DNS'],['pf','ids',ids,'#ff9f43','IDS'],['pi','ids',ids*.7,'#66ff7c','triage']].forEach(([a,b,intensity,color,label],i)=>{line(byId[a],byId[b],color,1.1+Number(intensity)*2,.25+Number(intensity)*.45);packet(byId[a],byId[b],t*(.08+Number(intensity)*.08)+i*.17,color,label)});
  nodes.forEach(n=>drawNode(n.x,n.y,n.label,n.color,8+(n.id==='pi'?online:0),n.sub));
  roles.forEach((r,i)=>{const y=cy-h*.05+i*h*.1;const x=core.x-w*.09;const role={x,y};const ok=i<online;const color=ok?'#66ff7c':'#ff5e78';line(role,core,color,1.4,ok?.7:.28);drawNode(x,y,r.toUpperCase(),color,10,ok?'online':'waiting')});
  ctx.save();ctx.translate(core.x,core.y);ctx.strokeStyle=watch==='WATCH'||watch==='INVESTIGATE'?'rgba(255,227,91,.7)':'rgba(102,255,124,.55)';ctx.lineWidth=(2+pulse*1.4)*dpr;ctx.beginPath();ctx.arc(0,0,(55+pulse*5)*dpr,0,Math.PI*2);ctx.stroke();ctx.fillStyle='rgba(73,255,244,.08)';ctx.beginPath();ctx.arc(0,0,42*dpr,0,Math.PI*2);ctx.fill();ctx.restore();

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added a slower cinematic Pi 5 network twin view tied to live SOCX nodes, links, role state, and packet pulses instead of fast decorative spinning.
+- Added Pi dashboard Role Timeline, Route Health, and SOCX Bridge panels so the Pi 5 AI node exposes readable role progress, Hailo/Ollama route status, and a wall-safe summary for pfSense.
+- Added `/api/socx/wall-bridge` plus BENCH, EXPLAIN, and COMPARE read-only Pi Lab experiments for safe Hailo/Ollama testing from the dashboard.
 - Added SOCX Replay, a read-only browser flight recorder at `/replay` backed by `/api/replay`.
 - Replay summarizes recent SOCX history into calm score buckets, security playback, Speedtest playback, Flow Truth context, thermal/UPS spikes, and safe drilldown links.
 - Added Replay links to the browser wall and detail navigation so operators can jump from live monitoring to after-action context without crowding the main wall.

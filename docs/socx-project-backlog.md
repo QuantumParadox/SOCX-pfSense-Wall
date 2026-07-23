@@ -36,11 +36,11 @@ This is the standing roadmap for SOCX, pfSense, the Pi 5 AI node, the Pi 4 obser
 
 ## 5. Pi 5 AI HAT Lab
 
-- Add a Hailo role benchmark dashboard for latency, tokens/sec equivalent, thermal pressure, and model availability.
+- Extend the Hailo role benchmark dashboard with exported history for latency, tokens/sec equivalent, thermal pressure, and model availability.
 - Add model routing tests for firewall triage, DNSBL evidence, rule drafting, complex investigation, voice, and fallback CPU Ollama.
-- Add a "model tournament" mode where the Pi compares small models on the same SOCX evidence bundle.
+- Expand the current `COMPARE` lab into a full "model tournament" mode where the Pi compares small models on the same SOCX evidence bundle.
 - Add a Pi thermal stress lab with fan/temperature/load timelines and safe abort limits.
-- Add a visual "thinking radar" that updates slowly from real role status instead of fast decorative spinning.
+- Add replay/export controls for the current slow visual "thinking radar" so role timelines can be preserved with incident bundles.
 
 ## 6. Pi 4 Observability Stack
 
@@ -84,7 +84,7 @@ This is the standing roadmap for SOCX, pfSense, the Pi 5 AI node, the Pi 4 obser
 
 ## 11. Cyberpunk LCARS Experience
 
-- Add a slow, readable network twin animation using real nodes, links, packets, and AI role state.
+- Add a second-screen full-size version of the slow readable network twin animation using real nodes, links, packets, and AI role state.
 - Add an LCARS-inspired mission page with segmented color bands, but keep the main wall btop-readable.
 - Add ambient audio/voice readouts only as optional browser controls, muted by default.
 - Add operator personas such as Security Watch, Network Engineer, Incident Commander, and Lab Scientist.

@@ -676,6 +676,8 @@ http://<pi-ip>:8095/dashboard
 
 It shows the latest SOCX verdict, visible role summaries for `triage`, `evidence`, and `action`, Hailo/Ollama health, model names, backend route names, live events, pfSense payload summary, and an animated SOCX AI/network visualization. The dashboard intentionally shows visible role summaries and model status, not hidden chain-of-thought. If both model backends are offline, it will show `HAILO OFF`, `OLLAMA OFF`, and `roles 0/3`.
 
+The Pi dashboard also includes a slower cinematic network twin, a Role Timeline, Route Health cards, and a SOCX Bridge panel. These are tied to live SOCX payloads: pfSense flow snapshots, role completion state, backend route choice, Pi temperature/load, and the current wall-safe AI summary. The visualization is meant to be readable on a monitor, so packet pulses move slowly and the role nodes show stable status instead of spinning too quickly to follow.
+
 The dashboard includes a read-only `Autopilot` layer for experimental local-AI SOC testing. Autopilot does not change firewall rules. After each SOCX analysis it records an in-memory trend point, scores the cycle, chooses an operator mode such as `OBSERVE`, `WATCH`, `INVESTIGATE`, or `COOLDOWN`, and shows safe experiment notes:
 
 ```text
@@ -689,9 +691,10 @@ Autopilot and Pi telemetry are available as JSON too:
 ```sh
 curl http://<pi-ip>:8095/api/socx/autonomy
 curl http://<pi-ip>:8095/api/socx/latest
+curl http://<pi-ip>:8095/api/socx/wall-bridge
 ```
 
-The Pi dashboard also includes an `Experiment Lab` for safe AI HAT testing. `THERMAL` samples Pi temperature/load, `LLM PULSE` records a bounded latency/telemetry window, and `MODELS` inventories the local Ollama roster. Tests are limited to 5-120 seconds, are read-only, and never change pfSense policy. The control endpoint is:
+The Pi dashboard also includes an `Experiment Lab` for safe AI HAT testing. `THERMAL` samples Pi temperature/load, `LLM PULSE` records a bounded latency/telemetry window, `MODELS` inventories the local Ollama roster, `BENCH` runs a compact role benchmark, `EXPLAIN` generates a current SOCX explanation pulse, and `COMPARE` checks model-route behavior on the same evidence bundle. Tests are limited to 5-120 seconds, are read-only, and never change pfSense policy. The control endpoint is:
 
 ```text
 POST /api/socx/experiment
