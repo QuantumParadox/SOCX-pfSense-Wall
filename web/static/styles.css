@@ -1684,6 +1684,92 @@ body.night-wall .ticker-shell {
 .twin-node.red { border-color: rgba(255, 92, 122, .62); box-shadow: 0 0 24px rgba(255, 92, 122, .18); }
 .twin-node.purple { border-color: rgba(183, 140, 255, .68); box-shadow: 0 0 26px rgba(183, 140, 255, .22); }
 
+.movie-stage {
+  position: relative;
+  min-height: clamp(360px, 44vh, 620px);
+  overflow: hidden;
+  border: 1px solid rgba(52, 215, 242, .2);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at center, rgba(52, 215, 242, .14), transparent 32%),
+    radial-gradient(circle at 18% 25%, rgba(255, 226, 103, .08), transparent 18%),
+    radial-gradient(circle at 82% 68%, rgba(183, 140, 255, .08), transparent 20%),
+    linear-gradient(135deg, rgba(8, 20, 24, .96), rgba(18, 22, 32, .96));
+}
+
+.movie-rings {
+  position: absolute;
+  inset: 13%;
+  border: 2px solid rgba(52, 215, 242, .32);
+  border-radius: 50%;
+  box-shadow: inset 0 0 48px rgba(52, 215, 242, .12), 0 0 34px rgba(52, 215, 242, .12);
+  animation: movieBreathe 12s ease-in-out infinite;
+}
+
+.movie-rings::before,
+.movie-rings::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid rgba(118, 242, 125, .2);
+}
+
+.movie-rings::before {
+  inset: 17%;
+}
+
+.movie-rings::after {
+  inset: 34%;
+  border-color: rgba(183, 140, 255, .3);
+}
+
+.movie-core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: clamp(20px, 2.2vw, 38px);
+  font-weight: 900;
+  text-align: center;
+  text-shadow: 0 0 18px rgba(52, 215, 242, .48);
+}
+
+.movie-dot {
+  position: absolute;
+  z-index: 2;
+  transform: translate(-50%, -50%);
+  min-width: 74px;
+  max-width: 118px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  border: 1px solid rgba(52, 215, 242, .45);
+  background: rgba(6, 12, 18, .86);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: clamp(10px, .8vw, 14px);
+  font-weight: 900;
+  text-align: center;
+  box-shadow: 0 0 20px rgba(52, 215, 242, .18);
+  animation: moviePulse 4.8s ease-in-out infinite;
+}
+
+.movie-dot.green { border-color: rgba(118, 242, 125, .62); box-shadow: 0 0 22px rgba(118, 242, 125, .2); }
+.movie-dot.yellow { border-color: rgba(255, 226, 103, .7); box-shadow: 0 0 22px rgba(255, 226, 103, .22); }
+.movie-dot.red { border-color: rgba(255, 92, 122, .74); box-shadow: 0 0 24px rgba(255, 92, 122, .25); }
+.movie-dot.purple { border-color: rgba(183, 140, 255, .74); box-shadow: 0 0 24px rgba(183, 140, 255, .24); }
+
+@keyframes movieBreathe {
+  0%, 100% { transform: scale(.985); opacity: .7; }
+  50% { transform: scale(1.015); opacity: 1; }
+}
+
+@keyframes moviePulse {
+  0%, 100% { filter: brightness(.92); }
+  50% { filter: brightness(1.18); }
+}
+
 @keyframes twinPulse {
   0%, 100% { filter: brightness(.92); }
   50% { filter: brightness(1.18); }

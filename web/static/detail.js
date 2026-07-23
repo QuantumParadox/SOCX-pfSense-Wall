@@ -34,6 +34,8 @@ const pageName = () => {
   if (path.includes("twin")) return "twin";
   if (path.includes("automation")) return "automation";
   if (path.includes("timeline")) return "timeline";
+  if (path.includes("movie")) return "movie";
+  if (path.includes("project")) return "projects";
   if (path.includes("incident")) return "incidents";
   if (path.includes("why")) return "why";
   if (path.includes("story")) return "story";
@@ -1381,6 +1383,85 @@ function renderTimeline(state, timeline) {
   wireAskButtons();
 }
 
+function renderMovie(state, movie) {
+  title.textContent = "SOCX NETWORK MOVIE";
+  subtitle.textContent = `${state.hostname || "pfSense"} / slow readable replay / ${movie.hero?.window || "6h"} window`;
+  const scenes = movie.scenes || [];
+  const pulses = movie.pulses || [];
+  const sceneDots = scenes.slice(0, 14).map((r, idx) => {
+    const sev = String(r.severity || "LOW").toUpperCase();
+    const tone = sev === "HIGH" || sev === "CRITICAL" ? "red" : sev === "MED" || sev === "WARN" ? "yellow" : r.lane === "AI" || r.lane === "DNSBL" ? "purple" : "green";
+    return `<div class="movie-dot ${tone}" style="left:${Number(r.x || 50)}%;top:${Number(r.y || 50)}%" title="${esc(r.time)} ${esc(r.lane)} ${esc(r.scene)}">
+      <span>${esc(r.lane).slice(0, 4)}</span>
+    </div>`;
+  }).join("");
+  const sceneRows = scenes.map((r) => [
+    r.time || "--",
+    r.lane || "--",
+    r.severity || "--",
+    r.scene || "--",
+    r.detail || "--",
+  ]);
+  const pulseRows = pulses.map((r) => [
+    r.kind || "--",
+    r.path || "--",
+    r.app || "--",
+    r.traffic || "--",
+    r.why || "--",
+  ]);
+  const askRows = scenes.slice(0, 8).map((r) => ({
+    label: `${r.lane || "scene"} ${r.time || ""}`,
+    detail: `${r.scene || "--"} ${r.detail || ""}`,
+    question: `Explain this SOCX Network Movie scene. Time: ${r.time || "--"}. Lane: ${r.lane || "--"}. Severity: ${r.severity || "--"}. Scene: ${r.scene || "--"}. Detail: ${r.detail || "--"}. Source: ${r.source || "--"}. Tell me what it means and what safe page or command to check next.`,
+  }));
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Movie Readout", [
+      `<div class="detail-score ${movie.hero?.state === "LIVE" ? "green" : "yellow"}">${esc(movie.hero?.state || "WATCH")} ${esc(movie.hero?.score || "--")}/100</div>`,
+      `<div class="detail-reason">${esc(movie.summary || "SOCX movie warming up.")}</div>`,
+      kv("Twin", `${movie.hero?.nodes || 0} nodes / ${movie.hero?.links || 0} links`, "cyan"),
+      kv("Threat", movie.hero?.threat || "--", String(movie.hero?.threat || "").toUpperCase() === "QUIET" ? "green" : "yellow"),
+    ].join("")),
+    card("Live Scene", `<div class="movie-stage"><div class="movie-rings"></div><div class="movie-core">SOCX<br>LIVE</div>${sceneDots || "<span class=\"muted\">No scenes yet.</span>"}</div>`),
+    card("Scene Timeline", table(["Time", "Lane", "Severity", "Scene", "Detail"], sceneRows)),
+    card("Live Pulses", table(["Kind", "Path", "App", "Traffic", "Why"], pulseRows)),
+    card("Open Related Views", table(["Action", "Open", "Why"], (movie.commands || []).map((cmd) => [cmd.label || "--", cmd.href || "--", cmd.why || "--"]))),
+    card("Ask About Movie", `<div class="ask-list">${askRows.map((item) => `<div><span title="${esc(item.detail)}">${esc(item.label)}: ${esc(item.detail)}</span>${askButton(item.question)}</div>`).join("") || "<span class=\"muted\">No movie scenes ready yet.</span>"}</div>`),
+  ].join("");
+  wireAskButtons();
+}
+
+function renderProjects(state, lab) {
+  title.textContent = "SOCX PROJECT LAB";
+  subtitle.textContent = `${state.hostname || "pfSense"} / experimental modules / read-only roadmap`;
+  const rows = lab.projects || [];
+  const projectRows = rows.map((r) => [
+    r.name || "--",
+    r.state || "--",
+    r.page || "--",
+    r.command || "--",
+    r.summary || "--",
+  ]);
+  const askRows = rows.map((r) => ({
+    label: r.name || "project",
+    question: `Explain this SOCX project module in plain English. Project: ${r.name || "--"}. State: ${r.state || "--"}. Page: ${r.page || "--"}. Command: ${r.command || "--"}. Summary: ${r.summary || "--"}. Tell me how I should use it and what to improve next.`,
+  }));
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Lab State", [
+      `<div class="detail-score ${Number(lab.score || 0) >= 80 ? "green" : "yellow"}">${esc(lab.label || "WATCH")} ${esc(lab.score ?? "--")}/100</div>`,
+      `<div class="detail-reason">${esc(lab.summary || "Project lab warming up.")}</div>`,
+      kv("Safety", lab.read_only ? "read-only dashboard; changes stay approval-gated" : "unknown", lab.read_only ? "green" : "yellow"),
+    ].join("")),
+    card("Projects", table(["Project", "State", "Page", "Command", "What It Does"], projectRows)),
+    card("Next Builds", table(["#", "Recommendation"], (lab.next_builds || []).map((line, idx) => [idx + 1, line]))),
+    card("Ask About Projects", `<div class="ask-list">${askRows.map((item) => `<div><span>${esc(item.label)}</span>${askButton(item.question)}</div>`).join("") || "<span class=\"muted\">No projects ready.</span>"}</div>`),
+  ].join("");
+  wireAskButtons();
+}
+
 function renderFlowsPage(state, data) {
   title.textContent = "SOCX NETFLOW STORY";
   subtitle.textContent = `${state.hostname || "pfSense"} / NetFlow, top talkers, device trust / ${new Date().toLocaleTimeString()}`;
@@ -1647,6 +1728,12 @@ async function refresh() {
   const timeline = page === "timeline"
     ? await fetch("/api/timeline", { cache: "no-store" }).then((r) => r.json())
     : null;
+  const movie = page === "movie"
+    ? await fetch("/api/movie", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const projects = page === "projects"
+    ? await fetch("/api/projects", { cache: "no-store" }).then((r) => r.json())
+    : null;
   subtitle.textContent = `${state.hostname || "pfSense"} / ${state.mode || "live"} / ${new Date().toLocaleTimeString()}`;
   if (page === "cockpit") renderCockpit(state, cockpit || {});
   else if (page === "threat-story") renderThreatStory(state, threatStory || {});
@@ -1665,6 +1752,8 @@ async function refresh() {
   else if (page === "twin") renderTwin(state, twin || {});
   else if (page === "automation") renderAutomation(state, automation || {});
   else if (page === "timeline") renderTimeline(state, timeline || {});
+  else if (page === "movie") renderMovie(state, movie || {});
+  else if (page === "projects") renderProjects(state, projects || {});
   else if (page === "flows") renderFlowsPage(state, flowsData || {});
   else if (page === "replay") renderReplay(state, replay || {});
   else if (page === "map") renderThreatMap(state, threatMap || {});

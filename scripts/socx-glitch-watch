@@ -1,0 +1,133 @@
+#!/bin/sh
+set -u
+
+OUT="${SOCX_GLITCH_WATCH_JSON:-/tmp/socx-glitch-watch.json}"
+HISTORY="${SOCX_GLITCH_WATCH_HISTORY:-/var/db/socx_glitch_watch.jsonl}"
+TARGET="${SOCX_GLITCH_TARGET:-socx:NETX.0}"
+MODE="${1:-once}"
+
+sample_once() {
+    cap="$(mktemp /tmp/socx-glitch-cap.XXXXXX)"
+    tmux_err="$(mktemp /tmp/socx-glitch-tmux.XXXXXX)"
+    timing="$(mktemp /tmp/socx-glitch-timing.XXXXXX)"
+    tmux capture-pane -p -t "$TARGET" -S -80 >"$cap" 2>"$tmux_err" || true
+    tmux display-message -p -t "$TARGET" '#{pane_width}x#{pane_height}' >/tmp/socx-glitch-size.txt 2>/dev/null || echo unknown >/tmp/socx-glitch-size.txt
+    tail -80 /tmp/socx-wall-timing.log >"$timing" 2>/dev/null || true
+    /usr/local/bin/python3.11 - "$cap" "$tmux_err" "$timing" "$OUT" "$HISTORY" "$TARGET" <<'PY'
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+cap_path, tmux_err_path, timing_path, out_path, history_path, target = sys.argv[1:7]
+
+def read(path):
+    try:
+        return Path(path).read_text(errors="ignore")
+    except Exception:
+        return ""
+
+def cmd(args):
+    try:
+        return subprocess.check_output(args, text=True, stderr=subprocess.DEVNULL, timeout=1.0).strip()
+    except Exception:
+        return ""
+
+capture = read(cap_path)
+tmux_err = read(tmux_err_path).strip()
+timing = read(timing_path)
+size = read("/tmp/socx-glitch-size.txt").strip() or "unknown"
+err_size = 0
+try:
+    err_size = Path("/tmp/socx-wall.err").stat().st_size
+except OSError:
+    pass
+
+pgrep = cmd(["pgrep", "-f", "socx-wall"])
+wall_pids = [x for x in pgrep.splitlines() if x.strip()]
+markers = ["NETWORK", "PFTOP", "PACKET RADAR", "EVENT FEED"]
+missing = [m for m in markers if m not in capture]
+bad_tokens = ["Fatal error", "Parse error", "renderer exited", "Traceback", "Warning:"]
+bad_hits = [t for t in bad_tokens if t.lower() in capture.lower()]
+loop_ms = []
+for match in re.finditer(r"loop=([0-9.]+)ms", timing):
+    try:
+        loop_ms.append(float(match.group(1)))
+    except ValueError:
+        pass
+slow_loop = max(loop_ms) if loop_ms else 0
+issues = []
+if tmux_err:
+    issues.append("tmux capture warning")
+if missing:
+    issues.append("missing wall markers: " + ", ".join(missing))
+if bad_hits:
+    issues.append("renderer text warning: " + ", ".join(bad_hits))
+if err_size:
+    issues.append(f"wall error log has {err_size} bytes")
+if len(wall_pids) > 3:
+    issues.append(f"many wall renderer pids: {len(wall_pids)}")
+if slow_loop >= 900:
+    issues.append(f"slow render loop {slow_loop:.0f}ms")
+
+if not issues:
+    status = "OK"
+elif err_size or bad_hits or missing:
+    status = "WARN"
+else:
+    status = "WATCH"
+
+lines = [line[:220] for line in capture.splitlines() if line.strip()]
+result = {
+    "ts": int(time.time()),
+    "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+    "status": status,
+    "target": target,
+    "pane_size": size,
+    "wall_pids": wall_pids[:8],
+    "wall_pid_count": len(wall_pids),
+    "wall_error_bytes": err_size,
+    "slowest_loop_ms": round(slow_loop, 1) if slow_loop else 0,
+    "missing_markers": missing,
+    "issues": issues,
+    "sample_tail": lines[-8:],
+    "summary": "wall frame looks stable" if not issues else "; ".join(issues),
+    "read_only": True,
+}
+Path(out_path).write_text(json.dumps(result, indent=2) + "\n")
+try:
+    with open(history_path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(result, separators=(",", ":")) + "\n")
+except Exception:
+    pass
+print(json.dumps(result, indent=2))
+PY
+    rm -f "$cap" "$tmux_err" "$timing" /tmp/socx-glitch-size.txt
+}
+
+case "$MODE" in
+    once|check|"")
+        sample_once
+        ;;
+    status)
+        if [ -f "$OUT" ]; then
+            cat "$OUT"
+        else
+            sample_once
+        fi
+        ;;
+    loop)
+        interval="${2:-10}"
+        while :; do
+            sample_once >/dev/null
+            sleep "$interval"
+        done
+        ;;
+    *)
+        echo "usage: socx glitch-watch [once|status|loop seconds]"
+        exit 2
+        ;;
+esac

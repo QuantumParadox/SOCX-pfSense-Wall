@@ -75,6 +75,10 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-stability-watch "$@"
         ;;
+    glitch-watch|glitch|flicker)
+        shift
+        exec /usr/local/bin/socx-glitch-watch "$@"
+        ;;
     baseline|perf-baseline|performance-baseline)
         shift
         exec /usr/local/bin/socx-baseline "$@"

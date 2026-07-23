@@ -204,26 +204,50 @@ def service_name(port: str) -> str:
         "5228": "gcm",
         "5230": "gcm",
         "5938": "teamviewer",
+        "1883": "mqtt",
+        "4317": "otel",
+        "4318": "otel",
+        "50051": "grpc",
+        "5601": "kibana",
+        "5672": "amqp",
         "6379": "redis",
+        "6333": "qdrant",
+        "7000": "lab",
+        "7001": "lab",
+        "7002": "lab",
+        "7474": "neo4j",
         "7860": "gradio",
+        "7687": "neo4j",
         "8000": "vllm",
         "8001": "vllm",
         "8002": "vllm",
+        "8082": "home",
         "8086": "influx",
+        "8088": "vllm",
         "8089": "splunk",
+        "8123": "home",
         "8093": "miranda",
         "8094": "socx-web",
         "8095": "pi-llm",
+        "8501": "streamlit",
         "8265": "ray",
         "8886": "iot-cloud",
         "8888": "jupyter",
         "8889": "jupyter",
+        "8899": "vllm",
         "9090": "metrics",
         "9100": "node-exporter",
+        "9092": "kafka",
+        "9200": "elastic",
+        "9300": "elastic",
+        "9418": "git",
         "10001": "ray",
+        "11400": "llm",
         "11434": "ollama",
         "11435": "llm",
         "19090": "triton",
+        "25565": "game",
+        "32469": "plex",
     }
     return services.get(str(port), f"port {port}" if port else "other")
 
@@ -3699,6 +3723,130 @@ class SocxCollector:
             ],
         }
 
+    def collect_network_movie(self) -> dict[str, Any]:
+        """Turn live SOCX evidence into a readable network movie storyboard."""
+        snap = self.snapshot()
+        timeline = self.collect_unified_timeline()
+        twin = self.collect_network_twin()
+        replay = self.collect_replay(21600)
+        flows = snap.get("flows", []) if isinstance(snap.get("flows"), list) else []
+        packets = snap.get("packets", []) if isinstance(snap.get("packets"), list) else []
+        network = snap.get("net", {}) if isinstance(snap.get("net"), dict) else {}
+        threat = snap.get("threat_pulse", {}) if isinstance(snap.get("threat_pulse"), dict) else {}
+        lane_xy = {
+            "WAN": (12, 18), "LAN": (78, 28), "FIREWALL": (42, 42), "FW": (42, 42),
+            "DNSBL": (58, 68), "IDS": (35, 70), "AI": (68, 18), "SPEED": (25, 28),
+            "CHANGE": (50, 14), "ACTION": (70, 58), "NOTE": (18, 64), "INCIDENT": (48, 55),
+        }
+        scenes = []
+        for idx, row in enumerate((timeline.get("rows") or [])[:18]):
+            lane = str(row.get("lane") or "INCIDENT").upper()
+            x, y = lane_xy.get(lane, (20 + (idx * 13) % 60, 24 + (idx * 17) % 48))
+            scenes.append({
+                "time": row.get("time") or "--",
+                "lane": lane,
+                "severity": row.get("severity") or "LOW",
+                "scene": row.get("title") or "--",
+                "detail": row.get("detail") or "--",
+                "source": row.get("source") or "--",
+                "x": x,
+                "y": y,
+                "pulse": min(100, 30 + idx * 4),
+            })
+        pulses = []
+        for row in flows[:8]:
+            pulses.append({
+                "kind": "flow",
+                "path": row.get("display_path") or f"{row.get('asset') or '--'} -> {row.get('peer') or '--'}",
+                "app": row.get("app") or row.get("service") or "--",
+                "traffic": row.get("rate") or row.get("bytes_h") or "--",
+                "why": row.get("why") or row.get("baseline_state") or "live flow",
+            })
+        for row in packets[:8]:
+            pulses.append({
+                "kind": row.get("kind") or row.get("action") or "packet",
+                "path": row.get("summary") or row.get("message") or "--",
+                "app": row.get("service") or row.get("proto") or "--",
+                "traffic": row.get("count") or row.get("port") or "--",
+                "why": row.get("context") or row.get("reputation") or "packet story",
+            })
+        summary = (
+            f"{len(scenes)} scenes, {len(pulses)} live pulses, "
+            f"WAN {(network.get('wan') or {}).get('rx_h') or '--'} down / "
+            f"{(network.get('wan') or {}).get('tx_h') or '--'} up"
+        )
+        return {
+            "title": "SOCX Network Movie",
+            "summary": summary,
+            "hero": {
+                "state": snap.get("data_truth", {}).get("label", "WATCH") if isinstance(snap.get("data_truth"), dict) else "WATCH",
+                "score": snap.get("data_truth", {}).get("score", "") if isinstance(snap.get("data_truth"), dict) else "",
+                "threat": threat.get("label") or "WATCH",
+                "window": replay.get("window_h") or "6h",
+                "nodes": len(twin.get("nodes") or []) if isinstance(twin, dict) else 0,
+                "links": len(twin.get("links") or []) if isinstance(twin, dict) else 0,
+            },
+            "scenes": scenes,
+            "pulses": pulses[:16],
+            "lanes": timeline.get("lanes") or [],
+            "commands": [
+                {"label": "Open Replay", "href": "/replay", "why": "see the calm flight recorder"},
+                {"label": "Open Twin", "href": "/twin", "why": "inspect live assets and links"},
+                {"label": "Open Flows", "href": "/flows", "why": "validate top talkers and apps"},
+                {"label": "Ask SOCX", "href": "/chat", "why": "ask what the movie means"},
+            ],
+            "read_only": True,
+            "updated_ms": now_ms(),
+        }
+
+    def collect_project_lab(self) -> dict[str, Any]:
+        """Show the SOCX experimental project backlog with current readiness hints."""
+        snap = self.snapshot()
+        try:
+            glitch_json = json.loads(Path("/tmp/socx-glitch-watch.json").read_text(errors="ignore"))
+        except Exception:
+            glitch_json = {}
+        pi = snap.get("pi_nodes", {}) if isinstance(snap.get("pi_nodes"), dict) else {}
+        data_truth = snap.get("data_truth", {}) if isinstance(snap.get("data_truth"), dict) else {}
+        rows = [
+            ("Glitch Watcher", "LIVE" if glitch_json.get("status") == "OK" else "WATCH", "/health", "socx glitch-watch once", glitch_json.get("summary") or "samples tmux wall frames and renderer logs"),
+            ("AI Firewall Copilot Chat", "READY", "/chat", "socx chat \"what changed?\"", "plain-English SOCX/pfSense questions with safe command suggestions"),
+            ("Network Movie", "READY", "/movie", "open /movie", "readable replay scenes from timeline, flows, packets, and twin links"),
+            ("Device Identity Upgrade", "READY", "/memory", "socx label-brain", "learned device/app labels reduce unknowns and improve wall names"),
+            ("What Changed Alarm", "READY", "/timeline", "socx timeline 60", "stitches speed, IDS, firewall, AI, notes, and safe actions"),
+            ("Pi 5 AI Lab Stress Arena", "READY" if int(pi.get("online") or 0) else "WATCH", "/model-tournament", "socx pi-lab compare 45", f"{pi.get('online', 0)}/{pi.get('count', 0)} Pi nodes online"),
+            ("pfSense Config Drift Timeline", "READY", "/automation", "socx drift status", "approval-gated config drift visibility and evidence timeline"),
+            ("SOCX Voice Mode", "READY", "/guide", "open /chat", "browser voice/chat workflow for operator questions and explanations"),
+            ("Incident Bundle Button", "READY", "/actions", "socx snapshot", "preserves evidence before firewall or IDS changes"),
+            ("LCARS Cyberpunk Theme Pack", "READY", "/", "socx mode normal", "wall/browser neon LCARS style with night mode and density controls"),
+        ]
+        projects = []
+        for name, state, page, command, summary in rows:
+            projects.append({
+                "name": name,
+                "state": state,
+                "tone": self.automation_tone(state),
+                "page": page,
+                "command": command,
+                "summary": summary,
+                "safety": "read-only" if "snapshot" not in command and "drift" not in command else "evidence-only / approval-gated",
+            })
+        ready = sum(1 for row in projects if row["state"] in {"READY", "LIVE"})
+        return {
+            "title": "SOCX Project Lab",
+            "label": "LIVE" if str(data_truth.get("label") or "").upper() == "LIVE" else "WATCH",
+            "score": round((ready / max(1, len(projects))) * 100),
+            "summary": f"{ready}/{len(projects)} project modules are ready or live",
+            "projects": projects,
+            "next_builds": [
+                "Use /movie as the slower, readable replay while the main wall stays fast.",
+                "Run socx glitch-watch once after you see the weird flash so the sample lands in /tmp/socx-glitch-watch.json.",
+                "Keep chat/config changes draft-only until you approve them in pfSense.",
+            ],
+            "read_only": True,
+            "updated_ms": now_ms(),
+        }
+
     def automation_file_fact(self, path: str) -> dict[str, Any]:
         item = {"path": path, "exists": False, "age_sec": None, "age_h": "--", "mtime": 0.0}
         try:
@@ -5240,6 +5388,12 @@ class SocxHandler(BaseHTTPRequestHandler):
                 window = 21600
             self.send_json(self.collector.collect_replay(window))
             return
+        if parsed.path == "/api/movie":
+            self.send_json(self.collector.collect_network_movie())
+            return
+        if parsed.path == "/api/projects":
+            self.send_json(self.collector.collect_project_lab())
+            return
         if parsed.path == "/api/threat-map":
             self.send_json(self.collector.collect_threat_map())
             return
@@ -5414,15 +5568,16 @@ class SocxHandler(BaseHTTPRequestHandler):
             "metrics-ai": (["/usr/local/bin/socx", "metrics-ai", "--pi"], 220.0, "Pi metrics narrator"),
             "autonomy": (["/usr/local/bin/socx", "autonomy-loop"], 170.0, "SOCX autonomy loop"),
             "autonomy-cron": (["/usr/local/bin/socx", "autonomy-cron", "status"], 20.0, "SOCX autonomy schedule"),
+            "glitch-watch": (["/usr/local/bin/socx", "glitch-watch", "once"], 12.0, "Wall glitch watcher"),
         }
         if action not in commands:
-            return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, bundle, vault, drift, eve, flow-export, topology, quarantine-draft, incident, zeek, speedtest, pi, status, explain, brief, story, timeline, rules, doctor, speed-history, memory, lab, pi-bench, pi-explain, pi-compare, model-tournament, observability, metrics-intel, metrics-ai, autonomy, autonomy-cron"}
+            return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, bundle, vault, drift, eve, flow-export, topology, quarantine-draft, incident, zeek, speedtest, pi, status, explain, brief, story, timeline, rules, doctor, speed-history, memory, lab, pi-bench, pi-explain, pi-compare, model-tournament, observability, metrics-intel, metrics-ai, autonomy, autonomy-cron, glitch-watch"}
         args, timeout, title = commands[action]
         result = run_cmd_capture(args, timeout=timeout)
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/memory", "/twin", "/automation", "/timeline", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
+        if path in {"/speedtest", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/memory", "/twin", "/automation", "/timeline", "/movie", "/projects", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"

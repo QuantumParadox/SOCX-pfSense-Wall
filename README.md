@@ -100,6 +100,9 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds SOCX Operator Cockpit through `/cockpit` and `/api/cockpit`, a mobile/tablet-friendly view with current mode, threat story, mission checks, devices/apps, AI/Pi status, metrics context, and safe next actions.
 - Adds SOCX Threat Story through `/threat-story` and `/api/threat-story`, turning firewall, DNSBL, IDS, ATT&CK/D3FEND context, repeated memory, and Flow Truth into a readable incident narrative.
 - Adds SOCX Replay through `/replay` and `/api/replay`, a read-only flight recorder that turns retained history into score buckets, security playback, Speedtest playback, Flow Truth context, thermal/UPS spikes, and safe drilldown links.
+- Adds SOCX Network Movie through `/movie` and `/api/movie`, a slower readable scene view of timeline events, live flow pulses, packet story, replay context, and network-twin links.
+- Adds SOCX Project Lab through `/projects` and `/api/projects`, a read-only roadmap/status page for Glitch Watcher, AI Firewall Copilot Chat, Network Movie, Device Identity, What Changed Alarm, Pi AI Lab, Config Drift, Voice Mode, Incident Bundles, and LCARS/cyberpunk themes.
+- Adds `socx glitch-watch`, a read-only diagnostic sampler for brief wall glitches. It captures tmux wall markers, pane size, renderer count, timing hints, and `/tmp/socx-wall.err` size into `/tmp/socx-glitch-watch.json`.
 - Adds Replay time controls, incident bookmarks, and safe Ask SOCX prompts so after-action review can jump to the exact security, speed, flow, thermal, or UPS moment.
 - Adds Threat Map Lite through `/map` and `/api/threat-map`, a local-context blocked-source radar that uses pfSense/SOCX evidence without treating geo hints as proof.
 - Adds automatic browser Night Mode from 8 PM to 8 AM every day, with a manual `auto/on/off` button for temporary overrides.
@@ -240,6 +243,7 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - `scripts/socx-history` - appends compact SOCX trend samples to `/var/db/socx_history.jsonl` and tails recent history.
 - `scripts/socx-hardware` - live hardware and thermal headroom summary for the pfSense appliance.
 - `scripts/socx-stability-watch` - bounded stability sampler that writes JSONL evidence plus a plain summary.
+- `scripts/socx-glitch-watch` - read-only tmux/frame sampler for diagnosing brief SOCX wall flicker or weird-screen flashes.
 - `scripts/socx-baseline` - performance baseline report for system profile, CPU, BIOS, Speedtest, readiness, story, and hardware evidence.
 - `scripts/socx-notify` - optional webhook notification hook for manual or future automated alerts.
 - `scripts/socx-why-now` - plain-English current-state explanation from Autopilot, Speedtest, and AI caches.

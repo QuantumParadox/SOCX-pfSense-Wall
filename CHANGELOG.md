@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added `socx glitch-watch`, a read-only tmux/frame sampler that records wall markers, renderer error bytes, pane size, renderer count, and timing hints to help diagnose brief weird-screen flashes.
+- Added `/movie` and `/api/movie`, a slower readable SOCX Network Movie that turns live timeline, flow, packet, replay, and twin data into a calm LCARS/cyberpunk scene view.
+- Added `/projects` and `/api/projects`, a SOCX Project Lab page that tracks the experimental module roadmap, current readiness, safe commands, and next build ideas.
+- Expanded friendly service labels for AI/lab/observability/home ports such as Streamlit, Qdrant, Neo4j, Elastic, Kibana, MQTT, OpenTelemetry, gRPC, Home Assistant, Plex, and game traffic.
 - Changed the terminal wall redraw path to repaint in place after the first frame instead of clearing the whole pane every refresh, reducing brief flicker/weird-screen flashes on pfSense/tmux wall displays.
 - Added `/automation` and `/api/automation`, a read-only SOCX Automation Center for scheduled jobs, cache evidence, next-run hints, safe commands, and approval state.
 - Added `/timeline` and `/api/timeline`, a Unified Timeline that stitches Speedtest path changes, VPN/DNSBL/IDS/firewall events, Pi AI verdicts, notebook notes, and safe queued actions.

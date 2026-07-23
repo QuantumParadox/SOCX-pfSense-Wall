@@ -126,6 +126,17 @@ else
     mark WARN "socx story command unavailable"
 fi
 
+if command -v socx-glitch-watch >/dev/null 2>&1 && socx glitch-watch once >/tmp/socx-v1-glitch.json 2>/tmp/socx-v1-glitch.err; then
+    glitch_status="$(/usr/local/bin/python3.11 -c 'import json,sys; print((json.load(open(sys.argv[1])).get("status") or "UNKNOWN"))' /tmp/socx-v1-glitch.json 2>/dev/null || echo UNKNOWN)"
+    case "$glitch_status" in
+        OK) mark OK "wall glitch watcher stable" ;;
+        WATCH) mark WARN "wall glitch watcher is watching transient redraw behavior" ;;
+        *) mark WARN "wall glitch watcher status=$glitch_status" ;;
+    esac
+else
+    mark WARN "wall glitch watcher unavailable"
+fi
+
 service_unhealthy="$(service -e 2>/dev/null | wc -l | awk '{print $1+0}')"
 [ "$service_unhealthy" -ge 0 ] && mark OK "pfSense service list readable"
 
