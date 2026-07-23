@@ -2314,7 +2314,77 @@ class SocxCollector:
         exp_label = ""
         if experiment:
             exp_label = f" | experiment {experiment.get('kind') or '--'} {experiment.get('status') or '--'}"
-        return {"title": "Pi AI Model Tournament", "summary": f"{good}/{len(rows)} model routes look ready; run Pi Compare for a fresh bounded test{exp_label}", "experiment": experiment, "rows": rows[:12], "benchmarks": [{"test": "Firewall triage", "preferred": "Llama 3.2 1B", "why": "fast first-pass classification"}, {"test": "DNSBL/IDS evidence", "preferred": "Qwen2.5 Instruct 1.5B", "why": "better structured explanation"}, {"test": "Rule draft", "preferred": "Qwen2.5-Coder 1.5B", "why": "draft-only rule syntax help"}, {"test": "Complex investigation", "preferred": "DeepSeek-R1-Distill 1.5B", "why": "slower reasoning path when available"}], "commands": ["socx pi-lab bench 30", "socx pi-lab compare 30", "socx pi-lab explain 20"], "read_only": True}
+        judge = self.collect_model_judge(rows, experiment)
+        return {"title": "Pi AI Model Tournament", "summary": f"{good}/{len(rows)} model routes look ready; run Pi Compare for a fresh bounded test{exp_label}", "experiment": experiment, "judge": judge, "rows": rows[:12], "benchmarks": [{"test": "Firewall triage", "preferred": "Llama 3.2 1B", "why": "fast first-pass classification"}, {"test": "DNSBL/IDS evidence", "preferred": "Qwen2.5 Instruct 1.5B", "why": "better structured explanation"}, {"test": "Rule draft", "preferred": "Qwen2.5-Coder 1.5B", "why": "draft-only rule syntax help"}, {"test": "Complex investigation", "preferred": "DeepSeek-R1-Distill 1.5B", "why": "slower reasoning path when available"}], "commands": ["socx pi-lab bench 30", "socx pi-lab compare 30", "socx pi-lab explain 20"], "read_only": True}
+
+    def collect_model_judge(self, rows: list[dict[str, Any]], experiment: dict[str, Any]) -> dict[str, Any]:
+        judged = []
+        for row in rows[:8]:
+            state = str(row.get("state") or "").lower()
+            summary = str(row.get("summary") or "")
+            score = 45
+            if state in {"good", "ok", "online", "ready"}:
+                score += 25
+            if "fallback" in summary.lower():
+                score -= 8
+            if len(summary) > 20:
+                score += 8
+            judged.append({"role": row.get("role"), "model": row.get("model"), "score": max(0, min(100, score)), "risk": "fallback" if "fallback" in summary.lower() else "normal", "why": summary[:180] or "waiting for route evidence"})
+        best = sorted(judged, key=lambda r: int(r.get("score") or 0), reverse=True)[:1]
+        return {"summary": f"best route {best[0].get('model')} score {best[0].get('score')}" if best else "waiting for model route evidence", "experiment": experiment, "rows": judged, "read_only": True}
+
+    def collect_evidence_drawer(self) -> dict[str, Any]:
+        snap = self.snapshot()
+        story = self.collect_threat_story(snap)
+        research = self.collect_research_soc()
+        context = self.chat_context(snap)
+        return {
+            "title": "Evidence Drawer",
+            "summary": story.get("headline") or "SOCX evidence drawer",
+            "confidence": self.chat_confidence("explain", context, {}),
+            "evidence_used": self.chat_evidence_used("explain", context),
+            "cards": story.get("evidence_cards", [])[:8],
+            "timeline": story.get("timeline", [])[:8],
+            "flows": (snap.get("flows") or [])[:8],
+            "packets": (snap.get("packets") or [])[:8],
+            "safe_action_queue": self.collect_safe_action_queue(context, "explain"),
+            "coverage": research.get("coverage", {}),
+            "read_only": True,
+            "updated_ms": now_ms(),
+        }
+
+    def collect_analyst_notebook(self) -> dict[str, Any]:
+        snap = self.snapshot()
+        changed = snap.get("what_changed", {}) if isinstance(snap.get("what_changed"), dict) else {}
+        story = self.collect_threat_story(snap)
+        research = self.collect_research_soc()
+        rows = []
+        for row in changed.get("rows", []) if isinstance(changed.get("rows"), list) else []:
+            rows.append({"time": row.get("time"), "type": "change", "severity": row.get("severity"), "title": row.get("title"), "detail": row.get("detail"), "page": "/mission"})
+        for hunt in (research.get("hunts", {}).get("rows") or [])[:5]:
+            if hunt.get("status") in {"active", "watch"}:
+                rows.append({"time": time.strftime("%H:%M:%S"), "type": "hunt", "severity": "MED", "title": hunt.get("hunt"), "detail": hunt.get("evidence"), "page": "/hunts"})
+        for card in (story.get("evidence_cards") or [])[:5]:
+            rows.append({"time": time.strftime("%H:%M:%S"), "type": "evidence", "severity": str(card.get("tone") or "cyan").upper(), "title": card.get("label"), "detail": f"{card.get('value')} - {card.get('detail')}", "page": "/evidence"})
+        rows = rows[:18]
+        return {"title": "SOCX Analyst Notebook", "summary": f"{len(rows)} current notes from changes, hunts, and evidence", "rows": rows, "questions": ["What changed since the last hour?", "Which note should I investigate first?", "Turn these notes into a short incident report."], "read_only": True, "updated_ms": now_ms()}
+
+    def collect_mission_mode_signal(self) -> dict[str, Any]:
+        snap = self.snapshot()
+        threat = snap.get("threat_pulse", {}) if isinstance(snap.get("threat_pulse"), dict) else {}
+        data_truth = snap.get("data_truth", {}) if isinstance(snap.get("data_truth"), dict) else {}
+        mission = snap.get("mission", {}) if isinstance(snap.get("mission"), dict) else {}
+        score = int(threat.get("score") or 0)
+        active = score >= 70 or str(data_truth.get("label") or "").upper() != "LIVE"
+        return {
+            "active": active,
+            "mode": "MISSION FOCUS" if active else "NORMAL WATCH",
+            "headline": mission.get("headline") or threat.get("summary") or "SOCX watching current evidence",
+            "affected": (mission.get("what_matters") or ["no critical affected asset identified"])[:3],
+            "next": (mission.get("what_to_check") or ["open /mission", "open /evidence"])[:3],
+            "tone": "yellow" if active else "green",
+            "updated_ms": now_ms(),
+        }
 
     def remember_change(self, key: str, value: str, title: str, detail: str, severity: str = "LOW") -> None:
         old = self.change_last.get(key)
@@ -4088,6 +4158,10 @@ class SocxCollector:
             "intent": intent,
             "answer": answer,
             "phases": phases,
+            "confidence": self.chat_confidence(intent, context, pi_answer),
+            "evidence_used": self.chat_evidence_used(intent, context),
+            "what_would_help": self.chat_what_would_help(intent, context),
+            "safe_action_queue": self.collect_safe_action_queue(context, intent),
             "action_cards": self.chat_action_cards(intent, text, context, mode),
             "context": context,
             "pi": pi_answer,
@@ -4096,6 +4170,84 @@ class SocxCollector:
             "elapsed_ms": int((time.time() - started) * 1000),
             "safe_commands": self.chat_safe_commands(intent, text),
         }
+
+    def chat_confidence(self, intent: str, context: dict[str, Any], pi_answer: dict[str, Any]) -> dict[str, Any]:
+        score = 58
+        reasons = []
+        threat = context.get("threat") or {}
+        incident = context.get("incident") or {}
+        netflow = context.get("netflow_intel") or {}
+        data_sources = 0
+        if threat.get("fw_blocks") is not None:
+            data_sources += 1
+            score += 8
+            reasons.append("firewall counters available")
+        if (incident.get("dnsbl") or []):
+            data_sources += 1
+            score += 6
+            reasons.append("DNSBL evidence available")
+        if (incident.get("ids") or {}).get("high_signal") is not None:
+            data_sources += 1
+            score += 5
+            reasons.append("IDS summary available")
+        if netflow.get("rows"):
+            data_sources += 1
+            score += 8
+            reasons.append("flow evidence available")
+        if pi_answer.get("ok"):
+            score += 6
+            reasons.append("Pi LLM answered")
+        if intent == "draft":
+            score -= 8
+            reasons.append("configuration requests require human approval")
+        score = max(20, min(96, score))
+        return {"score": score, "label": "high" if score >= 78 else "medium" if score >= 55 else "low", "sources": data_sources, "reasons": reasons[:5]}
+
+    def chat_evidence_used(self, intent: str, context: dict[str, Any]) -> list[dict[str, Any]]:
+        incident = context.get("incident") or {}
+        threat = context.get("threat") or {}
+        intel = context.get("intel") or {}
+        netflow = context.get("netflow_intel") or {}
+        rows = [
+            {"source": "Firewall", "strength": "strong" if threat.get("fw_blocks") else "weak", "detail": f"{threat.get('fw_blocks', 0)} current firewall blocks"},
+            {"source": "DNSBL", "strength": "strong" if incident.get("dnsbl") else "weak", "detail": ", ".join(str(x.get("name")) for x in (incident.get("dnsbl") or [])[:3]) or "no dominant DNSBL domain"},
+            {"source": "IDS", "strength": "medium" if (incident.get("ids") or {}).get("watch") else "weak", "detail": f"high {(incident.get('ids') or {}).get('high_signal', 0)} watch {(incident.get('ids') or {}).get('watch', 0)}"},
+            {"source": "Flow Truth", "strength": "strong" if netflow.get("rows") else "weak", "detail": netflow.get("summary") or "flow rows waiting"},
+            {"source": "ATT&CK/D3FEND", "strength": "advisory", "detail": f"{len(intel.get('rows') or [])} mapped rows; KEV {(intel.get('kev') or {}).get('status', 'unknown')}"},
+        ]
+        if intent == "draft":
+            rows.append({"source": "Safety", "strength": "strong", "detail": "draft-only response; no pfSense changes applied"})
+        return rows
+
+    def chat_what_would_help(self, intent: str, context: dict[str, Any]) -> list[str]:
+        hints = []
+        netflow = context.get("netflow_intel") or {}
+        if not netflow.get("rows"):
+            hints.append("fresh NetFlow/IPFIX rows from the Pi 4 metrics stack")
+        if intent == "diagnose":
+            hints.append("a recent SOCX snapshot or incident bundle for before/after comparison")
+        if intent == "draft":
+            hints.append("the exact host/domain/port and whether this is a temporary test or permanent policy")
+        hints.append("operator confirmation before any rule, allowlist, quarantine, or service change")
+        return hints[:4]
+
+    def collect_safe_action_queue(self, context: dict[str, Any] | None = None, intent: str = "explain") -> list[dict[str, Any]]:
+        if context is None:
+            context = self.chat_context(self.snapshot())
+        threat = context.get("threat") or {}
+        incident = context.get("incident") or {}
+        queue = [
+            {"priority": "P2" if intent == "draft" else "P3", "action": "Preserve evidence bundle", "why": "capture current state before policy or package changes", "command": "socx snapshot", "approval": "safe-read-only"},
+            {"priority": "P3", "action": "Review current mission", "why": "see what changed, what matters, and likely noise", "command": "open /mission", "approval": "safe-read-only"},
+            {"priority": "P3", "action": "Check ATT&CK coverage", "why": "understand visibility and blind spots", "command": "open /coverage", "approval": "safe-read-only"},
+        ]
+        if int(threat.get("dnsbl_hits", 0) or 0):
+            queue.append({"priority": "P3", "action": "Review DNSBL candidates", "why": "avoid allowlisting reputation hits without context", "command": "open /why", "approval": "review-required"})
+        if int((incident.get("ids") or {}).get("high_signal", 0) or 0):
+            queue.insert(0, {"priority": "P2", "action": "Preserve IDS incident bundle", "why": "high-signal IDS evidence should be saved before tuning", "command": "socx incident quick", "approval": "safe-read-only"})
+        if intent == "draft":
+            queue.append({"priority": "P2", "action": "Open Rules Lab draft", "why": "review draft-only Suricata/Sigma/DNSBL ideas", "command": "open /rules-lab", "approval": "human-approval-required"})
+        return queue[:7]
 
     def chat_intent(self, text: str) -> str:
         lower = text.lower()
@@ -4827,6 +4979,18 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/model-tournament":
             self.send_json(self.collector.collect_research_soc().get("model_tournament", {}))
             return
+        if parsed.path == "/api/evidence":
+            self.send_json(self.collector.collect_evidence_drawer())
+            return
+        if parsed.path == "/api/notebook":
+            self.send_json(self.collector.collect_analyst_notebook())
+            return
+        if parsed.path == "/api/actions":
+            self.send_json({"title": "Safe Action Queue", "rows": self.collector.collect_safe_action_queue(), "read_only": True, "updated_ms": now_ms()})
+            return
+        if parsed.path == "/api/mission-mode":
+            self.send_json(self.collector.collect_mission_mode_signal())
+            return
         if parsed.path == "/api/history":
             rows = self.collector.collect_history(240)
             self.send_json({"count": len(rows), "trend": self.collector.history_trend(rows), "rows": rows})
@@ -4946,7 +5110,7 @@ class SocxHandler(BaseHTTPRequestHandler):
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
+        if path in {"/speedtest", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"

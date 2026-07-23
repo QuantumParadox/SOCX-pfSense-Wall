@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added ChatOps v2 evidence scaffolding: chat answers now include confidence, evidence used, what would improve certainty, and a safe action queue.
+- Added `/evidence`, `/api/evidence`, `/notebook`, `/api/notebook`, `/actions`, `/api/actions`, `/mission-mode`, and `/api/mission-mode`.
+- Added SOCX Analyst Notebook for recent changes, active hunt notes, and evidence-card notes.
+- Added reusable Evidence Drawer with current evidence cards, timeline, flows, packets, ATT&CK coverage, and queued safe actions.
+- Added Model Judge scoring inside the Pi AI Model Tournament so model routes show route quality and fallback risk.
 - Added a Research-SOC layer with `/coverage`, `/hunts`, `/rules-lab`, `/soc-score`, `/model-tournament`, and matching JSON APIs.
 - Added ATT&CK/D3FEND coverage scoring for current firewall, DNSBL, IDS, flow, and device-drift visibility.
 - Added guided Threat Hunt Mode hypotheses for scan pressure, DNSBL false positives, internal device drift, IDS correlation, and collector freshness.

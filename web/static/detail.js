@@ -26,6 +26,10 @@ const pageName = () => {
   if (path.includes("rules-lab")) return "rules-lab";
   if (path.includes("soc-score")) return "soc-score";
   if (path.includes("model-tournament") || path.includes("research-soc")) return "model-tournament";
+  if (path.includes("evidence")) return "evidence";
+  if (path.includes("notebook")) return "notebook";
+  if (path.includes("actions")) return "actions";
+  if (path.includes("mission-mode")) return "mission-mode";
   if (path.includes("incident")) return "incidents";
   if (path.includes("why")) return "why";
   if (path.includes("story")) return "story";
@@ -911,8 +915,12 @@ async function runDetailChat(questionOverride = "") {
       body: JSON.stringify({ question }),
     }).then((r) => r.json());
     const phases = Array.isArray(result.phases) && result.phases.length ? `\n\nVisible steps:\n- ${result.phases.join("\n- ")}` : "";
+    const confidence = result.confidence ? `\n\nConfidence: ${result.confidence.label || "--"} ${result.confidence.score ?? "--"}/100\n- ${(result.confidence.reasons || []).join("\n- ")}` : "";
+    const evidence = Array.isArray(result.evidence_used) && result.evidence_used.length ? `\n\nEvidence used:\n- ${result.evidence_used.map((e) => `${e.source}: ${e.strength} - ${e.detail}`).join("\n- ")}` : "";
+    const helps = Array.isArray(result.what_would_help) && result.what_would_help.length ? `\n\nWhat would make this more certain:\n- ${result.what_would_help.join("\n- ")}` : "";
+    const queue = Array.isArray(result.safe_action_queue) && result.safe_action_queue.length ? `\n\nSafe action queue:\n- ${result.safe_action_queue.map((a) => `${a.priority} ${a.action}: ${a.command}`).join("\n- ")}` : "";
     const commands = Array.isArray(result.safe_commands) && result.safe_commands.length ? `\n\nUseful commands:\n- ${result.safe_commands.join("\n- ")}` : "";
-    output.textContent = `${result.mode || "ANSWER"}${result.approval_required ? " / APPROVAL REQUIRED" : ""}\n\n${result.answer || "No answer returned."}${phases}${commands}`;
+    output.textContent = `${result.mode || "ANSWER"}${result.approval_required ? " / APPROVAL REQUIRED" : ""}\n\n${result.answer || "No answer returned."}${confidence}${evidence}${helps}${queue}${phases}${commands}`;
     renderDetailChatCards(result.action_cards || []);
   } catch (err) {
     output.textContent = `Chat service unavailable: ${err}`;
@@ -1159,6 +1167,69 @@ function renderModelTournament(state, tournament) {
   wireResearchCommands();
 }
 
+function renderEvidenceDrawer(state, evidence) {
+  title.textContent = "SOCX EVIDENCE DRAWER";
+  subtitle.textContent = `${state.hostname || "pfSense"} / answer evidence / read-only`;
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Answer Context", [
+      `<div class="detail-score ${evidence.confidence?.score >= 78 ? "green" : "yellow"}">${esc(evidence.confidence?.label || "medium")} ${esc(evidence.confidence?.score ?? "--")}/100</div>`,
+      `<div class="detail-reason">${esc(evidence.summary || "SOCX evidence is being collected.")}</div>`,
+    ].join("")),
+    card("Evidence Used", table(["Source", "Strength", "Detail"], (evidence.evidence_used || []).map((r) => [r.source, r.strength, r.detail]))),
+    card("Evidence Cards", `<div class="story-evidence-grid">${(evidence.cards || []).map(evidenceCard).join("")}</div>`),
+    card("Timeline", table(["Time", "Kind", "Severity", "Title", "Evidence"], (evidence.timeline || []).map((r) => [r.time, r.kind, r.severity, r.title, r.evidence || r.detail]))),
+    card("Flow Evidence", table(["Asset", "Peer", "Proto", "Service", "State"], (evidence.flows || []).map((r) => [r.asset, r.peer, r.proto, r.service || r.app, r.state]))),
+    card("Packet Evidence", table(["Time", "Action", "Proto", "Source", "Destination", "Service"], (evidence.packets || []).map((r) => [r.time, r.action, r.proto, r.src_label || r.src, r.dst_label || r.dst, r.service]))),
+    card("Safe Action Queue", table(["Priority", "Action", "Why", "Command", "Approval"], (evidence.safe_action_queue || []).map((r) => [r.priority, r.action, r.why, r.command, r.approval]))),
+  ].join("");
+  wireAskButtons();
+}
+
+function renderNotebook(state, notebook) {
+  title.textContent = "SOCX ANALYST NOTEBOOK";
+  subtitle.textContent = `${state.hostname || "pfSense"} / changes, hunts, evidence / read-only`;
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Notebook", [
+      `<div class="detail-reason">${esc(notebook.summary || "Notebook waiting.")}</div>`,
+      `<div class="story-actions"><a href="/incident-report">Report</a><a href="/threat-story">Threat Story</a><a href="/evidence">Evidence Drawer</a></div>`,
+    ].join("")),
+    card("Current Notes", table(["Time", "Type", "Severity", "Title", "Detail", "Page"], (notebook.rows || []).map((r) => [r.time, r.type, r.severity, r.title, r.detail, r.page]))),
+    card("Ask SOCX", `<div class="why-targets">${(notebook.questions || []).map((q) => `<button class="why-target-button" data-ask="${esc(q)}">${esc(q)}</button>`).join("")}</div>`),
+  ].join("");
+  wireAskButtons();
+}
+
+function renderActions(state, actions) {
+  title.textContent = "SOCX SAFE ACTION QUEUE";
+  subtitle.textContent = `${state.hostname || "pfSense"} / approval states / read-only`;
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Queue", `<div class="detail-reason">These are suggested operator steps. SOCX does not apply pfSense policy changes from this queue.</div>`),
+    card("Safe Actions", table(["Priority", "Action", "Why", "Command", "Approval"], (actions.rows || []).map((r) => [r.priority, r.action, r.why, r.command, r.approval]))),
+  ].join("");
+  wireAskButtons();
+}
+
+function renderMissionMode(state, mode) {
+  title.textContent = "SOCX MISSION MODE";
+  subtitle.textContent = `${state.hostname || "pfSense"} / wall focus signal / read-only`;
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    card("Mission Focus", [
+      `<div class="detail-score ${mode.tone || "green"}">${esc(mode.mode || "NORMAL WATCH")}</div>`,
+      `<div class="detail-reason">${esc(mode.headline || "SOCX watching current evidence.")}</div>`,
+      kv("Active", mode.active ? "yes" : "no", mode.active ? "yellow" : "green"),
+    ].join("")),
+    card("Affected / Matters", table(["#", "Signal"], (mode.affected || []).map((x, idx) => [idx + 1, x]))),
+    card("Next Checks", table(["#", "Action"], (mode.next || []).map((x, idx) => [idx + 1, x]))),
+  ].join("");
+}
+
 function renderFlowsPage(state, data) {
   title.textContent = "SOCX NETFLOW STORY";
   subtitle.textContent = `${state.hostname || "pfSense"} / NetFlow, top talkers, device trust / ${new Date().toLocaleTimeString()}`;
@@ -1401,6 +1472,18 @@ async function refresh() {
   const modelTournament = page === "model-tournament"
     ? await fetch("/api/model-tournament", { cache: "no-store" }).then((r) => r.json())
     : null;
+  const evidence = page === "evidence"
+    ? await fetch("/api/evidence", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const notebook = page === "notebook"
+    ? await fetch("/api/notebook", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const actions = page === "actions"
+    ? await fetch("/api/actions", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const missionMode = page === "mission-mode"
+    ? await fetch("/api/mission-mode", { cache: "no-store" }).then((r) => r.json())
+    : null;
   subtitle.textContent = `${state.hostname || "pfSense"} / ${state.mode || "live"} / ${new Date().toLocaleTimeString()}`;
   if (page === "cockpit") renderCockpit(state, cockpit || {});
   else if (page === "threat-story") renderThreatStory(state, threatStory || {});
@@ -1411,6 +1494,10 @@ async function refresh() {
   else if (page === "rules-lab") renderRulesLab(state, rulesLab || {});
   else if (page === "soc-score") renderSocScore(state, socScore || {});
   else if (page === "model-tournament") renderModelTournament(state, modelTournament || {});
+  else if (page === "evidence") renderEvidenceDrawer(state, evidence || {});
+  else if (page === "notebook") renderNotebook(state, notebook || {});
+  else if (page === "actions") renderActions(state, actions || {});
+  else if (page === "mission-mode") renderMissionMode(state, missionMode || {});
   else if (page === "flows") renderFlowsPage(state, flowsData || {});
   else if (page === "replay") renderReplay(state, replay || {});
   else if (page === "map") renderThreatMap(state, threatMap || {});

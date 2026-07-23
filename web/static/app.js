@@ -910,8 +910,11 @@ async function runOperatorChat() {
       mode.className = label.includes("denied") ? "denied" : label.includes("plan") ? "plan" : "answer";
     }
     const phases = Array.isArray(data.phases) && data.phases.length ? `\n\nSteps: ${data.phases.join(" -> ")}` : "";
+    const confidence = data.confidence ? `\n\nConfidence: ${data.confidence.label || "--"} ${data.confidence.score ?? "--"}/100` : "";
+    const evidence = Array.isArray(data.evidence_used) && data.evidence_used.length ? `\nEvidence: ${data.evidence_used.map((e) => `${e.source} ${e.strength}`).join(" | ")}` : "";
+    const queue = Array.isArray(data.safe_action_queue) && data.safe_action_queue.length ? `\nNext: ${data.safe_action_queue.slice(0, 3).map((a) => `${a.priority} ${a.action}`).join(" | ")}` : "";
     const commands = Array.isArray(data.safe_commands) && data.safe_commands.length ? `\n\nUseful: ${data.safe_commands.join(" | ")}` : "";
-    if (output) output.textContent = `${data.answer || "No answer returned."}${phases}${commands}`;
+    if (output) output.textContent = `${data.answer || "No answer returned."}${confidence}${evidence}${queue}${phases}${commands}`;
     renderChatCards(data.action_cards || []);
   } catch (err) {
     if (mode) {
