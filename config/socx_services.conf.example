@@ -9,6 +9,10 @@
 3001=webui
 4000=app
 5000=mlflow
+1935=rtmp
+3478=stun
+3479=stun
+3480=stun
 5355=llmnr
 5443=https
 6379=redis

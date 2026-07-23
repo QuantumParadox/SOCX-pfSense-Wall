@@ -199,6 +199,10 @@ def service_name(port: str) -> str:
         "993": "imaps",
         "1443": "alt-https",
         "1701": "l2tp",
+        "1935": "rtmp",
+        "3478": "stun",
+        "3479": "stun",
+        "3480": "stun",
         "4500": "ipsec-nat",
         "5223": "apple-push",
         "5228": "gcm",
@@ -258,29 +262,42 @@ def app_label(text: str) -> str:
         (r"netflix|nflxvideo", "Netflix"),
         (r"primevideo|amazonvideo|aiv-cdn|atv-ps|media-amazon", "Prime Video"),
         (r"youtube|googlevideo|ytimg", "YouTube"),
+        (r"youtubei|ggpht|withyoutube", "YouTube"),
         (r"disney|disneyplus|dssott", "Disney+"),
         (r"hulu", "Hulu"),
         (r"max\.com|hbomax|hbo", "Max"),
         (r"peacocktv|peacock", "Peacock"),
         (r"paramountplus|cbsivideo|cbsaavideo", "Paramount+"),
+        (r"twitch|ttvnw", "Twitch"),
+        (r"spotify|scdn", "Spotify"),
         (r"roku", "Roku"),
         (r"plex", "Plex"),
+        (r"samsungcloud|samsung|smartthings", "Samsung"),
+        (r"lgsmartad|lgtv|lge", "LG TV"),
         (r"apple|icloud|mzstatic|itunes|aaplimg|appldnld|tv\.apple", "Apple/iCloud"),
         (r"apns", "Apple Push"),
         (r"huggingface|hf\.co", "Hugging Face"),
         (r"civitai", "Civitai"),
+        (r"kaggle", "Kaggle"),
+        (r"replicate", "Replicate"),
+        (r"perplexity", "Perplexity"),
         (r"quantum-computing\.ibm|cloud\.ibm|ibm\.com", "IBM Quantum"),
+        (r"qiskit|quantum", "Quantum Research"),
         (r"openai|chatgpt", "OpenAI"),
         (r"anthropic|claude", "Anthropic"),
         (r"x\.ai|grok", "xAI/Grok"),
         (r"nvidia|build\.nvidia", "NVIDIA AI"),
+        (r"ollama|vllm|qdrant|neo4j|jupyter|gradio|streamlit", "Local AI Lab"),
         (r"github|githubusercontent|githubassets", "GitHub"),
         (r"ollama", "Ollama"),
         (r"vllm", "vLLM"),
         (r"googleapis|gstatic|googleusercontent", "Google APIs"),
+        (r"firebase|google-analytics|googletagmanager", "Google Telemetry"),
         (r"doubleclick|googlesyndication|googleadservices", "Google Ads"),
         (r"microsoft|windowsupdate|office365|live\.com|msn\.com|azure", "Microsoft"),
+        (r"xboxlive|xboxservices|playstation|nintendo", "Gaming"),
         (r"amazonaws|cloudfront", "AWS/CloudFront"),
+        (r"akamai|edgesuite|fastly|cdn77|cloudflare", "CDN"),
         (r"facebook|fbcdn|instagram|whatsapp", "Meta"),
         (r"discord", "Discord"),
         (r"spotify", "Spotify"),
@@ -342,6 +359,8 @@ class SocxCollector:
         self.metrics_intel_cache: dict[str, Any] = {}
         self.autonomy_loop_checked = 0.0
         self.autonomy_loop_cache: dict[str, Any] = {}
+        self.wall_health_checked = 0.0
+        self.wall_health_cache: dict[str, Any] = {}
         self.ups_samples: deque[float] = deque(maxlen=120)
         self.label_history_path = Path(os.environ.get("SOCX_LABEL_BRAIN_HISTORY", "/var/db/socx_label_brain.json"))
         self.label_history_last_write = 0.0
@@ -412,6 +431,7 @@ class SocxCollector:
         metrics_intel = self.collect_metrics_intel()
         power_mods = self.collect_power_mods()
         autonomy_loop = self.collect_autonomy_loop()
+        wall_health = self.collect_wall_health()
         incident = self.collect_incident_light(command_center)
         pi_nodes = self.collect_pi_nodes()
         threat_pulse = self.collect_threat_pulse(incident)
@@ -479,6 +499,7 @@ class SocxCollector:
             "metrics_intel": metrics_intel,
             "power_mods": power_mods,
             "autonomy_loop": autonomy_loop,
+            "wall_health": wall_health,
             "incident": incident,
             "pi_nodes": pi_nodes,
             "threat_pulse": threat_pulse,
@@ -3847,6 +3868,87 @@ class SocxCollector:
             "updated_ms": now_ms(),
         }
 
+    def collect_glitch_timeline(self) -> dict[str, Any]:
+        """Summarize wall glitch-watch samples without running heavy captures."""
+        latest = {}
+        try:
+            latest = json.loads(Path("/tmp/socx-glitch-watch.json").read_text(errors="ignore"))
+        except Exception:
+            latest = {}
+        rows = self.read_jsonl_tail(Path("/var/db/socx_glitch_watch.jsonl"), 120)
+        if latest and (not rows or rows[-1].get("ts") != latest.get("ts")):
+            rows.append(latest)
+        events = []
+        for row in rows[-60:]:
+            status = str(row.get("status") or "UNKNOWN").upper()
+            issues = row.get("issues") if isinstance(row.get("issues"), list) else []
+            events.append({
+                "time": row.get("time") or self.replay_time_label(float(row.get("ts") or 0)),
+                "status": status,
+                "pane": row.get("pane_size") or "--",
+                "pids": row.get("wall_pid_count", "--"),
+                "err": row.get("wall_error_bytes", 0),
+                "loop": row.get("slowest_loop_ms", 0),
+                "summary": row.get("summary") or ("; ".join(str(x) for x in issues) if issues else "wall sample stable"),
+            })
+        warn = sum(1 for row in events if row["status"] not in {"OK", "STABLE"})
+        latest_status = str((events[-1] if events else {}).get("status") or "WAITING")
+        score = max(0, 100 - warn * 6)
+        return {
+            "title": "SOCX Glitch Timeline",
+            "label": "STABLE" if latest_status == "OK" and warn == 0 else ("WATCH" if events else "WAITING"),
+            "score": score,
+            "summary": f"{len(events)} samples retained; {warn} watch/warn samples",
+            "latest": latest,
+            "rows": list(reversed(events[-48:])),
+            "next": [
+                "Run socx glitch-watch once right after you see the weird flash.",
+                "If wall error bytes rise, open /health and preserve a snapshot.",
+                "If pane size changes, restart the tmux wall after resizing the terminal.",
+            ],
+            "read_only": True,
+            "updated_ms": now_ms(),
+        }
+
+    def collect_wall_health(self) -> dict[str, Any]:
+        """Fast wall health guard used by state, chat, and the health page."""
+        now = time.time()
+        if now - self.wall_health_checked < float(os.environ.get("SOCX_WALL_HEALTH_CACHE_SECONDS", "2.5")) and self.wall_health_cache:
+            return dict(self.wall_health_cache)
+        self.wall_health_checked = now
+        glitch = self.collect_glitch_timeline()
+        err_bytes = 0
+        try:
+            err_bytes = Path("/tmp/socx-wall.err").stat().st_size
+        except OSError:
+            pass
+        pids = run_cmd("pgrep -f 'socx-wall' 2>/dev/null", timeout=0.35).splitlines()
+        web_ok = bool(run_cmd("sockstat -4 -l 2>/dev/null | grep -q ':8094 ' && echo ok", timeout=0.35).strip())
+        tmux_ok = bool(run_cmd("tmux has-session -t socx >/dev/null 2>&1 && echo ok", timeout=0.35).strip())
+        latest = glitch.get("latest") if isinstance(glitch.get("latest"), dict) else {}
+        checks = [
+            {"name": "Wall Renderer", "state": "OK" if pids else "WARN", "detail": f"{len(pids)} socx-wall pid(s)"},
+            {"name": "tmux Session", "state": "OK" if tmux_ok else "WARN", "detail": "socx tmux session present" if tmux_ok else "socx tmux session not found"},
+            {"name": "Browser API", "state": "OK" if web_ok else "WARN", "detail": "port 8094 listening" if web_ok else "port 8094 not listening"},
+            {"name": "Error Log", "state": "OK" if err_bytes == 0 else "WARN", "detail": f"/tmp/socx-wall.err {err_bytes} bytes"},
+            {"name": "Last Glitch Sample", "state": "OK" if str(latest.get("status") or "").upper() == "OK" else "WATCH", "detail": latest.get("summary") or "waiting for glitch sample"},
+        ]
+        warn = sum(1 for row in checks if row["state"] != "OK")
+        label = "OK" if warn == 0 else "WATCH"
+        result = {
+            "title": "SOCX Wall Health Guard",
+            "label": label,
+            "score": max(0, 100 - warn * 12),
+            "summary": "wall renderer, tmux, web API, and glitch sampler look stable" if warn == 0 else f"{warn} wall health item(s) need review",
+            "checks": checks,
+            "glitch": glitch,
+            "commands": ["socx glitch-watch once", "socx v1-check", "service socxweb status", "tmux capture-pane -p -t socx:NETX.0 -S -40"],
+            "read_only": True,
+            "updated_ms": now_ms(),
+        }
+        self.wall_health_cache = result
+        return result
+
     def automation_file_fact(self, path: str) -> dict[str, Any]:
         item = {"path": path, "exists": False, "age_sec": None, "age_h": "--", "mtime": 0.0}
         try:
@@ -4625,6 +4727,7 @@ class SocxCollector:
         threat = context.get("threat") or {}
         incident = context.get("incident") or {}
         netflow = context.get("netflow_intel") or {}
+        wall = context.get("wall_health") or {}
         data_sources = 0
         if threat.get("fw_blocks") is not None:
             data_sources += 1
@@ -4642,6 +4745,10 @@ class SocxCollector:
             data_sources += 1
             score += 8
             reasons.append("flow evidence available")
+        if wall.get("checks"):
+            data_sources += 1
+            score += 5
+            reasons.append("wall health checks available")
         if pi_answer.get("ok"):
             score += 6
             reasons.append("Pi LLM answered")
@@ -4656,11 +4763,13 @@ class SocxCollector:
         threat = context.get("threat") or {}
         intel = context.get("intel") or {}
         netflow = context.get("netflow_intel") or {}
+        wall = context.get("wall_health") or {}
         rows = [
             {"source": "Firewall", "strength": "strong" if threat.get("fw_blocks") else "weak", "detail": f"{threat.get('fw_blocks', 0)} current firewall blocks"},
             {"source": "DNSBL", "strength": "strong" if incident.get("dnsbl") else "weak", "detail": ", ".join(str(x.get("name")) for x in (incident.get("dnsbl") or [])[:3]) or "no dominant DNSBL domain"},
             {"source": "IDS", "strength": "medium" if (incident.get("ids") or {}).get("watch") else "weak", "detail": f"high {(incident.get('ids') or {}).get('high_signal', 0)} watch {(incident.get('ids') or {}).get('watch', 0)}"},
             {"source": "Flow Truth", "strength": "strong" if netflow.get("rows") else "weak", "detail": netflow.get("summary") or "flow rows waiting"},
+            {"source": "Wall Health", "strength": "strong" if wall.get("checks") else "weak", "detail": wall.get("summary") or "wall health waiting"},
             {"source": "ATT&CK/D3FEND", "strength": "advisory", "detail": f"{len(intel.get('rows') or [])} mapped rows; KEV {(intel.get('kev') or {}).get('status', 'unknown')}"},
         ]
         if intent == "draft":
@@ -4720,6 +4829,7 @@ class SocxCollector:
         netflow_intel = snap.get("netflow_intel") or {}
         device_trust = snap.get("device_trust") or {}
         mission_assurance = snap.get("mission_assurance") or {}
+        wall_health = snap.get("wall_health") or {}
         return {
             "generated_at": snap.get("generated_at"),
             "health": snap.get("status", {}).get("health"),
@@ -4758,6 +4868,13 @@ class SocxCollector:
                 "summary": mission_assurance.get("summary"),
                 "weakest": mission_assurance.get("weakest"),
                 "next": (mission_assurance.get("next") or [])[:5],
+            },
+            "wall_health": {
+                "label": wall_health.get("label"),
+                "score": wall_health.get("score"),
+                "summary": wall_health.get("summary"),
+                "checks": (wall_health.get("checks") or [])[:6],
+                "glitch": wall_health.get("glitch") or {},
             },
             "flows": (snap.get("flows") or [])[:6],
             "packets": (snap.get("packets") or [])[:6],
@@ -4798,6 +4915,7 @@ class SocxCollector:
         netflow = context.get("netflow_intel") or {}
         trust = context.get("device_trust") or {}
         assurance = context.get("mission_assurance") or {}
+        wall_health = context.get("wall_health") or {}
         lines = []
         if intent == "blocked":
             return "I cannot help with destructive, bypass, or stealth requests. I can explain the alert, preserve evidence, or draft a safe approval-only pfSense change plan."
@@ -4828,6 +4946,12 @@ class SocxCollector:
         if "doctor" in q or "vnstat" in q or "lldp" in q or "service" in q or "repair" in q:
             lines.append("pfSense Doctor is the read-only troubleshooting path. Open /doctor to see SOCX status, pfSense service parsing, WAN quality, VPN gateway truth, DNSBL, IDS, vnStat, LLDP topology, Speedtest profiles, and Pi LLM checks in one place.")
             lines.append("Treat WARN rows as review targets first. Preserve evidence with Bundle or Snapshot before changing service/package configuration.")
+        if "glitch" in q or "flicker" in q or "wall health" in q or "weird screen" in q or "weird-screen" in q:
+            lines.append(f"Wall Health is {wall_health.get('label', 'UNKNOWN')} {wall_health.get('score', '--')}/100: {wall_health.get('summary', 'waiting for wall health guard')}")
+            checks = wall_health.get("checks") or []
+            if checks:
+                lines.append("Wall checks: " + " | ".join(f"{c.get('name')} {c.get('state')}: {c.get('detail')}" for c in checks[:5]))
+            lines.append("Best capture step: run socx glitch-watch once right after the flash, then open /glitches.")
         if "unknown" in q or "label" in q or "name" in q or "identify" in q:
             lines.append("Unknown Fixer uses local DHCP, ARP, DNS/DNSBL, mDNS-style names, PF states, NetFlow, and SOCX host maps. Start with /devices, then run socx hosts audit and socx services to see which devices or ports need labels.")
             lines.append("Best evidence to reduce unknowns: DHCP hostnames, DNS resolver logs, repeated flow apps, local service ports, and stable manual labels in SOCX host/service maps.")
@@ -4884,6 +5008,10 @@ class SocxCollector:
             commands.append("open /doctor")
             commands.append("socx-doctor")
             commands.append("socx-doctor php-services")
+        if "glitch" in lower or "flicker" in lower or "wall health" in lower or "weird screen" in lower:
+            commands.append("socx glitch-watch once")
+            commands.append("open /glitches")
+            commands.append("open /wall-health")
         if "unknown" in lower or "label" in lower or "identify" in lower:
             commands.append("open /devices")
             commands.append("socx-hosts-audit")
@@ -4922,6 +5050,15 @@ class SocxCollector:
                 "command": "socx intel",
             },
         ]
+        wall = context.get("wall_health") or {}
+        if wall.get("label"):
+            cards.append({
+                "title": "Wall Health",
+                "status": str(wall.get("label") or "WATCH"),
+                "tone": "green" if str(wall.get("label") or "").upper() == "OK" else "yellow",
+                "detail": str(wall.get("summary") or "wall health guard waiting")[:160],
+                "command": "socx glitch-watch once",
+            })
         if any(word in text.lower() for word in ["dnsbl", "domain", "blocked dns"]):
             cards.append({"title": "DNSBL Review", "status": "SAFE", "tone": "purple", "detail": "Review blocked domains and false-positive candidates before allowlisting.", "command": "socx-doctor dnsbl-review"})
         if any(word in text.lower() for word in ["ids", "suricata", "alert"]):
@@ -5394,6 +5531,12 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/projects":
             self.send_json(self.collector.collect_project_lab())
             return
+        if parsed.path == "/api/glitches":
+            self.send_json(self.collector.collect_glitch_timeline())
+            return
+        if parsed.path == "/api/wall-health":
+            self.send_json(self.collector.collect_wall_health())
+            return
         if parsed.path == "/api/threat-map":
             self.send_json(self.collector.collect_threat_map())
             return
@@ -5569,6 +5712,7 @@ class SocxHandler(BaseHTTPRequestHandler):
             "autonomy": (["/usr/local/bin/socx", "autonomy-loop"], 170.0, "SOCX autonomy loop"),
             "autonomy-cron": (["/usr/local/bin/socx", "autonomy-cron", "status"], 20.0, "SOCX autonomy schedule"),
             "glitch-watch": (["/usr/local/bin/socx", "glitch-watch", "once"], 12.0, "Wall glitch watcher"),
+            "wall-health": (["/usr/local/bin/socx", "v1-check"], 30.0, "Wall health guard"),
         }
         if action not in commands:
             return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, bundle, vault, drift, eve, flow-export, topology, quarantine-draft, incident, zeek, speedtest, pi, status, explain, brief, story, timeline, rules, doctor, speed-history, memory, lab, pi-bench, pi-explain, pi-compare, model-tournament, observability, metrics-intel, metrics-ai, autonomy, autonomy-cron, glitch-watch"}
@@ -5577,7 +5721,7 @@ class SocxHandler(BaseHTTPRequestHandler):
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/memory", "/twin", "/automation", "/timeline", "/movie", "/projects", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
+        if path in {"/speedtest", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/memory", "/twin", "/automation", "/timeline", "/movie", "/projects", "/glitches", "/wall-health", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"

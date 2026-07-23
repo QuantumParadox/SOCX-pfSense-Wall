@@ -103,6 +103,9 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds SOCX Network Movie through `/movie` and `/api/movie`, a slower readable scene view of timeline events, live flow pulses, packet story, replay context, and network-twin links.
 - Adds SOCX Project Lab through `/projects` and `/api/projects`, a read-only roadmap/status page for Glitch Watcher, AI Firewall Copilot Chat, Network Movie, Device Identity, What Changed Alarm, Pi AI Lab, Config Drift, Voice Mode, Incident Bundles, and LCARS/cyberpunk themes.
 - Adds `socx glitch-watch`, a read-only diagnostic sampler for brief wall glitches. It captures tmux wall markers, pane size, renderer count, timing hints, and `/tmp/socx-wall.err` size into `/tmp/socx-glitch-watch.json`.
+- Adds `/glitches` and `/wall-health`, readable browser views for glitch samples, renderer/tmux/API/log checks, likely causes, and safe follow-up commands.
+- Upgrades Operator Chat so weird-screen, wall health, and glitch questions cite current wall checks, confidence, evidence used, and safe commands.
+- Expands friendly device/app recognition for smart TVs, streaming, STUN/RTMP, local AI lab services, quantum/research sites, gaming platforms, CDNs, and telemetry.
 - Adds Replay time controls, incident bookmarks, and safe Ask SOCX prompts so after-action review can jump to the exact security, speed, flow, thermal, or UPS moment.
 - Adds Threat Map Lite through `/map` and `/api/threat-map`, a local-context blocked-source radar that uses pfSense/SOCX evidence without treating geo hints as proof.
 - Adds automatic browser Night Mode from 8 PM to 8 AM every day, with a manual `auto/on/off` button for temporary overrides.

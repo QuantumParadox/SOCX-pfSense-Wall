@@ -3,6 +3,9 @@
 ## Unreleased
 
 - Added `socx glitch-watch`, a read-only tmux/frame sampler that records wall markers, renderer error bytes, pane size, renderer count, and timing hints to help diagnose brief weird-screen flashes.
+- Added `/glitches`, `/api/glitches`, `/wall-health`, and `/api/wall-health` for wall frame history, renderer/tmux/API/log checks, and readable glitch diagnostics.
+- Expanded Operator Chat with Wall Health and glitch evidence so it can answer weird-screen/flicker questions with current checks and safe next commands.
+- Expanded device/app recognition for smart TVs, streaming, STUN/RTMP, local AI lab tools, quantum/research services, gaming, CDNs, and telemetry.
 - Added `/movie` and `/api/movie`, a slower readable SOCX Network Movie that turns live timeline, flow, packet, replay, and twin data into a calm LCARS/cyberpunk scene view.
 - Added `/projects` and `/api/projects`, a SOCX Project Lab page that tracks the experimental module roadmap, current readiness, safe commands, and next build ideas.
 - Expanded friendly service labels for AI/lab/observability/home ports such as Streamlit, Qdrant, Neo4j, Elastic, Kibana, MQTT, OpenTelemetry, gRPC, Home Assistant, Plex, and game traffic.

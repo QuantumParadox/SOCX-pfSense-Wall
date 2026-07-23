@@ -8509,6 +8509,8 @@ function service_name_for_port(string $port, string $proto = ''): string
         '161' => 'snmp',
         '853' => 'dot',
         '1900' => 'ssdp',
+        '1935' => 'rtmp',
+        '3478', '3479', '3480' => 'stun',
         '32400', '32412', '32414', '32469' => 'plex',
         '3493' => 'nut',
         '5353' => 'mdns',
@@ -8913,6 +8915,8 @@ function service_short(string $service): string
         $service === 'rip' || $service === 'route' => 'rip',
         $service === 'snmp' => 'snmp',
         $service === 'ssdp' => 'ssdp',
+        $service === 'rtmp' => 'rtmp',
+        $service === 'stun' => 'stun',
         $service === 'nut' => 'nut',
         $service === 'ollama' => 'olma',
         $service === 'vllm' => 'vllm',
@@ -9755,7 +9759,7 @@ function colorize_line($line, bool $color): string
     $line = color_replace('/(\[DNSBL\]|\[IDS\]|\[IPS\])|\b(DNS BLOCK|DNS SINK|DNSBL HIT|SINKHOLE|DNSBL|Suricata|suricata|Sigma|YARA|CVE|CPE|CWE|CAPEC|CVSS|EPSS|KEV|ATT&CK|D3FEND|OpenAI|Anthropic|Gemini|xAI|Grok|NVIDIA Build|Hugging Face|Ollama|vLLM|MIRANDA|Local LLM|reputation|threat-intel|known-bad|known bad|malware|botnet|C2|abuse:high|abuse high|tor\?)\b/i', $c['purple'] . '$0' . $c['reset'], $line);
     $line = color_replace('/\b(contain|quarantine|preserve|evidence|pcap|pfctl|config\.xml|CloudTrail|AzureActivity|VPC Flow|Windows|Linux|macOS|memory)\b/i', $c['yellow'] . '$0' . $c['reset'], $line);
     $line = color_replace('/\b(CPU|RAM|ARC|SWAP|PF|LAN|WAN|IN|OUT|VPN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|PACKET RADAR|PFTOP|LIVE STATES|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES|THREAT PULSE|INCIDENT|SPEEDTEST|SPD|CLIENT|ROUTER|DIRECT|NYC|RCN-DE|RCN-VA|PATH|PATHS|AUTO|BASE|DOCTOR|BACKUP|CHANGE|PI|Mbps|STATES|SEARCH|TRAFFIC|TCP|UDP|ICMP|DIR|APP|PATH|TYPE|STAT|STATE|LEFT|PRO|SVC|RATE|FLOW|RADAR|AGE|EXP|PROTO|TEMP|HUMID|LOAD)\b/i', $c['cyan'] . '$1' . $c['reset'], $line);
-    $line = color_replace('/\b(tls|web|dns|dnsblk|ssh|vpn|ntp|smb|sysl|rip|snmp|ssdp|nut|olma|vllm|llm|tgi|grad|jupy|ray|mlfl|trtn|graf|oai|xai|ngc|anth|gemi|hf|rdis|metr|ping|plex|dhcp|mdns|mail|apns|gcm|team|rdp|vnc|irc|ftp|dot|mux|oth|block|p\d{1,5})\b/i', $c['blue'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/\b(tls|web|dns|dnsblk|ssh|vpn|ntp|smb|sysl|rip|snmp|ssdp|rtmp|stun|nut|olma|vllm|llm|tgi|grad|jupy|ray|mlfl|trtn|graf|oai|xai|ngc|anth|gemi|hf|rdis|metr|ping|plex|dhcp|mdns|mail|apns|gcm|team|rdp|vnc|irc|ftp|dot|mux|oth|block|p\d{1,5})\b/i', $c['blue'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[[#!.]+\])/', $c['green'] . '$1' . $c['reset'], $line);
     $line = color_replace('/([█▇▆▅▄▃▂▁▓]+)/u', $c['green'] . '$1' . $c['reset'], $line);
     $line = color_replace('/([↓↑])/u', $c['yellow'] . '$1' . $c['reset'], $line);

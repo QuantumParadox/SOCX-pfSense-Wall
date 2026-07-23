@@ -36,6 +36,8 @@ const pageName = () => {
   if (path.includes("timeline")) return "timeline";
   if (path.includes("movie")) return "movie";
   if (path.includes("project")) return "projects";
+  if (path.includes("glitch")) return "glitches";
+  if (path.includes("wall-health")) return "wall-health";
   if (path.includes("incident")) return "incidents";
   if (path.includes("why")) return "why";
   if (path.includes("story")) return "story";
@@ -1462,6 +1464,72 @@ function renderProjects(state, lab) {
   wireAskButtons();
 }
 
+function renderGlitches(state, glitches) {
+  title.textContent = "SOCX GLITCH TIMELINE";
+  subtitle.textContent = `${state.hostname || "pfSense"} / wall frame samples / read-only`;
+  const latest = glitches.latest || {};
+  const rows = glitches.rows || [];
+  const askRows = rows.slice(0, 8).map((r) => ({
+    label: `${r.time || "--"} ${r.status || "--"}`,
+    detail: r.summary || "--",
+    question: `Explain this SOCX wall glitch sample. Time: ${r.time || "--"}. Status: ${r.status || "--"}. Pane: ${r.pane || "--"}. PIDs: ${r.pids || "--"}. Error bytes: ${r.err || 0}. Slowest loop: ${r.loop || 0}ms. Summary: ${r.summary || "--"}. Tell me what it likely means and what safe check to run next.`,
+  }));
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Glitch State", [
+      `<div class="detail-score ${glitches.label === "STABLE" ? "green" : "yellow"}">${esc(glitches.label || "WAITING")} ${esc(glitches.score ?? "--")}/100</div>`,
+      `<div class="detail-reason">${esc(glitches.summary || "Glitch watcher is warming up.")}</div>`,
+      kv("Latest", latest.status || "--", String(latest.status || "").toUpperCase() === "OK" ? "green" : "yellow"),
+      kv("Pane", latest.pane_size || "--", "cyan"),
+      kv("Error Bytes", latest.wall_error_bytes ?? "--", Number(latest.wall_error_bytes || 0) ? "yellow" : "green"),
+      kv("Slowest Loop", `${latest.slowest_loop_ms || 0}ms`, Number(latest.slowest_loop_ms || 0) > 900 ? "yellow" : "green"),
+    ].join("")),
+    card("Samples", table(["Time", "Status", "Pane", "PIDs", "Err", "Loop", "Summary"], rows.map((r) => [
+      r.time || "--",
+      r.status || "--",
+      r.pane || "--",
+      r.pids ?? "--",
+      r.err ?? 0,
+      `${r.loop || 0}ms`,
+      r.summary || "--",
+    ]))),
+    card("Safe Next Steps", table(["#", "Step"], (glitches.next || []).map((line, idx) => [idx + 1, line]))),
+    card("Ask About Samples", `<div class="ask-list">${askRows.map((item) => `<div><span title="${esc(item.detail)}">${esc(item.label)}: ${esc(item.detail)}</span>${askButton(item.question)}</div>`).join("") || "<span class=\"muted\">No glitch samples ready yet.</span>"}</div>`),
+  ].join("");
+  wireAskButtons();
+}
+
+function renderWallHealth(state, health) {
+  title.textContent = "SOCX WALL HEALTH";
+  subtitle.textContent = `${state.hostname || "pfSense"} / renderer, tmux, web API, logs / read-only`;
+  const checks = health.checks || [];
+  const askRows = checks.map((r) => ({
+    label: r.name || "check",
+    detail: `${r.state || "--"} ${r.detail || ""}`,
+    question: `Explain this SOCX Wall Health check. Check: ${r.name || "--"}. State: ${r.state || "--"}. Detail: ${r.detail || "--"}. Tell me whether this could cause flicker or display glitches and what safe command to run next.`,
+  }));
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Guard State", [
+      `<div class="detail-score ${health.label === "OK" ? "green" : "yellow"}">${esc(health.label || "WATCH")} ${esc(health.score ?? "--")}/100</div>`,
+      `<div class="detail-reason">${esc(health.summary || "Wall health guard is warming up.")}</div>`,
+      kv("Safety", health.read_only ? "read-only checks only" : "unknown", health.read_only ? "green" : "yellow"),
+    ].join("")),
+    card("Checks", table(["Check", "State", "Detail"], checks.map((r) => [r.name || "--", r.state || "--", r.detail || "--"]))),
+    card("Commands", table(["#", "Command"], (health.commands || []).map((cmd, idx) => [idx + 1, cmd]))),
+    card("Glitch Summary", [
+      kv("Glitch State", health.glitch?.label || "--", health.glitch?.label === "STABLE" ? "green" : "yellow"),
+      kv("Samples", (health.glitch?.rows || []).length, "cyan"),
+      kv("Summary", health.glitch?.summary || "--", "cyan"),
+      `<div class="story-actions"><a href="/glitches">Open Glitch Timeline</a><a href="/health">Open Health</a><a href="/doctor">Open Doctor</a></div>`,
+    ].join("")),
+    card("Ask About Wall Health", `<div class="ask-list">${askRows.map((item) => `<div><span title="${esc(item.detail)}">${esc(item.label)}: ${esc(item.detail)}</span>${askButton(item.question)}</div>`).join("") || "<span class=\"muted\">No health checks ready yet.</span>"}</div>`),
+  ].join("");
+  wireAskButtons();
+}
+
 function renderFlowsPage(state, data) {
   title.textContent = "SOCX NETFLOW STORY";
   subtitle.textContent = `${state.hostname || "pfSense"} / NetFlow, top talkers, device trust / ${new Date().toLocaleTimeString()}`;
@@ -1734,6 +1802,12 @@ async function refresh() {
   const projects = page === "projects"
     ? await fetch("/api/projects", { cache: "no-store" }).then((r) => r.json())
     : null;
+  const glitches = page === "glitches"
+    ? await fetch("/api/glitches", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const wallHealth = page === "wall-health"
+    ? await fetch("/api/wall-health", { cache: "no-store" }).then((r) => r.json())
+    : null;
   subtitle.textContent = `${state.hostname || "pfSense"} / ${state.mode || "live"} / ${new Date().toLocaleTimeString()}`;
   if (page === "cockpit") renderCockpit(state, cockpit || {});
   else if (page === "threat-story") renderThreatStory(state, threatStory || {});
@@ -1754,6 +1828,8 @@ async function refresh() {
   else if (page === "timeline") renderTimeline(state, timeline || {});
   else if (page === "movie") renderMovie(state, movie || {});
   else if (page === "projects") renderProjects(state, projects || {});
+  else if (page === "glitches") renderGlitches(state, glitches || {});
+  else if (page === "wall-health") renderWallHealth(state, wallHealth || {});
   else if (page === "flows") renderFlowsPage(state, flowsData || {});
   else if (page === "replay") renderReplay(state, replay || {});
   else if (page === "map") renderThreatMap(state, threatMap || {});
