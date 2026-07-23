@@ -140,6 +140,77 @@ function pill(value, tone = "cyan") {
   return `<span class="detail-pill ${tone}">${esc(value)}</span>`;
 }
 
+function askButton(question, label = "Ask SOCX") {
+  return `<button class="ask-row-button" data-ask="${esc(question)}">${esc(label)}</button>`;
+}
+
+function flowPath(row) {
+  return row?.display_path || `${row?.asset || "--"} -> ${row?.peer || "--"}`;
+}
+
+function askDock() {
+  return card("SOCX Answer Dock", [
+    `<div class="ask-dock">
+      <div class="ask-dock-head">
+        <span>Click any Ask SOCX button on this page for a plain-English explanation.</span>
+        <b>read-only</b>
+      </div>
+      <pre id="context-answer">No row selected yet.</pre>
+    </div>`,
+  ].join(""));
+}
+
+async function runContextAsk(question) {
+  const out = document.getElementById("context-answer");
+  if (!out) {
+    location.href = `/chat?q=${encodeURIComponent(question)}`;
+    return;
+  }
+  out.textContent = "Collecting SOCX evidence and asking the operator chat path...";
+  try {
+    const result = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    }).then((r) => r.json());
+    const phases = Array.isArray(result.phases) && result.phases.length ? `\n\nVisible steps:\n- ${result.phases.join("\n- ")}` : "";
+    const commands = Array.isArray(result.safe_commands) && result.safe_commands.length ? `\n\nUseful commands:\n- ${result.safe_commands.join("\n- ")}` : "";
+    out.textContent = `${result.mode || "ANSWER"}${result.approval_required ? " / APPROVAL REQUIRED" : ""}\n\n${result.answer || "No answer returned."}${phases}${commands}`;
+  } catch (err) {
+    out.textContent = `SOCX chat error: ${err}`;
+  }
+}
+
+function wireAskButtons() {
+  document.querySelectorAll("[data-ask]").forEach((button) => {
+    button.addEventListener("click", () => runContextAsk(button.getAttribute("data-ask") || ""));
+  });
+}
+
+function deviceCards(devices) {
+  if (!devices.length) return `<span class="muted">No device labels learned yet.</span>`;
+  return `<div class="device-card-grid">${devices.slice(0, 12).map((d) => {
+    const apps = (d.apps || []).map((a) => a.name).filter(Boolean);
+    const services = (d.services || []).map((s) => s.name).filter(Boolean);
+    const unusual = d.unusual || [];
+    const question = `Explain this SOCX device card in plain English. Device: ${d.asset || "--"}. Profile: ${d.profile || "--"}. Confidence: ${d.identity_confidence || d.confidence || "--"}. Likely apps: ${apps.join(", ") || "none"}. Services: ${services.join(", ") || "none"}. Unusual: ${unusual.join(", ") || "none"}. Tell me what it likely is, whether it looks normal, and what I should check next.`;
+    return `<article class="device-card">
+      <div class="device-card-head">
+        <b title="${esc(d.asset || "")}">${esc(d.friendly_name || d.asset || "Device")}</b>
+        <span class="${unusual.length ? "yellow" : "green"}">${esc(d.profile || "device")}</span>
+      </div>
+      <div class="device-card-meta">
+        <span>identity <b>${esc(d.identity_confidence || d.confidence || "--")}</b></span>
+        <span>flows <b>${esc(d.flows ?? "--")}</b></span>
+      </div>
+      <div class="device-tags">${apps.slice(0, 4).map((a) => `<em>${esc(a)}</em>`).join("") || "<em>learning</em>"}</div>
+      <div class="device-summary" title="${esc(d.summary || "")}">${esc(d.summary || "SOCX is still learning this device.")}</div>
+      ${unusual.length ? `<div class="device-alert">unusual: ${esc(unusual.join(", "))}</div>` : ""}
+      ${askButton(question, "Explain Device")}
+    </article>`;
+  }).join("")}</div>`;
+}
+
 function renderTruthCards(state) {
   const truth = state.data_truth || {};
   const changed = state.what_changed || {};
@@ -365,8 +436,21 @@ function renderReplay(state, replay) {
     r.baseline_state || "--",
     r.why || "--",
   ]);
+  const askReplayRows = [
+    ...(replay.timeline || []).slice(0, 5).map((r) => ({
+      label: `${r.lane || "event"} ${r.severity || ""}`,
+      detail: `${r.title || "--"} ${r.detail || ""}`,
+      question: `Explain this SOCX Replay event in plain English. Time: ${r.time || "--"}. Lane: ${r.lane || "--"}. Severity: ${r.severity || "--"}. Signal: ${r.title || "--"}. Detail: ${r.detail || "--"}. Tell me whether it matters, whether it is probably noise, and what to check next.`,
+    })),
+    ...(replay.flow?.top || []).slice(0, 3).map((r) => ({
+      label: `flow ${r.app || r.service || "--"}`,
+      detail: flowPath(r),
+      question: `Explain this SOCX Replay flow in plain English. Path: ${flowPath(r)}. App: ${r.app || r.service || "--"}. Bytes: ${r.bytes_h || "--"}. Baseline: ${r.baseline_state || "--"}. Why: ${r.why || "--"}.`,
+    })),
+  ];
   root.innerHTML = [
     ...renderTruthCards(state),
+    askDock(),
     card("Replay Readout", [
       `<div class="detail-score ${replay.status === "LIVE" ? "green" : "yellow"}">${esc(replay.status || "UNKNOWN")} ${esc(replay.score?.current || replay.score?.avg || "--")}/100</div>`,
       `<div class="detail-reason">Last ${esc(replay.window_h || "--")} from ${esc(replay.samples || 0)} retained SOCX samples. Trend is ${esc(replay.score?.trend?.label || "--")}.</div>`,
@@ -396,7 +480,9 @@ function renderReplay(state, replay) {
       cmd.href || "--",
       cmd.why || "--",
     ]))),
+    card("Ask About Replay Rows", `<div class="ask-list">${askReplayRows.map((item) => `<div><span title="${esc(item.detail)}">${esc(item.label)}: ${esc(item.detail)}</span>${askButton(item.question)}</div>`).join("") || "<span class=\"muted\">No replay rows ready yet.</span>"}</div>`),
   ].join("");
+  wireAskButtons();
 }
 
 function renderGuide(state) {
@@ -563,8 +649,13 @@ function renderSpeed(state) {
   const hist = state.speedtest_history || {};
   const paths = hist.paths || [];
   const pathRows = paths.map((p) => [String(p.path || "").toUpperCase(), p.status, `${p.avg_down || "--"}/${p.avg_up || "--"}`, `${p.best_down || "--"}/${p.worst_down || "--"}`, `${p.avg_ping || "--"}ms`, `${p.ok || 0}/${p.samples || 0}`]);
+  const speedAskRows = [
+    { label: "Active Speedtest", question: `Explain the current SOCX Speedtest truth. Active/router: ${center.router?.down || "--"}/${center.router?.up || "--"} Mbps ${center.router?.ping || "--"}ms. Direct: ${center.direct?.down || "--"}/${center.direct?.up || "--"} Mbps. VPN: ${center.vpn?.path_state || center.vpn?.status || "WAIT"} ${center.vpn?.down || "--"}/${center.vpn?.up || "--"}. Truth: ${center.speed_truth?.label || "waiting"}.` },
+    ...(center.vpn_paths || []).slice(0, 4).map((p) => ({ label: `VPN ${p.label || "--"}`, question: `Explain this SOCX VPN Speedtest path. Path: ${p.label || "--"}. State: ${p.path_state || p.status || "--"}. Down/up: ${p.down || "--"}/${p.up || "--"} Mbps. Ping: ${p.ping || "--"}ms. Age: ${Math.floor((p.age_sec || 0) / 60)}m. Message: ${p.message || p.external_ip || "--"}.` })),
+  ];
   root.innerHTML = [
     ...renderTruthCards(state),
+    askDock(),
     card("Current Paths", [
       kv("Active", `${center.router?.down || "--"}/${center.router?.up || "--"} Mbps ${center.router?.ping || "--"}ms`, center.router?.path_state === "ready" ? "green" : "yellow"),
       kv("Direct", `${center.direct?.down || "--"}/${center.direct?.up || "--"} Mbps ${center.direct?.ping || "--"}ms`, center.direct?.path_state === "ready" ? "green" : "yellow"),
@@ -574,7 +665,9 @@ function renderSpeed(state) {
     ].join("")),
     card("History", table(["Path", "State", "Avg", "Best/Worst", "Ping", "OK/Samples"], pathRows)),
     card("Named VPN Paths", table(["Path", "Status", "Down/Up", "Ping", "Age", "Message"], (center.vpn_paths || []).map((p) => [p.label, p.path_state || p.status, `${p.down || "--"}/${p.up || "--"}`, `${p.ping || "--"}ms`, `${Math.floor((p.age_sec || 0) / 60)}m`, p.message || p.external_ip || "--"]))),
+    card("Ask About Speed Paths", `<div class="ask-list">${speedAskRows.map((item) => `<div><span>${esc(item.label)}</span>${askButton(item.question)}</div>`).join("")}</div>`),
   ].join("");
+  wireAskButtons();
 }
 
 function renderDevices(state) {
@@ -584,15 +677,18 @@ function renderDevices(state) {
   const devices = brain.devices || [];
   root.innerHTML = [
     ...renderTruthCards(state),
+    askDock(),
     card("LAN Asset Watch", [
       kv("Known", asset.known ?? "--", "green"),
       kv("Unknown", asset.unknown ?? "--", Number(asset.unknown || 0) > 5 ? "yellow" : "cyan"),
       kv("Pi Fleet", `${asset.pi_online || 0}/${asset.pi_count || 0}`, asset.pi_online === asset.pi_count ? "green" : "yellow"),
       kv("Learner", asset.unknown_h || "--", "cyan"),
     ].join("")),
+    card("Device Cards", deviceCards(devices)),
     card("Label Brain Devices", table(["Device", "Profile", "Confidence", "Likely Apps", "Unusual"], devices.map((d) => [d.asset, d.profile, d.identity_confidence || d.confidence, (d.apps || []).map((a) => a.name).join(", "), (d.unusual || []).join(", ")]))),
     card("Now Watching", table(["Group", "Apps"], (brain.now_watching || []).map((g) => [g.group, (g.apps || []).join(", ")]))),
   ].join("");
+  wireAskButtons();
 }
 
 function renderFlowsPage(state, data) {
@@ -629,8 +725,21 @@ function renderFlowsPage(state, data) {
     r.bytes_h || "--",
     r.reason || "--",
   ]);
+  const askFlowRows = [
+    ...(nf.rows || []).slice(0, 8).map((r) => ({
+      label: flowPath(r),
+      detail: `${r.app || r.service || "--"} ${r.bytes_h || "--"} ${r.baseline_state || "--"}`,
+      question: `Explain this SOCX Flow Truth row in plain English. Path: ${flowPath(r)}. App/service: ${r.app || r.service || "--"}. Bytes: ${r.bytes_h || "--"}. Baseline state: ${r.baseline_state || "--"}. Why: ${r.why || r.direction || "--"}. Tell me if this looks normal, new, suspicious, or just routine traffic.`,
+    })),
+    ...(trust.rows || []).slice(0, 4).map((r) => ({
+      label: `trust ${r.asset || "--"}`,
+      detail: `${r.score ?? "--"}/100 ${r.reason || ""}`,
+      question: `Explain this SOCX Device Trust row. Device: ${r.asset || "--"}. Trust score: ${r.score ?? "--"}/100. Profile: ${r.profile || "--"}. Bytes: ${r.bytes_h || "--"}. Reason: ${r.reason || "--"}. Tell me what to check next.`,
+    })),
+  ];
   root.innerHTML = [
     ...renderTruthCards(state),
+    askDock(),
     card("Mission Assurance", [
       `<div class="detail-score ${assurance.tone || "cyan"}">${esc(assurance.label || "WATCH")} ${esc(assurance.score ?? "--")}/100</div>`,
       `<div class="detail-reason">${esc(assurance.summary || "waiting for assurance score")}</div>`,
@@ -668,7 +777,9 @@ function renderFlowsPage(state, data) {
     ]))),
     card("Baseline Mix", table(["State", "Flow Groups"], baselineRows)),
     card("Safe Next Steps", table(["#", "Action"], (assurance.next || []).map((line, idx) => [idx + 1, line]))),
+    card("Ask About Flows", `<div class="ask-list">${askFlowRows.map((item) => `<div><span title="${esc(item.detail)}">${esc(item.label)} <em>${esc(item.detail)}</em></span>${askButton(item.question)}</div>`).join("") || "<span class=\"muted\">No flow rows ready yet.</span>"}</div>`),
   ].join("");
+  wireAskButtons();
 }
 
 function renderIncidents(state) {
@@ -676,8 +787,14 @@ function renderIncidents(state) {
   const incident = state.incident || {};
   const memory = state.incident_memory || {};
   const timeline = state.incident_timeline || {};
+  const incidentAskRows = (timeline.rows || []).slice(0, 8).map((r) => ({
+    label: `${r.kind || "event"} ${r.severity || ""}`,
+    detail: `${r.title || "--"} ${r.evidence || ""}`,
+    question: `Explain this SOCX incident timeline row. Time: ${r.time || "--"}. Kind: ${r.kind || "--"}. Severity: ${r.severity || "--"}. Title: ${r.title || "--"}. Evidence: ${r.evidence || "--"}. Tell me if it is likely routine noise or needs investigation, and what safe command/page to check next.`,
+  }));
   root.innerHTML = [
     ...renderTruthCards(state),
+    askDock(),
     card("Incident Cockpit", [
       kv("Verdict", incident.verdict || "--", incident.verdict === "QUIET" ? "green" : "yellow"),
       kv("Headline", incident.headline || "--", "cyan"),
@@ -685,7 +802,9 @@ function renderIncidents(state) {
     ].join("")),
     card("Timeline", table(["Time", "Kind", "Severity", "Title", "Evidence"], (timeline.rows || []).map((r) => [r.time, r.kind, r.severity, r.title, r.evidence]))),
     card("Incident Memory", table(["Type", "Top Repeat", "Count"], [["Samples", "total", memory.count || memory.samples || 0], ["Source", memory.sources?.[0]?.name, memory.sources?.[0]?.count], ["Port", memory.ports?.[0]?.name, memory.ports?.[0]?.count], ["DNSBL", memory.dnsbl?.[0]?.name, memory.dnsbl?.[0]?.count], ["IDS High Samples", "samples", memory.ids_high_samples || 0]])),
+    card("Ask About Incident Rows", `<div class="ask-list">${incidentAskRows.map((item) => `<div><span title="${esc(item.detail)}">${esc(item.label)}: ${esc(item.detail)}</span>${askButton(item.question)}</div>`).join("") || "<span class=\"muted\">No incident rows ready yet.</span>"}</div>`),
   ].join("");
+  wireAskButtons();
 }
 
 function renderAi(state) {

@@ -100,6 +100,8 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds SOCX ATT&CK / D3FEND / KEV Intelligence through `/api/intel`, Mission cards, and `socx intel`. It maps current firewall/DNSBL/IDS/asset-drift evidence to conservative ATT&CK context, defensive countermeasure names, CISA KEV status, priority, disposition, and a compact kill-chain story. It is read-only and never changes pfSense policy.
 - Adds SOCX Operator Chat through the browser Command Center, `/api/chat`, and `socx chat`. Ask plain-English questions about firewall blocks, DNSBL, IDS/Suricata, VPN, Speedtest, Pi AI, devices, or draft-only pfSense configuration plans. Chat can delegate to the Pi 5 LLM endpoint when available, shows visible operational steps, and never applies pfSense changes from chat.
 - Adds the full-size `/chat` Operator Chat page with suggested questions, current signal context, readable action cards, and safety mode descriptions. Live Flow and Packet Story rows on the wall can be clicked to ask SOCX to explain that exact row.
+- Adds SOCX Answer Dock and Ask SOCX buttons across Replay, Speedtest, Devices, Flows, and Incidents drilldowns, so an operator can click evidence rows and get plain-English read-only context in place.
+- Adds richer Device Cards with profile, identity confidence, likely apps, learned-normal warnings, and one-click device explanation.
 - Adds one-click Operator Chat prompts for Morning Brief, Why Watch, Top Block, VPN Truth, Metrics, and IDS/DNSBL planning.
 - Upgrades the Daily SOC Brief into a wall-safe SOCX Morning Brief with headline, What Changed, Security, Metrics, Speed, AI/Fleet, and safe next steps.
 - Adds `socx tmux`, a pfSense-safe tmux session hub with optional lazy-tmux detection. It can list/attach SOCX sessions, start the wall, and write a conservative lazy-tmux guardrail config without making lazy-tmux a required dependency.
@@ -533,6 +535,8 @@ Reports are written to `/root/socx-reports/` and include firewall blocks, DNSBL 
 `socx chat "why is DNSBL high?"` opens the same Operator Chat used by the browser wall. It classifies questions as `ANSWER`, `PLAN`, or `DENIED`, collects current pfSense/SOCX evidence, asks the Pi 5 chat model when available, and falls back to local rule-based explanation when the Pi is stale or offline. Configuration requests are draft-only and return `approval_required=true`; they do not edit pfSense rules, aliases, IDS settings, DNSBL allowlists, or services.
 
 The browser Chat page is available at `/chat`. It is better for longer answers than the compact wall chatbox. It shows visible steps, safe commands, and action cards such as Current Evidence, Intel Context, DNSBL Review, IDS Review, Draft Only, Rule Assistant, and Preserve If Unsure. On the main wall, click a Live Flow or Packet Story row to send that row into Operator Chat for a plain-English explanation.
+
+The drilldown pages also include a SOCX Answer Dock. Open `/devices`, `/flows`, `/incidents`, `/speedtest`, or `/replay`, then click an Ask SOCX button beside a device, flow, incident, replay, or Speedtest path. SOCX collects current telemetry, optionally delegates to the Pi LLM path, and returns an in-place read-only explanation plus safe follow-up commands.
 
 ### SOCX Replay
 

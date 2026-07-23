@@ -5,6 +5,8 @@
 - Added SOCX Replay, a read-only browser flight recorder at `/replay` backed by `/api/replay`.
 - Replay summarizes recent SOCX history into calm score buckets, security playback, Speedtest playback, Flow Truth context, thermal/UPS spikes, and safe drilldown links.
 - Added Replay links to the browser wall and detail navigation so operators can jump from live monitoring to after-action context without crowding the main wall.
+- Added SOCX Answer Dock and Ask SOCX buttons across Replay, Speedtest, Devices, Flows, and Incidents drilldowns so rows can be explained in plain English without leaving the page.
+- Added richer Device Cards with profile, identity confidence, likely apps, flow count, learned-normal warnings, and one-click device explanation.
 
 ## v1.5.0
 
