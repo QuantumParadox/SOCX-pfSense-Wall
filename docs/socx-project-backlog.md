@@ -30,14 +30,14 @@ This is the standing roadmap for SOCX, pfSense, the Pi 5 AI node, the Pi 4 obser
 
 - Add evidence tabs to the full SOCX Chat page: Summary, Evidence, Why, Plan, Commands, Risks, and Cockpit context.
 - Stream LLM role reasoning as visible stages: triage, evidence, action, safety review, final answer.
-- Expand "explain this row" everywhere: packets, flows, devices, IDS, DNSBL, Speedtest, VPN, UPS, replay bookmarks, and Threat Story evidence cards.
+- Expand "explain this row" everywhere: packets, flows, devices, IDS, DNSBL, Speedtest, VPN, UPS, replay bookmarks, and Threat Story evidence cards. Device Detail v1 and Incident Report v1 are now live as first focused drilldowns.
 - Add approval cards for draft firewall aliases, DNSBL allowlist candidates, IDS threshold changes, and quarantine plans.
 - Add a safety ledger showing which requests were answered, denied, or converted into draft-only plans.
 
 ## 5. Pi 5 AI HAT Lab
 
 - Extend the Hailo role benchmark dashboard with exported history for latency, tokens/sec equivalent, thermal pressure, and model availability.
-- Add model routing tests for firewall triage, DNSBL evidence, rule drafting, complex investigation, voice, and fallback CPU Ollama.
+- Add model routing tests for firewall triage, DNSBL evidence, rule drafting, complex investigation, voice, and fallback CPU Ollama. Initial `bench`, `explain`, and `compare` launchers are now wired through pfSense and the browser Commander.
 - Expand the current `COMPARE` lab into a full "model tournament" mode where the Pi compares small models on the same SOCX evidence bundle.
 - Add a Pi thermal stress lab with fan/temperature/load timelines and safe abort limits.
 - Add replay/export controls for the current slow visual "thinking radar" so role timelines can be preserved with incident bundles.
@@ -61,7 +61,7 @@ This is the standing roadmap for SOCX, pfSense, the Pi 5 AI node, the Pi 4 obser
 ## 8. Network Asset Identity
 
 - Add a friendly-name lab that learns from DHCP leases, ARP, DNS, mDNS, LLDP, NetBIOS, and local SOCX labels.
-- Add per-device profiles: owner, role, common services, normal bandwidth, normal domains, and last-seen time.
+- Add per-device profiles: owner, role, common services, normal bandwidth, normal domains, and last-seen time. Device Detail v1 now exposes current identity, trust, apps/services, flow evidence, packet evidence, and safe questions per asset.
 - Add "unknown reducer" mode that shows why a device/app is unknown and what evidence would fix it.
 - Add Synology, Apple TV, consoles, phones, MIRANDA, Pi nodes, and lab machines as richer asset cards.
 - Add device story pages with timeline, top peers, top domains, blocks, IDS hits, and learned-normal drift.
@@ -77,7 +77,7 @@ This is the standing roadmap for SOCX, pfSense, the Pi 5 AI node, the Pi 4 obser
 ## 10. Research-Lab Features
 
 - Add mission-assurance scoring inspired by CISA, NIST CSF, MITRE ATT&CK, and D3FEND.
-- Add evidence-preserving incident bundles that produce a readable mini-report and machine-readable JSON.
+- Add evidence-preserving incident bundles that produce a readable mini-report and machine-readable JSON. Incident Report v1 now generates a browser-readable Markdown report from current SOCX threat-story evidence.
 - Add Sigma/YARA/Suricata rule-draft assistants that generate draft rules from evidence, never live changes.
 - Add CAPEC/CWE/CVE/CVSS/EPSS/KEV enrichment for relevant IDS or exposed-service findings.
 - Add a patent/research notebook mode for SOCX ideas, experiment notes, validation results, and prior-art search terms.

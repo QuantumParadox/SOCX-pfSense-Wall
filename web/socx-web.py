@@ -949,9 +949,15 @@ class SocxCollector:
         if age is not None and age > 900:
             tone = "red"
             status = "stale"
+        interval_min = env_int("SOCX_AUTONOMY_INTERVAL_MINUTES", 15)
+        next_sec = None
+        if updated:
+            next_sec = max(0, int((updated + interval_min * 60) - now))
         result = {
             "updated": updated,
             "age_sec": age,
+            "interval_min": interval_min,
+            "next_sec": next_sec,
             "status": status,
             "tone": tone,
             "summary": data.get("summary") or "autonomy loop waiting",
@@ -2027,6 +2033,118 @@ class SocxCollector:
             },
             "next_actions": next_actions[:7],
             "quick_questions": quick_questions,
+            "read_only": True,
+            "updated_ms": now_ms(),
+        }
+
+    def collect_device_detail(self, target: str = "") -> dict[str, Any]:
+        snap = self.snapshot()
+        target_l = re.sub(r"\s+", " ", target or "").strip().lower()
+        brain = snap.get("label_brain", {}) if isinstance(snap.get("label_brain"), dict) else {}
+        trust = snap.get("device_trust", {}) if isinstance(snap.get("device_trust"), dict) else {}
+        netflow = snap.get("netflow_intel", {}) if isinstance(snap.get("netflow_intel"), dict) else {}
+        incident = snap.get("incident", {}) if isinstance(snap.get("incident"), dict) else {}
+        packets = snap.get("packets", []) if isinstance(snap.get("packets"), list) else []
+        devices = brain.get("devices") if isinstance(brain.get("devices"), list) else []
+        if not target_l and devices:
+            target_l = str(devices[0].get("asset") or devices[0].get("friendly_name") or "").lower()
+
+        def matches_device(value: str) -> bool:
+            if not target_l:
+                return False
+            hay = value.lower()
+            return target_l in hay or hay in target_l
+
+        device = next((d for d in devices if matches_device(" ".join(str(d.get(k, "")) for k in ("asset", "friendly_name", "summary", "profile")))), {})
+        asset_name = str(device.get("asset") or device.get("friendly_name") or target or "device")
+        trust_rows = trust.get("rows") if isinstance(trust.get("rows"), list) else []
+        trust_row = next((r for r in trust_rows if matches_device(str(r.get("asset") or "")) or (asset_name and str(r.get("asset") or "").lower() in asset_name.lower())), {})
+        flow_rows = []
+        for row in netflow.get("rows", []) if isinstance(netflow.get("rows"), list) else []:
+            hay = " ".join(str(row.get(k, "")) for k in ("asset", "peer", "display_path", "app", "service"))
+            if matches_device(hay) or (asset_name and asset_name.lower() in hay.lower()):
+                flow_rows.append(row)
+        packet_rows = []
+        for row in packets:
+            hay = " ".join(str(row.get(k, "")) for k in ("src", "dst", "src_label", "dst_label", "service", "info"))
+            if matches_device(hay) or (asset_name and asset_name.lower() in hay.lower()):
+                packet_rows.append(row)
+        lan_hits = []
+        for item in incident.get("lan_hosts", []) if isinstance(incident.get("lan_hosts"), list) else []:
+            if matches_device(str(item.get("name") or "")) or str(item.get("name") or "") in asset_name:
+                lan_hits.append(item)
+        apps = device.get("apps") if isinstance(device.get("apps"), list) else []
+        services = device.get("services") if isinstance(device.get("services"), list) else []
+        unusual = device.get("unusual") if isinstance(device.get("unusual"), list) else []
+        profile = device.get("profile") or trust_row.get("profile") or "device"
+        score = trust_row.get("score", "--")
+        if unusual:
+            verdict = f"WATCH: {asset_name} has learned-normal changes: {', '.join(str(x) for x in unusual[:4])}."
+        elif flow_rows or packet_rows:
+            verdict = f"OBSERVE: {asset_name} has current traffic but no high-confidence local device alert."
+        else:
+            verdict = f"LEARNING: SOCX has limited current evidence for {asset_name}."
+        return {
+            "target": target,
+            "asset": asset_name,
+            "friendly_name": device.get("friendly_name") or asset_name,
+            "profile": profile,
+            "trust_score": score,
+            "identity_confidence": device.get("identity_confidence") or device.get("confidence") or "unknown",
+            "summary": device.get("summary") or trust_row.get("reason") or verdict,
+            "verdict": verdict,
+            "apps": apps[:8],
+            "services": services[:8],
+            "unusual": unusual[:8],
+            "flows": flow_rows[:12],
+            "packets": packet_rows[:12],
+            "lan_hits": lan_hits[:6],
+            "safe_questions": [
+                f"Explain device {asset_name}. Is its traffic normal?",
+                f"What changed recently for {asset_name}?",
+                f"What should I label or verify for {asset_name}?",
+                f"Draft a safe investigation plan for {asset_name} without applying changes.",
+            ],
+            "safe_commands": ["open /devices", "open /flows", f"socx chat \"explain device {asset_name}\"", "socx snapshot"],
+            "read_only": True,
+            "updated_ms": now_ms(),
+        }
+
+    def collect_incident_report(self) -> dict[str, Any]:
+        snap = self.snapshot()
+        story = self.collect_threat_story(snap)
+        report = [
+            "# SOCX Incident Report",
+            "",
+            f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+            f"Host: {snap.get('hostname', socket.gethostname())}",
+            f"Mode: {story.get('mode')} score {story.get('score')}",
+            "",
+            "## Executive Summary",
+            "",
+            str(story.get("headline") or "SOCX incident evidence summary."),
+            "",
+            "## What SOCX Saw",
+        ]
+        for line in story.get("story", []) if isinstance(story.get("story"), list) else []:
+            report.append(f"- {line}")
+        report.extend(["", "## Evidence Cards"])
+        for item in story.get("evidence_cards", []) if isinstance(story.get("evidence_cards"), list) else []:
+            report.append(f"- {item.get('label')}: {item.get('value')} - {item.get('detail')}")
+        report.extend(["", "## Timeline"])
+        for row in story.get("timeline", []) if isinstance(story.get("timeline"), list) else []:
+            report.append(f"- {row.get('time', '')} {row.get('kind', 'SOCX')} {row.get('severity', '')}: {row.get('title', '')} - {row.get('evidence', row.get('detail', ''))}")
+        report.extend(["", "## Safe Next Steps"])
+        for step in story.get("next_steps", []) if isinstance(story.get("next_steps"), list) else []:
+            report.append(f"- {step}")
+        report.extend(["", "## Safety"])
+        report.append("- This report is generated from SOCX/pfSense telemetry and local AI summaries.")
+        report.append("- It does not change pfSense rules, aliases, DNSBL, IDS, or services.")
+        report.append("- Preserve a bundle or snapshot before making policy changes.")
+        return {
+            "title": "SOCX Incident Report",
+            "markdown": "\n".join(report).strip() + "\n",
+            "story": story,
             "read_only": True,
             "updated_ms": now_ms(),
         }
@@ -4537,8 +4655,16 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/incident":
             self.send_json(self.collector.collect_incident())
             return
+        if parsed.path == "/api/incident-report":
+            self.send_json(self.collector.collect_incident_report())
+            return
         if parsed.path == "/api/incident-timeline":
             self.send_json(self.collector.snapshot().get("incident_timeline", {}))
+            return
+        if parsed.path == "/api/device-detail":
+            params = parse_qs(parsed.query)
+            target = params.get("asset", params.get("target", [""]))[0]
+            self.send_json(self.collector.collect_device_detail(target))
             return
         if parsed.path == "/api/daily-brief":
             self.send_json(self.collector.snapshot().get("daily_brief", {}))
@@ -4618,6 +4744,9 @@ class SocxHandler(BaseHTTPRequestHandler):
             "speed-history": (["/usr/local/bin/socx", "speedtest-history", "summary", "500"], 25.0, "Speedtest history"),
             "memory": (["/usr/local/bin/socx", "incident-memory", "summary", "500"], 25.0, "Incident memory"),
             "lab": (["/usr/local/bin/socx", "pi-lab", "llm"], 25.0, "Pi lab experiment"),
+            "pi-bench": (["/usr/local/bin/socx", "pi-lab", "bench", "30"], 25.0, "Pi role benchmark"),
+            "pi-explain": (["/usr/local/bin/socx", "pi-lab", "explain", "20"], 25.0, "Pi SOCX explain pulse"),
+            "pi-compare": (["/usr/local/bin/socx", "pi-lab", "compare", "30"], 25.0, "Pi model comparison"),
             "observability": (["/usr/local/bin/socx", "observability"], 25.0, "SOCX observability"),
             "metrics-intel": (["/usr/local/bin/socx", "metrics-intel"], 35.0, "Metrics intelligence"),
             "metrics-ai": (["/usr/local/bin/socx", "metrics-ai", "--pi"], 220.0, "Pi metrics narrator"),
@@ -4625,13 +4754,13 @@ class SocxHandler(BaseHTTPRequestHandler):
             "autonomy-cron": (["/usr/local/bin/socx", "autonomy-cron", "status"], 20.0, "SOCX autonomy schedule"),
         }
         if action not in commands:
-            return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, bundle, vault, drift, eve, flow-export, topology, quarantine-draft, incident, zeek, speedtest, pi, status, explain, brief, story, timeline, rules, doctor, speed-history, memory, lab, observability, metrics-intel, metrics-ai, autonomy, autonomy-cron"}
+            return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, bundle, vault, drift, eve, flow-export, topology, quarantine-draft, incident, zeek, speedtest, pi, status, explain, brief, story, timeline, rules, doctor, speed-history, memory, lab, pi-bench, pi-explain, pi-compare, observability, metrics-intel, metrics-ai, autonomy, autonomy-cron"}
         args, timeout, title = commands[action]
         result = run_cmd_capture(args, timeout=timeout)
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
+        if path in {"/speedtest", "/devices", "/device", "/incidents", "/incident-report", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"

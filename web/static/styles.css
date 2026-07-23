@@ -2153,6 +2153,37 @@ body.night-wall .ticker-shell {
   font-weight: 900;
 }
 
+.device-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.device-actions a {
+  min-width: 0;
+  border: 1px solid rgba(52, 215, 242, .34);
+  border-radius: 6px;
+  background: rgba(52, 215, 242, .055);
+  color: var(--cyan);
+  padding: 6px 8px;
+  text-align: center;
+  text-decoration: none;
+  font-size: clamp(10px, .72vw, 13px);
+  font-weight: 900;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.device-actions a:hover {
+  color: var(--green);
+  border-color: rgba(118, 242, 125, .58);
+}
+
+.incident-report-md {
+  max-height: 520px;
+}
+
 .replay-chart {
   height: 150px;
   display: grid;

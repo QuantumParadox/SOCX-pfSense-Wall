@@ -111,6 +111,8 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds Doctor Review and Unknown Fixer prompts to Operator Chat so service WARN rows and unlabeled devices/apps can be explained without changing pfSense.
 - Adds SOCX Answer Dock and Ask SOCX buttons across Replay, Speedtest, Devices, Flows, and Incidents drilldowns, so an operator can click evidence rows and get plain-English read-only context in place.
 - Adds richer Device Cards with profile, identity confidence, likely apps, learned-normal warnings, and one-click device explanation.
+- Adds `/device` and `/api/device-detail`, a focused device page for one asset at a time with identity confidence, trust score, likely apps/services, unusual observations, current flow/packet evidence, safe questions, and safe commands.
+- Adds `/incident-report` and `/api/incident-report`, a read-only Markdown incident report generator that turns the current threat story into an executive summary, evidence cards, timeline, and safe next steps.
 - Adds one-click Operator Chat prompts for Morning Brief, Why Watch, Top Block, VPN Truth, Metrics, and IDS/DNSBL planning.
 - Upgrades the Daily SOC Brief into a wall-safe SOCX Morning Brief with headline, What Changed, Security, Metrics, Speed, AI/Fleet, and safe next steps.
 - Adds `socx tmux`, a pfSense-safe tmux session hub with optional lazy-tmux detection. It can list/attach SOCX sessions, start the wall, and write a conservative lazy-tmux guardrail config without making lazy-tmux a required dependency.
@@ -125,7 +127,9 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds SOCX Flow Truth v2: WAN/LAN IPFIX legs are normalized into human-readable paths, flows get `normal`, `new`, or `watch` baseline states, and Operator Chat can answer "what is weird right now?" or "who is using bandwidth?" from measured NetFlow evidence first.
 - Adds hourly config-drift cron support so intentional and unexpected pfSense config changes can be detected against a SOCX backup baseline.
 - Adds `socx autonomy-loop` and `socx autonomy-cron`, a read-only brainstem loop that refreshes Autopilot, Metrics Intelligence, Pi discovery, Pi 3-LLM analysis, and the Morning Brief with lock/timeout protection.
+- Defaults the autonomy cron helper to a 15-minute loop. Use `SOCX_AUTONOMY_INTERVAL_MINUTES=<minutes> socx autonomy-cron install` to change the schedule.
 - Adds Pi 3-LLM role watchdogs so slow or stuck model roles show timeout/error status instead of hanging the SOCX refresh path indefinitely.
+- Adds Pi Lab command aliases through `socx pi-lab bench`, `socx pi-lab explain`, and `socx pi-lab compare` for bounded read-only Pi 5 Hailo/Ollama experiments.
 - Adds starter Grafana alert rules for WAN ping pressure, memory pressure, and PF state pressure plus a daily retained Pi 4 observability backup.
 - Adds focused browser detail pages for Speedtest, Devices, Incidents, AI, and Release Health so the main wall stays clean while deeper evidence is still available.
 - Adds Data Truth freshness scoring, a plain-English Data Truth reason, and a What Changed timeline so collector age, inactive VPN tests, Pi discovery state, UPS freshness, and meaningful state changes are visible.

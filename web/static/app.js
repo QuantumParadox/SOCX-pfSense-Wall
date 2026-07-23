@@ -813,6 +813,8 @@ function commanderActionFromSpeech(text) {
   if (/(speed history|bandwidth history|speed trend)/.test(value)) return "speed-history";
   if (/(memory|repeat|repeated|baseline)/.test(value)) return "memory";
   if (/(lab|experiment|pulse|benchmark)/.test(value)) return "lab";
+  if (/(pi bench|role benchmark|benchmark pi)/.test(value)) return "pi-bench";
+  if (/(pi compare|model compare|compare models|tournament)/.test(value)) return "pi-compare";
   if (/(status|health|doctor)/.test(value)) return "status";
   return "";
 }

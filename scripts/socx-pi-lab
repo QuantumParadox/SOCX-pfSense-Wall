@@ -46,6 +46,15 @@ llm|pulse|llm_pulse)
 models|model_inventory)
     kind="model_inventory"
     ;;
+bench|benchmark|role_benchmark)
+    kind="role_benchmark"
+    ;;
+explain|explain_socx)
+    kind="explain_socx"
+    ;;
+compare|compare_models|tournament)
+    kind="compare_models"
+    ;;
 fw|firewall|firewall_summary)
     kind="stress_llm"
     ;;
@@ -63,7 +72,7 @@ stop)
     exit $?
     ;;
 *)
-    echo "Usage: socx pi-lab [status|llm|thermal|models|fw|dns|start <kind> <seconds>|stop]"
+    echo "Usage: socx pi-lab [status|llm|thermal|models|bench|explain|compare|fw|dns|start <kind> <seconds>|stop]"
     exit 2
     ;;
 esac
@@ -73,7 +82,7 @@ status|stop) exit 0 ;;
 esac
 
 case "$kind" in
-thermal_watch|stress_llm|model_inventory) ;;
+thermal_watch|stress_llm|model_inventory|role_benchmark|explain_socx|compare_models) ;;
 *) kind="stress_llm" ;;
 esac
 case "$duration" in *[!0-9]*|"") duration=30 ;; esac

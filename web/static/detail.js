@@ -2,6 +2,7 @@ const root = document.getElementById("detail-grid");
 const title = document.getElementById("detail-title");
 const subtitle = document.getElementById("detail-subtitle");
 let whyTarget = new URLSearchParams(location.search).get("target") || "";
+let deviceTarget = new URLSearchParams(location.search).get("asset") || new URLSearchParams(location.search).get("target") || "";
 let replayWindow = Number(new URLSearchParams(location.search).get("window") || 21600);
 let bundleStatus = "";
 let storyArchiveStatus = "";
@@ -17,7 +18,9 @@ const esc = (value) => String(value ?? "--").replace(/[&<>"']/g, (c) => ({
 const pageName = () => {
   const path = location.pathname.replace(/^\/+/, "").toLowerCase();
   if (path.includes("flow")) return "flows";
+  if (path === "device") return "device";
   if (path.includes("device")) return "devices";
+  if (path.includes("incident-report")) return "incident-report";
   if (path.includes("incident")) return "incidents";
   if (path.includes("why")) return "why";
   if (path.includes("story")) return "story";
@@ -279,7 +282,10 @@ function deviceCards(devices) {
       <div class="device-tags">${apps.slice(0, 4).map((a) => `<em>${esc(a)}</em>`).join("") || "<em>learning</em>"}</div>
       <div class="device-summary" title="${esc(d.summary || "")}">${esc(d.summary || "SOCX is still learning this device.")}</div>
       ${unusual.length ? `<div class="device-alert">unusual: ${esc(unusual.join(", "))}</div>` : ""}
-      ${askButton(question, "Explain Device")}
+      <div class="device-actions">
+        <a href="/device?asset=${encodeURIComponent(d.asset || d.friendly_name || "")}">Open Detail</a>
+        ${askButton(question, "Explain Device")}
+      </div>
     </article>`;
   }).join("")}</div>`;
 }
@@ -947,6 +953,62 @@ function renderDevices(state) {
   wireAskButtons();
 }
 
+function renderDeviceDetail(state, detail) {
+  title.textContent = "SOCX DEVICE DETAIL";
+  subtitle.textContent = `${state.hostname || "pfSense"} / ${detail.asset || "device"} / read-only profile`;
+  const apps = (detail.apps || []).map((x) => [x.name || x, x.count || "--"]);
+  const services = (detail.services || []).map((x) => [x.name || x, x.count || "--"]);
+  const flowRows = (detail.flows || []).map((r) => [
+    r.display_path || `${r.asset || "--"} -> ${r.peer || "--"}`,
+    r.app || r.service || "--",
+    r.bytes_h || r.count || "--",
+    r.baseline_state || r.state || "--",
+    r.why || r.direction || "--",
+  ]);
+  const packetRows = (detail.packets || []).map((p) => [
+    p.time || "--",
+    p.action || "--",
+    p.proto || "--",
+    p.src_label || p.src || "--",
+    p.dst_label || p.dst || "--",
+    p.service || "--",
+  ]);
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Device Readout", [
+      `<div class="story-title"><span>${esc(detail.friendly_name || detail.asset || "Device")}</span><b class="${(detail.unusual || []).length ? "yellow" : "green"}">${esc(detail.profile || "device")} ${esc(detail.trust_score ?? "--")}</b></div>`,
+      `<div class="detail-reason">${esc(detail.verdict || detail.summary || "SOCX is learning this device.")}</div>`,
+      kv("Identity", detail.identity_confidence || "--", "cyan"),
+      kv("Summary", detail.summary || "--", "cyan"),
+    ].join("")),
+    card("Likely Apps", table(["App", "Count"], apps)),
+    card("Services", table(["Service", "Count"], services)),
+    card("Unusual / Learned-Normal", table(["#", "Observation"], (detail.unusual || []).map((x, idx) => [idx + 1, x]))),
+    card("Current Flow Evidence", table(["Path", "App", "Bytes/Count", "State", "Why"], flowRows)),
+    card("Packet Evidence", table(["Time", "Action", "Proto", "Source", "Destination", "Service"], packetRows)),
+    card("Safe Questions", `<div class="why-targets">${(detail.safe_questions || []).map((q) => `<button class="why-target-button" data-ask="${esc(q)}">${esc(q)}</button>`).join("")}</div>`),
+    card("Safe Commands", table(["#", "Command"], (detail.safe_commands || []).map((cmd, idx) => [idx + 1, cmd]))),
+  ].join("");
+  wireAskButtons();
+}
+
+function renderIncidentReport(state, report) {
+  title.textContent = "SOCX INCIDENT REPORT";
+  subtitle.textContent = `${state.hostname || "pfSense"} / generated report / read-only`;
+  const story = report.story || {};
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    card("Report Summary", [
+      `<div class="story-title"><span>${esc(story.headline || "SOCX incident report")}</span><b class="${String(story.mode || "").includes("INCIDENT") ? "red" : "yellow"}">${esc(story.mode || "WATCH")} ${esc(story.score ?? "--")}</b></div>`,
+      `<div class="story-actions"><a href="/threat-story">Threat Story</a><a href="/incidents">Incidents</a><a href="/why">Why</a></div>`,
+    ].join("")),
+    card("Markdown Report", `<pre class="why-output incident-report-md">${esc(report.markdown || "Report not ready.")}</pre>`),
+    card("Evidence Cards", `<div class="story-evidence-grid">${(story.evidence_cards || []).map(evidenceCard).join("")}</div>`),
+    card("Safe Next Steps", table(["#", "Action"], (story.next_steps || []).map((line, idx) => [idx + 1, line]))),
+  ].join("");
+}
+
 function renderFlowsPage(state, data) {
   title.textContent = "SOCX NETFLOW STORY";
   subtitle.textContent = `${state.hostname || "pfSense"} / NetFlow, top talkers, device trust / ${new Date().toLocaleTimeString()}`;
@@ -1055,6 +1117,7 @@ function renderIncidents(state) {
       kv("Verdict", incident.verdict || "--", incident.verdict === "QUIET" ? "green" : "yellow"),
       kv("Headline", incident.headline || "--", "cyan"),
       kv("FW/DNSBL/IDS", `${incident.counts?.sources || 0}/${incident.counts?.dnsbl || 0}/${incident.ids?.high_signal || 0}`, "yellow"),
+      `<div class="story-actions"><a href="/incident-report">Open Report</a><a href="/threat-story">Threat Story</a><a href="/why">Why</a></div>`,
     ].join("")),
     card("Timeline", table(["Time", "Kind", "Severity", "Title", "Evidence"], (timeline.rows || []).map((r) => [r.time, r.kind, r.severity, r.title, r.evidence]))),
     card("Incident Memory", table(["Type", "Top Repeat", "Count"], [["Samples", "total", memory.count || memory.samples || 0], ["Source", memory.sources?.[0]?.name, memory.sources?.[0]?.count], ["Port", memory.ports?.[0]?.name, memory.ports?.[0]?.count], ["DNSBL", memory.dnsbl?.[0]?.name, memory.dnsbl?.[0]?.count], ["IDS High Samples", "samples", memory.ids_high_samples || 0]])),
@@ -1167,9 +1230,17 @@ async function refresh() {
   const cockpit = page === "cockpit"
     ? await fetch("/api/cockpit", { cache: "no-store" }).then((r) => r.json())
     : null;
+  const deviceDetail = page === "device"
+    ? await fetch(`/api/device-detail${deviceTarget ? `?asset=${encodeURIComponent(deviceTarget)}` : ""}`, { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const incidentReport = page === "incident-report"
+    ? await fetch("/api/incident-report", { cache: "no-store" }).then((r) => r.json())
+    : null;
   subtitle.textContent = `${state.hostname || "pfSense"} / ${state.mode || "live"} / ${new Date().toLocaleTimeString()}`;
   if (page === "cockpit") renderCockpit(state, cockpit || {});
   else if (page === "threat-story") renderThreatStory(state, threatStory || {});
+  else if (page === "device") renderDeviceDetail(state, deviceDetail || {});
+  else if (page === "incident-report") renderIncidentReport(state, incidentReport || {});
   else if (page === "flows") renderFlowsPage(state, flowsData || {});
   else if (page === "replay") renderReplay(state, replay || {});
   else if (page === "map") renderThreatMap(state, threatMap || {});

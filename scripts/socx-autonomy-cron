@@ -3,7 +3,7 @@ set -eu
 
 ACTION="${1:-install}"
 CRON_FILE="${SOCX_AUTONOMY_CRON_FILE:-/etc/cron.d/socx-autonomy}"
-INTERVAL="${SOCX_AUTONOMY_INTERVAL_MINUTES:-5}"
+INTERVAL="${SOCX_AUTONOMY_INTERVAL_MINUTES:-15}"
 
 case "$ACTION" in
     install|enable)

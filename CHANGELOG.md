@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added `/device` and `/api/device-detail`, a focused per-asset readout with friendly identity, trust score, likely apps/services, unusual observations, current flows, packet evidence, and safe operator questions.
+- Added `/incident-report` and `/api/incident-report`, a read-only Markdown incident report generator built from the current threat story, evidence cards, timeline, and safe next steps.
+- Changed `socx-autonomy-cron` to a 15-minute default loop and exposed autonomy interval/next-run timing through the web state API.
+- Expanded `socx pi-lab` with `bench`, `explain`, and `compare` experiment aliases for read-only Pi 5 Hailo/Ollama lab tests.
+- Added browser Commander and voice hooks for Pi Bench and Pi Compare so the SOCX Web Wall can trigger bounded Pi AI experiments from the operator console.
 - Added `/cockpit` and `/api/cockpit`, a mobile/tablet-friendly operator cockpit with current threat story, mission checks, device/app summary, AI/Pi health, metrics context, next actions, and ready-to-ask SOCX prompts.
 - Added `/threat-story` and `/api/threat-story`, a plain-English incident narrative with evidence cards, repeated-pattern memory, timeline context, and safe next steps.
 - Polished incident bundle responses with the current threat-story summary, evidence cards, and safe next steps so bundles are easier to understand after capture.
