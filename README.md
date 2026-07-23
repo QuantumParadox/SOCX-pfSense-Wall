@@ -96,6 +96,7 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds `socx hardware`, `socx stability-watch`, and `socx baseline` for thermal headroom, UPS watt trend, short/overnight stability evidence, and appliance performance baselines.
 - Adds VPN crypto headroom on the browser Speedtest page so DIRECT/VPN throughput can be read beside current CPU temperature and thermal headroom.
 - Adds SOCX Mission / Operator Intelligence through `/mission`, `/api/mission`, and `socx mission`, summarizing what changed, what matters, what to check, and what is probably noise.
+- Adds SOCX Replay through `/replay` and `/api/replay`, a read-only flight recorder that turns retained history into score buckets, security playback, Speedtest playback, Flow Truth context, thermal/UPS spikes, and safe drilldown links.
 - Adds SOCX ATT&CK / D3FEND / KEV Intelligence through `/api/intel`, Mission cards, and `socx intel`. It maps current firewall/DNSBL/IDS/asset-drift evidence to conservative ATT&CK context, defensive countermeasure names, CISA KEV status, priority, disposition, and a compact kill-chain story. It is read-only and never changes pfSense policy.
 - Adds SOCX Operator Chat through the browser Command Center, `/api/chat`, and `socx chat`. Ask plain-English questions about firewall blocks, DNSBL, IDS/Suricata, VPN, Speedtest, Pi AI, devices, or draft-only pfSense configuration plans. Chat can delegate to the Pi 5 LLM endpoint when available, shows visible operational steps, and never applies pfSense changes from chat.
 - Adds the full-size `/chat` Operator Chat page with suggested questions, current signal context, readable action cards, and safety mode descriptions. Live Flow and Packet Story rows on the wall can be clicked to ask SOCX to explain that exact row.
@@ -532,6 +533,17 @@ Reports are written to `/root/socx-reports/` and include firewall blocks, DNSBL 
 `socx chat "why is DNSBL high?"` opens the same Operator Chat used by the browser wall. It classifies questions as `ANSWER`, `PLAN`, or `DENIED`, collects current pfSense/SOCX evidence, asks the Pi 5 chat model when available, and falls back to local rule-based explanation when the Pi is stale or offline. Configuration requests are draft-only and return `approval_required=true`; they do not edit pfSense rules, aliases, IDS settings, DNSBL allowlists, or services.
 
 The browser Chat page is available at `/chat`. It is better for longer answers than the compact wall chatbox. It shows visible steps, safe commands, and action cards such as Current Evidence, Intel Context, DNSBL Review, IDS Review, Draft Only, Rule Assistant, and Preserve If Unsure. On the main wall, click a Live Flow or Packet Story row to send that row into Operator Chat for a plain-English explanation.
+
+### SOCX Replay
+
+Open `/replay` when the live wall looks busy and you want to understand the last few hours. Replay is a calm after-action view: it does not run heavy packet captures or change pfSense. It reads retained SOCX history, Speedtest history, incident memory, Flow Truth, Data Truth, UPS, and Pi AI summaries, then shows:
+
+- score buckets across the replay window
+- security playback for firewall, DNSBL, IDS, and repeated evidence
+- direct and VPN Speedtest playback
+- NetFlow/Flow Truth context for top paths and apps
+- thermal and UPS load spikes
+- safe links into Mission, Flows, Incidents, and Chat
 
 `socx repair` safely restarts SOCX helper collectors such as UPS cache, Speedtest cache, Packet Radar, vnstatd, LLDP, and Pi discovery. It does not change firewall policy or pfSense rules.
 

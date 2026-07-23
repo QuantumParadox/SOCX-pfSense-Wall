@@ -21,6 +21,7 @@ const pageName = () => {
   if (path.includes("why")) return "why";
   if (path.includes("story")) return "story";
   if (path.includes("mission")) return "mission";
+  if (path.includes("replay")) return "replay";
   if (path.includes("observability") || path.includes("metrics")) return "observability";
   if (path.includes("guide")) return "guide";
   if (path.includes("chat")) return "chat";
@@ -328,6 +329,76 @@ function renderMission(state, mission) {
   ].join("");
 }
 
+function renderReplay(state, replay) {
+  title.textContent = "SOCX REPLAY";
+  subtitle.textContent = `${state.hostname || "pfSense"} / flight recorder / ${replay.window_h || "--"} window`;
+  const buckets = replay.buckets || [];
+  const maxScore = Math.max(100, ...buckets.map((b) => Number(b.score || 0)));
+  const bucketHtml = buckets.map((b) => {
+    const score = Number(b.score || 0);
+    const height = Math.max(8, Math.round((score / maxScore) * 88));
+    const tone = score >= 85 ? "green" : score >= 65 ? "yellow" : score > 0 ? "red" : "cyan";
+    return `<div class="replay-bucket" title="${esc(b.label)} score ${esc(score)} samples ${esc(b.samples)}">
+      <i class="${tone}" style="height:${height}%"></i>
+      <span>${esc(b.label)}</span>
+    </div>`;
+  }).join("");
+  const timelineRows = (replay.timeline || []).map((r) => [
+    r.time || "--",
+    r.lane || "--",
+    r.severity || "--",
+    r.title || "--",
+    r.detail || "--",
+  ]);
+  const speedRows = (replay.speed?.rows || []).map((r) => [
+    r.time || "--",
+    r.path || "--",
+    r.status || "--",
+    `${r.down || "--"}/${r.up || "--"} Mbps`,
+    `${r.ping || "--"}ms`,
+    r.message || "--",
+  ]);
+  const flowRows = (replay.flow?.top || []).map((r) => [
+    r.display_path || `${r.asset || "--"} -> ${r.peer || "--"}`,
+    r.app || r.service || "--",
+    r.bytes_h || "--",
+    r.baseline_state || "--",
+    r.why || "--",
+  ]);
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    card("Replay Readout", [
+      `<div class="detail-score ${replay.status === "LIVE" ? "green" : "yellow"}">${esc(replay.status || "UNKNOWN")} ${esc(replay.score?.current || replay.score?.avg || "--")}/100</div>`,
+      `<div class="detail-reason">Last ${esc(replay.window_h || "--")} from ${esc(replay.samples || 0)} retained SOCX samples. Trend is ${esc(replay.score?.trend?.label || "--")}.</div>`,
+      `<div class="replay-chart">${bucketHtml || "<span class=\"muted\">No replay buckets yet</span>"}</div>`,
+    ].join("")),
+    card("Mission Spikes", [
+      kv("Score", `avg ${replay.score?.avg || "--"} / min ${replay.score?.min || "--"} / max ${replay.score?.max || "--"}`, "cyan"),
+      kv("Direct Speed", `${replay.speed?.direct_avg || "--"} Mbps average`, "green"),
+      kv("VPN Speed", `${replay.speed?.vpn_avg || "--"} Mbps average`, Number(replay.speed?.vpn_avg || 0) ? "green" : "yellow"),
+      kv("Thermal", `now ${replay.thermal?.current || "--"}C / peak ${replay.thermal?.peak || "--"}C`, Number(replay.thermal?.peak || 0) >= 75 ? "yellow" : "green"),
+      kv("UPS", `now ${replay.ups?.current || "--"}W / peak ${replay.ups?.peak || "--"}W`, "cyan"),
+    ].join("")),
+    card("Security Playback", [
+      kv("Verdict", replay.security?.verdict || "--", replay.security?.verdict === "QUIET" ? "green" : "yellow"),
+      kv("Headline", replay.security?.headline || "--", "cyan"),
+      kv("FW / DNSBL / IDS", `${replay.security?.fw_blocks || 0} / ${replay.security?.dnsbl || 0} / ${replay.security?.ids_high || 0}`, Number(replay.security?.ids_high || 0) ? "red" : "yellow"),
+      kv("Memory Samples", replay.security?.memory_samples || 0, "cyan"),
+    ].join("")),
+    card("What Happened", table(["Time", "Lane", "Severity", "Signal", "Detail"], timelineRows)),
+    card("Speedtest Playback", table(["Time", "Path", "Status", "Down/Up", "Ping", "Detail"], speedRows)),
+    card("Flow Playback", [
+      `<div class="detail-reason">${esc(replay.flow?.summary || "NetFlow waiting")}</div>`,
+      table(["Path", "App", "Bytes", "State", "Why"], flowRows),
+    ].join("")),
+    card("Replay Actions", table(["Action", "Open", "Why"], (replay.commands || []).map((cmd) => [
+      cmd.label || "--",
+      cmd.href || "--",
+      cmd.why || "--",
+    ]))),
+  ].join("");
+}
+
 function renderGuide(state) {
   title.textContent = "SOCX GUIDE";
   subtitle.textContent = "how to read the wall and talk to pfSense";
@@ -373,6 +444,7 @@ function renderGuide(state) {
     ].join("")),
     card("Drilldowns", table(["Page", "Best For"], [
       ["Mission", "What matters, what changed, what to check, probable noise."],
+      ["Replay", "A calm flight recorder for recent trends, Speedtest, security events, and Flow Truth."],
       ["Speed", "Direct vs VPN speed tests and router/client truth."],
       ["Devices", "Friendly device and application labels."],
       ["Incidents", "Firewall/DNSBL/IDS evidence tables."],
@@ -705,8 +777,12 @@ async function refresh() {
   const flowsData = page === "flows"
     ? await fetch("/api/flows", { cache: "no-store" }).then((r) => r.json())
     : null;
+  const replay = page === "replay"
+    ? await fetch("/api/replay", { cache: "no-store" }).then((r) => r.json())
+    : null;
   subtitle.textContent = `${state.hostname || "pfSense"} / ${state.mode || "live"} / ${new Date().toLocaleTimeString()}`;
   if (page === "flows") renderFlowsPage(state, flowsData || {});
+  else if (page === "replay") renderReplay(state, replay || {});
   else if (page === "devices") renderDevices(state);
   else if (page === "incidents") renderIncidents(state);
   else if (page === "ai") renderAi(state);

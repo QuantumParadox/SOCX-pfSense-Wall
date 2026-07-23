@@ -2863,6 +2863,175 @@ class SocxCollector:
             by_window[label] = sum(1 for row in rows if float(row.get("ts") or 0) >= now - seconds)
         return {"rows": rows[-80:], "paths": sorted(summaries, key=lambda item: str(item.get("path"))), "count": len(rows), "latest_age_sec": age, "windows": by_window}
 
+    def collect_replay(self) -> dict[str, Any]:
+        """Build a calm, read-only flight recorder from existing SOCX history."""
+        snap = self.snapshot()
+        rows = self.collect_history(720)
+        now = time.time()
+        window_seconds = env_int("SOCX_REPLAY_WINDOW_SECONDS", 21600)
+        recent = [row for row in rows if self.replay_row_ts(row) >= now - window_seconds]
+        if not recent:
+            recent = rows[-180:]
+        trend = self.history_trend(recent)
+        speed = snap.get("speedtest_history") or self.collect_speedtest_history()
+        incident = snap.get("incident") if isinstance(snap.get("incident"), dict) else {}
+        memory = snap.get("incident_memory") if isinstance(snap.get("incident_memory"), dict) else self.collect_incident_memory()
+        data_truth = snap.get("data_truth") if isinstance(snap.get("data_truth"), dict) else {}
+        mission = snap.get("mission") if isinstance(snap.get("mission"), dict) else {}
+        netflow = snap.get("netflow_intel") if isinstance(snap.get("netflow_intel"), dict) else {}
+
+        buckets = self.replay_buckets(recent, 18)
+        score_vals = [self.safe_float(row.get("score")) for row in recent if self.safe_float(row.get("score")) > 0]
+        cpu_vals = [self.safe_float(row.get("cpu_temp_max") or row.get("cpu_temp")) for row in recent if self.safe_float(row.get("cpu_temp_max") or row.get("cpu_temp")) > 0]
+        ups_vals = [self.safe_float(row.get("ups_watts")) for row in recent if self.safe_float(row.get("ups_watts")) > 0]
+        direct_vals = [self.safe_float(row.get("direct_down")) for row in recent if self.safe_float(row.get("direct_down")) > 0]
+        vpn_vals = [self.safe_float(row.get("vpn_down")) for row in recent if self.safe_float(row.get("vpn_down")) > 0]
+
+        what_changed = snap.get("what_changed", {}).get("rows", []) if isinstance(snap.get("what_changed"), dict) else []
+        incident_rows = snap.get("incident_timeline", {}).get("rows", []) if isinstance(snap.get("incident_timeline"), dict) else []
+        ai_rows = snap.get("ai_timeline", {}).get("rows", []) if isinstance(snap.get("ai_timeline"), dict) else []
+        replay_rows: list[dict[str, Any]] = []
+        for row in what_changed[:6]:
+            replay_rows.append({
+                "time": row.get("time") or time.strftime("%H:%M:%S"),
+                "lane": "CHANGE",
+                "severity": row.get("severity") or "MED",
+                "title": row.get("title") or "SOCX change",
+                "detail": row.get("detail") or row.get("to") or "--",
+            })
+        for row in incident_rows[:6]:
+            replay_rows.append({
+                "time": row.get("time") or time.strftime("%H:%M:%S"),
+                "lane": row.get("kind") or "INCIDENT",
+                "severity": row.get("severity") or "LOW",
+                "title": row.get("title") or "Incident signal",
+                "detail": row.get("detail") or row.get("evidence") or "--",
+            })
+        for row in ai_rows[:4]:
+            replay_rows.append({
+                "time": row.get("age_h") or "live",
+                "lane": "AI",
+                "severity": row.get("severity") or "INFO",
+                "title": row.get("source") or "AI verdict",
+                "detail": row.get("reason") or "--",
+            })
+
+        speed_rows = []
+        for row in (speed.get("rows") if isinstance(speed, dict) else [])[-10:]:
+            status = str(row.get("status") or "").upper()
+            speed_rows.append({
+                "time": self.replay_time_label(self.replay_row_ts(row)),
+                "path": str(row.get("path_slug") or row.get("profile") or "unknown").upper(),
+                "status": status or "UNKNOWN",
+                "down": round(self.safe_float(row.get("download_mbps"))),
+                "up": round(self.safe_float(row.get("upload_mbps"))),
+                "ping": round(self.safe_float(row.get("ping_ms")), 1),
+                "message": str(row.get("message") or row.get("server_name") or "")[:120],
+            })
+
+        return {
+            "updated_ms": now_ms(),
+            "window_h": human_duration(window_seconds),
+            "samples": len(recent),
+            "status": data_truth.get("label") or "UNKNOWN",
+            "score": {
+                "trend": trend,
+                "current": score_vals[-1] if score_vals else "",
+                "min": round(min(score_vals)) if score_vals else "",
+                "max": round(max(score_vals)) if score_vals else "",
+                "avg": round(sum(score_vals) / len(score_vals)) if score_vals else "",
+            },
+            "thermal": {
+                "current": round(cpu_vals[-1], 1) if cpu_vals else "",
+                "peak": round(max(cpu_vals), 1) if cpu_vals else "",
+                "avg": round(sum(cpu_vals) / len(cpu_vals), 1) if cpu_vals else "",
+            },
+            "ups": {
+                "current": round(ups_vals[-1]) if ups_vals else snap.get("ups", {}).get("watts", ""),
+                "peak": round(max(ups_vals)) if ups_vals else "",
+                "avg": round(sum(ups_vals) / len(ups_vals)) if ups_vals else "",
+            },
+            "speed": {
+                "direct_avg": round(sum(direct_vals) / len(direct_vals)) if direct_vals else trend.get("direct_avg", ""),
+                "vpn_avg": round(sum(vpn_vals) / len(vpn_vals)) if vpn_vals else trend.get("vpn_avg", ""),
+                "paths": speed.get("paths", []) if isinstance(speed, dict) else [],
+                "rows": speed_rows,
+            },
+            "security": {
+                "verdict": incident.get("verdict") or "--",
+                "headline": incident.get("headline") or mission.get("headline") or "--",
+                "fw_blocks": incident.get("counts", {}).get("sources", 0) if isinstance(incident.get("counts"), dict) else 0,
+                "dnsbl": incident.get("counts", {}).get("dnsbl", 0) if isinstance(incident.get("counts"), dict) else 0,
+                "ids_high": incident.get("ids", {}).get("high_signal", 0) if isinstance(incident.get("ids"), dict) else 0,
+                "memory_samples": memory.get("count", 0),
+            },
+            "flow": {
+                "status": netflow.get("status") or "--",
+                "summary": netflow.get("summary") or "NetFlow waiting",
+                "top": (netflow.get("rows") or [])[:6] if isinstance(netflow.get("rows"), list) else [],
+            },
+            "buckets": buckets,
+            "timeline": replay_rows[:14],
+            "commands": [
+                {"label": "Open Mission", "href": "/mission", "why": "read the current plain-English SOCX mission"},
+                {"label": "Open Flows", "href": "/flows", "why": "check top talkers and new/watch flows"},
+                {"label": "Open Incidents", "href": "/incidents", "why": "review firewall, DNSBL, and IDS evidence"},
+                {"label": "Ask Chat", "href": "/chat", "why": "ask SOCX what changed or what to check next"},
+            ],
+        }
+
+    def replay_row_ts(self, row: dict[str, Any]) -> float:
+        raw = row.get("ts") or row.get("updated") or row.get("time") or row.get("timestamp") or 0
+        if isinstance(raw, (int, float)):
+            value = float(raw)
+        else:
+            text = str(raw)
+            try:
+                value = float(text)
+            except ValueError:
+                try:
+                    value = time.mktime(time.strptime(text[:19], "%Y-%m-%d %H:%M:%S"))
+                except Exception:
+                    return 0.0
+        if value > 100000000000:
+            value /= 1000.0
+        return value
+
+    def replay_time_label(self, ts: float) -> str:
+        return time.strftime("%H:%M", time.localtime(ts)) if ts > 0 else "--"
+
+    def replay_buckets(self, rows: list[dict[str, Any]], count: int = 18) -> list[dict[str, Any]]:
+        if not rows:
+            return []
+        timestamps = [self.replay_row_ts(row) for row in rows if self.replay_row_ts(row) > 0]
+        if not timestamps:
+            return []
+        start = min(timestamps)
+        end = max(max(timestamps), start + 1)
+        width = max(1.0, (end - start) / max(1, count))
+        buckets: list[dict[str, Any]] = []
+        for idx in range(count):
+            lo = start + (idx * width)
+            hi = lo + width
+            items = [row for row in rows if lo <= self.replay_row_ts(row) < hi or (idx == count - 1 and self.replay_row_ts(row) <= hi)]
+            score_vals = [self.safe_float(row.get("score")) for row in items if self.safe_float(row.get("score")) > 0]
+            sec_vals = [self.safe_float(row.get("security_score")) for row in items if self.safe_float(row.get("security_score")) > 0]
+            net_vals = [self.safe_float(row.get("network_score")) for row in items if self.safe_float(row.get("network_score")) > 0]
+            buckets.append({
+                "label": self.replay_time_label(lo),
+                "samples": len(items),
+                "score": round(sum(score_vals) / len(score_vals)) if score_vals else 0,
+                "security": round(sum(sec_vals) / len(sec_vals)) if sec_vals else 0,
+                "network": round(sum(net_vals) / len(net_vals)) if net_vals else 0,
+            })
+        return buckets
+
+    def safe_float(self, value: Any) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
     def collect_incident_memory(self) -> dict[str, Any]:
         path = Path(os.environ.get("SOCX_INCIDENT_MEMORY_FILE", "/var/db/socx_incident_memory.jsonl"))
         rows = self.read_jsonl_tail(path, 500)
@@ -3965,6 +4134,9 @@ class SocxHandler(BaseHTTPRequestHandler):
                 "updated_ms": now_ms(),
             })
             return
+        if parsed.path == "/api/replay":
+            self.send_json(self.collector.collect_replay())
+            return
         if parsed.path == "/api/autonomy-loop":
             self.send_json(self.collector.collect_autonomy_loop())
             return
@@ -4084,7 +4256,7 @@ class SocxHandler(BaseHTTPRequestHandler):
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health", "/why", "/story", "/mission", "/flows", "/observability", "/metrics", "/guide", "/chat"}:
+        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health", "/why", "/story", "/mission", "/flows", "/replay", "/observability", "/metrics", "/guide", "/chat"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"
