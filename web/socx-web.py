@@ -1861,6 +1861,8 @@ class SocxCollector:
             return {"ok": False, "error": str(exc), "story": story}
 
     def create_incident_bundle(self) -> dict[str, Any]:
+        snap = self.snapshot()
+        story = self.collect_threat_story(snap)
         result = run_cmd_capture(["/usr/local/bin/socx", "incident", "quick"], timeout=120.0)
         output = result.get("output", "")
         latest = ""
@@ -1880,7 +1882,153 @@ class SocxCollector:
             "latest": latest,
             "archive": archive,
             "checksum": checksum,
+            "summary": story.get("headline", "SOCX incident evidence preserved."),
+            "story": story.get("story", [])[:6],
+            "next_steps": story.get("next_steps", [])[:5],
+            "evidence_cards": story.get("evidence_cards", [])[:8],
+            "read_only": True,
             **result,
+        }
+
+    def collect_threat_story(self, snap: dict[str, Any] | None = None) -> dict[str, Any]:
+        snap = snap or self.snapshot()
+        incident = snap.get("incident", {}) if isinstance(snap, dict) else {}
+        pulse = snap.get("threat_pulse", {}) if isinstance(snap, dict) else {}
+        truth = snap.get("data_truth", {}) if isinstance(snap, dict) else {}
+        intel = snap.get("intel", {}) if isinstance(snap, dict) else {}
+        timeline = snap.get("incident_timeline", {}) if isinstance(snap, dict) else {}
+        memory = snap.get("incident_memory", {}) if isinstance(snap, dict) else {}
+        netflow = snap.get("netflow_intel", {}) if isinstance(snap, dict) else {}
+        pi = snap.get("pi_nodes", {}) if isinstance(snap, dict) else {}
+        top_source = (incident.get("blocked_sources") or [{}])[0] if isinstance(incident.get("blocked_sources"), list) else {}
+        top_port = (incident.get("blocked_ports") or [{}])[0] if isinstance(incident.get("blocked_ports"), list) else {}
+        top_dns = (incident.get("dnsbl_domains") or [{}])[0] if isinstance(incident.get("dnsbl_domains"), list) else {}
+        ids = incident.get("ids") if isinstance(incident.get("ids"), dict) else {}
+        label = str(incident.get("verdict") or pulse.get("label") or "WATCH").upper()
+        ids_high = int(ids.get("high_signal", ids.get("signal", 0)) or 0)
+        fw_blocks = int(pulse.get("fw_blocks", 0) or 0)
+        dnsbl_hits = int(pulse.get("dnsbl_hits", 0) or 0)
+        headline = incident.get("headline") or f"{label}: FW {fw_blocks}, DNSBL {dnsbl_hits}, IDS high {ids_high}"
+        story: list[str] = [
+            f"SOCX is in {label} mode with data truth {truth.get('label', 'UNKNOWN')} {truth.get('score', '--')}/100.",
+            f"Firewall pressure: {fw_blocks} sampled blocks. Top source {top_source.get('name', 'none')} x{top_source.get('count', 0)}, top port {top_port.get('name', 'mixed')} x{top_port.get('count', 0)}.",
+        ]
+        if top_dns.get("name"):
+            story.append(f"DNSBL is filtering {top_dns.get('name')} x{top_dns.get('count', 0)}. Treat ad/telemetry domains differently from malware or phishing domains.")
+        else:
+            story.append("DNSBL has no dominant blocked domain in the current sample.")
+        if ids_high:
+            story.append(f"IDS has {ids_high} high-signal alert samples. Preserve evidence before suppressing or tuning rules.")
+        else:
+            story.append(f"IDS looks routine/watch level: {ids.get('watch', 0)} watch rows and {ids.get('routine', 0)} routine rows.")
+        if netflow.get("summary"):
+            story.append(f"Flow Truth: {netflow.get('summary')}")
+        if pi.get("summary"):
+            story.append(f"Pi fleet: {pi.get('summary')}")
+        evidence_cards = [
+            {"label": "Firewall", "value": f"{fw_blocks} blocks", "tone": "yellow" if fw_blocks else "green", "detail": f"top {top_source.get('name', 'none')} / port {top_port.get('name', 'mixed')}"},
+            {"label": "DNSBL", "value": f"{dnsbl_hits} hits", "tone": "purple" if dnsbl_hits else "green", "detail": top_dns.get("name", "no dominant domain")},
+            {"label": "IDS", "value": f"{ids_high} high", "tone": "red" if ids_high else "green", "detail": f"watch {ids.get('watch', 0)} / routine {ids.get('routine', 0)}"},
+            {"label": "Data Truth", "value": f"{truth.get('label', 'UNKNOWN')} {truth.get('score', '--')}", "tone": truth.get("tone", "cyan"), "detail": truth.get("reason", "collector freshness")},
+            {"label": "ATT&CK", "value": (intel.get("priority") or {}).get("level", "--") if isinstance(intel.get("priority"), dict) else "--", "tone": "purple", "detail": (intel.get("priority") or {}).get("status", "advisory context") if isinstance(intel.get("priority"), dict) else "advisory context"},
+        ]
+        next_steps = [
+            "Open /why for the top source, port, or DNSBL domain before changing policy.",
+            "Use Bundle or Snapshot before IDS tuning, DNSBL allowlisting, or firewall rule edits.",
+            "Use /flows to confirm whether a LAN device is involved or this is only WAN background noise.",
+            "Ask SOCX Chat to draft a plan; review manually before applying anything in pfSense.",
+        ]
+        if ids_high:
+            next_steps.insert(0, "Preserve an incident bundle now because IDS has high-signal evidence.")
+        if str(truth.get("label", "")).upper() not in {"LIVE", "OK"}:
+            next_steps.insert(0, "Open /health because Data Truth is not fully live.")
+        timeline_rows = timeline.get("rows") if isinstance(timeline.get("rows"), list) else []
+        repeated = {
+            "sources": (memory.get("sources") or [])[:4] if isinstance(memory.get("sources"), list) else [],
+            "ports": (memory.get("ports") or [])[:4] if isinstance(memory.get("ports"), list) else [],
+            "dnsbl": (memory.get("dnsbl") or [])[:4] if isinstance(memory.get("dnsbl"), list) else [],
+        }
+        return {
+            "title": "SOCX Threat Story",
+            "headline": str(headline),
+            "mode": label,
+            "score": pulse.get("score", incident.get("score", "--")),
+            "story": story,
+            "evidence_cards": evidence_cards,
+            "timeline": timeline_rows[:10],
+            "repeated": repeated,
+            "next_steps": next_steps[:6],
+            "questions": [
+                "Explain the current threat story in plain English.",
+                "Is the top blocked source routine internet noise or something I should investigate?",
+                "What should I preserve before tuning IDS or DNSBL?",
+                "What LAN device or app changed recently?",
+            ],
+            "read_only": True,
+            "updated_ms": now_ms(),
+        }
+
+    def collect_operator_cockpit(self) -> dict[str, Any]:
+        snap = self.snapshot()
+        story = self.collect_threat_story(snap)
+        brief = snap.get("daily_brief", {}) if isinstance(snap.get("daily_brief"), dict) else {}
+        mission = snap.get("mission", {}) if isinstance(snap.get("mission"), dict) else {}
+        truth = snap.get("data_truth", {}) if isinstance(snap.get("data_truth"), dict) else {}
+        asset = snap.get("asset_watch", {}) if isinstance(snap.get("asset_watch"), dict) else {}
+        pi = snap.get("pi_nodes", {}) if isinstance(snap.get("pi_nodes"), dict) else {}
+        command = snap.get("command_center", {}) if isinstance(snap.get("command_center"), dict) else {}
+        metrics = snap.get("metrics_intel", {}) if isinstance(snap.get("metrics_intel"), dict) else {}
+        netflow = snap.get("netflow_intel", {}) if isinstance(snap.get("netflow_intel"), dict) else {}
+        devices = (snap.get("label_brain", {}) or {}).get("devices", []) if isinstance(snap.get("label_brain", {}), dict) else []
+        next_actions = []
+        for item in story.get("next_steps", [])[:3]:
+            next_actions.append({"label": "Threat", "action": item, "href": "/incidents"})
+        for item in (mission.get("what_to_check") or [])[:3] if isinstance(mission.get("what_to_check"), list) else []:
+            next_actions.append({"label": "Mission", "action": item, "href": "/mission"})
+        for item in (metrics.get("next_steps") or [])[:2] if isinstance(metrics.get("next_steps"), list) else []:
+            next_actions.append({"label": "Metrics", "action": item, "href": "/observability"})
+        quick_questions = [
+            "What changed in the last hour and what should I check first?",
+            "Explain the current threat story like I am across the room.",
+            "Who is using bandwidth right now?",
+            "What unknown devices, apps, or labels should I fix next?",
+            "Draft a safe pfSense review plan without applying anything.",
+            "Run a Doctor-style review of WARN items.",
+        ]
+        return {
+            "title": "SOCX Operator Cockpit",
+            "headline": brief.get("headline") or story.get("headline") or "SOCX is watching the network.",
+            "mode": command.get("mode") or story.get("mode") or "WATCH",
+            "score": command.get("score") or story.get("score") or truth.get("score") or "--",
+            "truth": truth,
+            "threat_story": story,
+            "mission": {
+                "headline": mission.get("headline"),
+                "what_matters": (mission.get("what_matters") or [])[:4] if isinstance(mission.get("what_matters"), list) else [],
+                "what_to_check": (mission.get("what_to_check") or [])[:4] if isinstance(mission.get("what_to_check"), list) else [],
+                "probably_noise": (mission.get("probably_noise") or [])[:4] if isinstance(mission.get("probably_noise"), list) else [],
+            },
+            "devices": {
+                "headline": asset.get("headline"),
+                "known": asset.get("known"),
+                "unknown": asset.get("unknown"),
+                "now_watching": asset.get("now_watching", []),
+                "cards": devices[:6] if isinstance(devices, list) else [],
+            },
+            "ai": {
+                "pi": pi.get("summary"),
+                "roles": [node.get("role_h") or node.get("service_h") or node.get("role") for node in (pi.get("nodes") or [])[:3] if isinstance(node, dict)],
+                "timeline": (snap.get("ai_timeline", {}) or {}).get("rows", [])[:4] if isinstance(snap.get("ai_timeline", {}), dict) else [],
+            },
+            "metrics": {
+                "severity": metrics.get("severity"),
+                "summary": metrics.get("summary"),
+                "flow": netflow.get("summary"),
+            },
+            "next_actions": next_actions[:7],
+            "quick_questions": quick_questions,
+            "read_only": True,
+            "updated_ms": now_ms(),
         }
 
     def remember_change(self, key: str, value: str, title: str, detail: str, severity: str = "LOW") -> None:
@@ -4358,6 +4506,12 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/threat-map":
             self.send_json(self.collector.collect_threat_map())
             return
+        if parsed.path == "/api/threat-story":
+            self.send_json(self.collector.collect_threat_story())
+            return
+        if parsed.path == "/api/cockpit":
+            self.send_json(self.collector.collect_operator_cockpit())
+            return
         if parsed.path == "/api/autonomy-loop":
             self.send_json(self.collector.collect_autonomy_loop())
             return
@@ -4477,7 +4631,7 @@ class SocxHandler(BaseHTTPRequestHandler):
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/observability", "/metrics", "/guide", "/chat"}:
+        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"

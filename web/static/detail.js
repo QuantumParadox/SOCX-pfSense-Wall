@@ -22,6 +22,8 @@ const pageName = () => {
   if (path.includes("why")) return "why";
   if (path.includes("story")) return "story";
   if (path.includes("mission")) return "mission";
+  if (path.includes("cockpit")) return "cockpit";
+  if (path.includes("threat-story")) return "threat-story";
   if (path.includes("replay")) return "replay";
   if (path.includes("map")) return "map";
   if (path.includes("observability") || path.includes("metrics")) return "observability";
@@ -709,6 +711,95 @@ function renderThreatMap(state, map) {
   wireAskButtons();
 }
 
+function evidenceCard(item = {}) {
+  return `<div class="story-evidence-card ${esc(item.tone || "cyan")}">
+    <b>${esc(item.label || "Signal")}</b>
+    <strong>${esc(item.value || "--")}</strong>
+    <span title="${esc(item.detail || "")}">${esc(item.detail || "--")}</span>
+  </div>`;
+}
+
+function renderThreatStory(state, story) {
+  title.textContent = "SOCX THREAT STORY";
+  subtitle.textContent = `${state.hostname || "pfSense"} / plain-English incident narrative / ${new Date().toLocaleTimeString()}`;
+  const repeated = story.repeated || {};
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Threat Story", [
+      `<div class="story-title"><span>${esc(story.headline || "SOCX is watching current evidence")}</span><b class="${String(story.mode || "").includes("INCIDENT") ? "red" : "yellow"}">${esc(story.mode || "WATCH")} ${esc(story.score ?? "--")}</b></div>`,
+      `<div class="story-evidence-grid">${(story.evidence_cards || []).map(evidenceCard).join("")}</div>`,
+    ].join("")),
+    card("What SOCX Thinks It Is Seeing", table(["#", "Narrative"], (story.story || []).map((line, idx) => [idx + 1, line]))),
+    card("What To Do Next", table(["#", "Safe Action"], (story.next_steps || []).map((line, idx) => [idx + 1, line]))),
+    card("Recent Incident Timeline", table(["Time", "Kind", "Severity", "Signal", "Evidence"], (story.timeline || []).map((r) => [
+      r.time || "--",
+      r.kind || "--",
+      r.severity || "--",
+      r.title || "--",
+      r.evidence || r.detail || "--",
+    ]))),
+    card("Repeated Patterns", table(["Type", "Name", "Count"], [
+      ...(repeated.sources || []).map((x) => ["source", x.name, x.count]),
+      ...(repeated.ports || []).map((x) => ["port", x.name, x.count]),
+      ...(repeated.dnsbl || []).map((x) => ["dnsbl", x.name, x.count]),
+    ])),
+    card("Ask SOCX", `<div class="why-targets">${(story.questions || []).map((q) => `<button class="why-target-button" data-ask="${esc(q)}">${esc(q)}</button>`).join("")}</div>`),
+  ].join("");
+  wireAskButtons();
+}
+
+function renderCockpit(state, cockpit) {
+  title.textContent = "SOCX OPERATOR COCKPIT";
+  subtitle.textContent = `${state.hostname || "pfSense"} / mobile and tablet command view / ${new Date().toLocaleTimeString()}`;
+  const threat = cockpit.threat_story || {};
+  const mission = cockpit.mission || {};
+  const devices = cockpit.devices || {};
+  const ai = cockpit.ai || {};
+  const metrics = cockpit.metrics || {};
+  root.innerHTML = [
+    card("Now", [
+      `<div class="cockpit-hero"><span>${esc(cockpit.headline || "SOCX is watching")}</span><b class="${String(cockpit.mode || "").includes("NORMAL") ? "green" : "yellow"}">${esc(cockpit.mode || "WATCH")} ${esc(cockpit.score ?? "--")}</b></div>`,
+      `<div class="detail-reason">${esc(threat.story?.[0] || "SOCX is collecting live pfSense evidence.")}</div>`,
+    ].join("")),
+    card("Threat Story", [
+      `<div class="story-evidence-grid">${(threat.evidence_cards || []).map(evidenceCard).join("")}</div>`,
+      table(["#", "What SOCX Saw"], (threat.story || []).slice(0, 4).map((line, idx) => [idx + 1, line])),
+    ].join("")),
+    card("Next Actions", table(["Lane", "Action", "Open"], (cockpit.next_actions || []).map((item) => [
+      item.label || "--",
+      item.action || "--",
+      item.href || "--",
+    ]))),
+    card("Mission", [
+      `<div class="detail-reason">${esc(mission.headline || "Mission layer warming up")}</div>`,
+      table(["Matter", "Check", "Noise"], [0, 1, 2, 3].map((idx) => [
+        mission.what_matters?.[idx] || "--",
+        mission.what_to_check?.[idx] || "--",
+        mission.probably_noise?.[idx] || "--",
+      ])),
+    ].join("")),
+    card("Devices And Apps", [
+      kv("LAN", `${devices.known ?? "--"} known / ${devices.unknown ?? "--"} unknown`, Number(devices.unknown || 0) ? "yellow" : "green"),
+      kv("Now", devices.headline || "--", "cyan"),
+      deviceCards(devices.cards || []),
+    ].join("")),
+    card("AI / Pi / Metrics", [
+      kv("Pi", ai.pi || "--", "green"),
+      kv("Roles", (ai.roles || []).join(" | ") || "--", "purple"),
+      kv("Metrics", `${metrics.severity || "--"} ${metrics.summary || ""}`, metrics.severity === "OK" ? "green" : "yellow"),
+      kv("Flow", metrics.flow || "--", "cyan"),
+      table(["Source", "Severity", "Reason"], (ai.timeline || []).map((r) => [
+        r.source || "--",
+        r.severity || "--",
+        r.reason || "--",
+      ])),
+    ].join("")),
+    card("Ask From Here", `<div class="why-targets">${(cockpit.quick_questions || []).map((q) => `<button class="why-target-button" data-ask="${esc(q)}">${esc(q)}</button>`).join("")}</div>`),
+  ].join("");
+  wireAskButtons();
+}
+
 function renderChatPage(state) {
   title.textContent = "SOCX CHAT";
   subtitle.textContent = "ask pfSense and the Pi LLMs in plain English";
@@ -725,6 +816,9 @@ function renderChatPage(state) {
     "What should I check before tuning IDS?",
     "Run a pfSense Doctor style review and explain the WARN items.",
     "What unknown devices, apps, or services should I fix next?",
+    "Build the current threat story and tell me what is probably noise.",
+    "What should I do next on SOCX today?",
+    "Give me a mobile cockpit summary.",
   ];
   root.innerHTML = [
     card("Operator Chat", [
@@ -1067,8 +1161,16 @@ async function refresh() {
   const threatMap = page === "map"
     ? await fetch("/api/threat-map", { cache: "no-store" }).then((r) => r.json())
     : null;
+  const threatStory = page === "threat-story"
+    ? await fetch("/api/threat-story", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const cockpit = page === "cockpit"
+    ? await fetch("/api/cockpit", { cache: "no-store" }).then((r) => r.json())
+    : null;
   subtitle.textContent = `${state.hostname || "pfSense"} / ${state.mode || "live"} / ${new Date().toLocaleTimeString()}`;
-  if (page === "flows") renderFlowsPage(state, flowsData || {});
+  if (page === "cockpit") renderCockpit(state, cockpit || {});
+  else if (page === "threat-story") renderThreatStory(state, threatStory || {});
+  else if (page === "flows") renderFlowsPage(state, flowsData || {});
   else if (page === "replay") renderReplay(state, replay || {});
   else if (page === "map") renderThreatMap(state, threatMap || {});
   else if (page === "devices") renderDevices(state);

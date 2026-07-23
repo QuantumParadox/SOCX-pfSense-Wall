@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added `/cockpit` and `/api/cockpit`, a mobile/tablet-friendly operator cockpit with current threat story, mission checks, device/app summary, AI/Pi health, metrics context, next actions, and ready-to-ask SOCX prompts.
+- Added `/threat-story` and `/api/threat-story`, a plain-English incident narrative with evidence cards, repeated-pattern memory, timeline context, and safe next steps.
+- Polished incident bundle responses with the current threat-story summary, evidence cards, and safe next steps so bundles are easier to understand after capture.
+- Expanded Operator Chat suggestions for threat story, cockpit summaries, unknown reduction, Doctor review, and safe daily next actions.
 - Added a slower cinematic Pi 5 network twin view tied to live SOCX nodes, links, role state, and packet pulses instead of fast decorative spinning.
 - Added Pi dashboard Role Timeline, Route Health, and SOCX Bridge panels so the Pi 5 AI node exposes readable role progress, Hailo/Ollama route status, and a wall-safe summary for pfSense.
 - Added `/api/socx/wall-bridge` plus BENCH, EXPLAIN, and COMPARE read-only Pi Lab experiments for safe Hailo/Ollama testing from the dashboard.

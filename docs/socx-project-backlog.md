@@ -28,9 +28,9 @@ This is the standing roadmap for SOCX, pfSense, the Pi 5 AI node, the Pi 4 obser
 
 ## 4. Safe AI Operator Console
 
-- Add evidence tabs to the full SOCX Chat page: Summary, Evidence, Why, Plan, Commands, and Risks.
+- Add evidence tabs to the full SOCX Chat page: Summary, Evidence, Why, Plan, Commands, Risks, and Cockpit context.
 - Stream LLM role reasoning as visible stages: triage, evidence, action, safety review, final answer.
-- Add "explain this row" everywhere: packets, flows, devices, IDS, DNSBL, Speedtest, VPN, UPS, and replay bookmarks.
+- Expand "explain this row" everywhere: packets, flows, devices, IDS, DNSBL, Speedtest, VPN, UPS, replay bookmarks, and Threat Story evidence cards.
 - Add approval cards for draft firewall aliases, DNSBL allowlist candidates, IDS threshold changes, and quarantine plans.
 - Add a safety ledger showing which requests were answered, denied, or converted into draft-only plans.
 

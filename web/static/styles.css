@@ -367,6 +367,86 @@ body.night-wall .ticker-shell {
   color: var(--green);
 }
 
+.cockpit-hero {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid rgba(52, 215, 242, .28);
+  border-radius: 8px;
+  background: linear-gradient(90deg, rgba(52, 215, 242, .10), rgba(255, 156, 67, .06));
+}
+
+.cockpit-hero span,
+.cockpit-hero b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cockpit-hero span {
+  color: var(--text);
+  font-size: clamp(18px, 2.2vw, 32px);
+  font-weight: 950;
+}
+
+.cockpit-hero b {
+  color: var(--yellow);
+  font-size: clamp(17px, 1.6vw, 26px);
+}
+
+.story-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.story-evidence-card {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid currentColor;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, .04);
+  color: var(--cyan);
+}
+
+.story-evidence-card.green { color: var(--green); }
+.story-evidence-card.yellow { color: var(--yellow); }
+.story-evidence-card.red { color: var(--red); }
+.story-evidence-card.purple { color: var(--purple); }
+
+.story-evidence-card b,
+.story-evidence-card strong,
+.story-evidence-card span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.story-evidence-card b {
+  color: var(--muted);
+  font-size: clamp(10px, .76vw, 12px);
+  text-transform: uppercase;
+}
+
+.story-evidence-card strong {
+  margin-top: 4px;
+  color: currentColor;
+  font-size: clamp(18px, 1.55vw, 27px);
+}
+
+.story-evidence-card span {
+  margin-top: 3px;
+  color: var(--text);
+  font-size: clamp(11px, .8vw, 13px);
+}
+
 .big-wall .card-head h2 {
   font-size: clamp(19px, 1.45vw, 27px);
 }
@@ -2137,6 +2217,10 @@ body.night-wall .ticker-shell {
     grid-template-columns: 1fr;
   }
 
+  .story-evidence-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .why-controls {
     grid-template-columns: 1fr;
   }
@@ -2237,9 +2321,60 @@ body.night-wall .ticker-shell {
 }
 
 @media (max-width: 760px) {
+  body {
+    padding: 8px;
+  }
+
   .topbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .top-metrics,
+  .detail-nav {
+    width: 100%;
+    overflow-x: auto;
+    justify-content: flex-start;
+    padding-bottom: 4px;
+  }
+
+  .detail-shell {
+    gap: 8px;
+  }
+
+  .detail-card {
+    padding: 12px;
+  }
+
+  .detail-row {
+    min-width: 680px;
+  }
+
+  .detail-table {
+    overflow-x: auto;
+  }
+
+  .story-evidence-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cockpit-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .cockpit-hero span,
+  .cockpit-hero b {
+    white-space: normal;
+  }
+
+  .chat-page-row,
+  .chat-row {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-suggestions,
+  .chat-cards {
+    grid-template-columns: 1fr;
   }
 
   .dashboard {

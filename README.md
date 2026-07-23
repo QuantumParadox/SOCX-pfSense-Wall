@@ -97,6 +97,8 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds `socx hardware`, `socx stability-watch`, and `socx baseline` for thermal headroom, UPS watt trend, short/overnight stability evidence, and appliance performance baselines.
 - Adds VPN crypto headroom on the browser Speedtest page so DIRECT/VPN throughput can be read beside current CPU temperature and thermal headroom.
 - Adds SOCX Mission / Operator Intelligence through `/mission`, `/api/mission`, and `socx mission`, summarizing what changed, what matters, what to check, and what is probably noise.
+- Adds SOCX Operator Cockpit through `/cockpit` and `/api/cockpit`, a mobile/tablet-friendly view with current mode, threat story, mission checks, devices/apps, AI/Pi status, metrics context, and safe next actions.
+- Adds SOCX Threat Story through `/threat-story` and `/api/threat-story`, turning firewall, DNSBL, IDS, ATT&CK/D3FEND context, repeated memory, and Flow Truth into a readable incident narrative.
 - Adds SOCX Replay through `/replay` and `/api/replay`, a read-only flight recorder that turns retained history into score buckets, security playback, Speedtest playback, Flow Truth context, thermal/UPS spikes, and safe drilldown links.
 - Adds Replay time controls, incident bookmarks, and safe Ask SOCX prompts so after-action review can jump to the exact security, speed, flow, thermal, or UPS moment.
 - Adds Threat Map Lite through `/map` and `/api/threat-map`, a local-context blocked-source radar that uses pfSense/SOCX evidence without treating geo hints as proof.

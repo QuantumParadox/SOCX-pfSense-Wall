@@ -798,6 +798,14 @@ function commanderActionFromSpeech(text) {
   if (/(autonomy loop|brainstem|autonomous|autonomy)/.test(value)) return "autonomy";
   if (/(pi|raspberry|ai|llm)/.test(value)) return "pi";
   if (/(explain|why|summary|plain english)/.test(value)) return "explain";
+  if (/(cockpit|operator cockpit|mobile view|tablet view)/.test(value)) {
+    location.href = "/cockpit";
+    return "";
+  }
+  if (/(threat story|story threat|what matters|probably noise)/.test(value)) {
+    location.href = "/threat-story";
+    return "";
+  }
   if (/(story|daily story|today so far)/.test(value)) return "story";
   if (/(brief|daily|morning)/.test(value)) return "brief";
   if (/(timeline|history)/.test(value)) return "timeline";
