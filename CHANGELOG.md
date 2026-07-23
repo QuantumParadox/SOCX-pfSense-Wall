@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added `/flight-recorder`, a read-only evidence-continuity view that shows SOCX history retention, sampling cadence, gaps, freshness, and auto-evidence-marker count; Replay now supports a 72-hour window when retained history is available.
 - Stabilized terminal wall painting with synchronized-output markers so modern tmux terminals reveal a completed SOCX frame rather than a partially painted one.
 - Moved wall-renderer restart messages out of the visible pane and into a restart log; `socx glitch-watch` now reports real renderer restarts separately from ordinary frame health.
 - Added SOCX Autonomy With Guardrails: a live CARE score, autonomous watch mode, and lightweight auto-evidence markers for high-attention or stale-data conditions.

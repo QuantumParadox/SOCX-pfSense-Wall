@@ -3714,10 +3714,10 @@ class SocxCollector:
     def collect_replay(self, window_seconds: int | None = None) -> dict[str, Any]:
         """Build a calm, read-only flight recorder from existing SOCX history."""
         snap = self.snapshot()
-        rows = self.collect_history(720)
+        rows = self.collect_history(5000)
         now = time.time()
         window_seconds = window_seconds or env_int("SOCX_REPLAY_WINDOW_SECONDS", 21600)
-        window_seconds = int(clamp(window_seconds, 900, 86400))
+        window_seconds = int(clamp(window_seconds, 900, 259200))
         recent = [row for row in rows if self.replay_row_ts(row) >= now - window_seconds]
         if not recent:
             recent = rows[-180:]
@@ -3830,6 +3830,70 @@ class SocxCollector:
                 {"label": "Open Incidents", "href": "/incidents", "why": "review firewall, DNSBL, and IDS evidence"},
                 {"label": "Ask Chat", "href": "/chat", "why": "ask SOCX what changed or what to check next"},
             ],
+        }
+
+    def collect_flight_recorder(self) -> dict[str, Any]:
+        """Report recorder continuity so replay conclusions stay evidence-aware."""
+        path = Path(os.environ.get("SOCX_HISTORY_FILE", "/var/db/socx_history.jsonl"))
+        marker_path = self.auto_evidence_path
+        rows = self.collect_history(5000)
+        timestamps = sorted(ts for ts in (self.replay_row_ts(row) for row in rows) if ts > 0)
+        now = time.time()
+        newest = timestamps[-1] if timestamps else 0.0
+        oldest = timestamps[0] if timestamps else 0.0
+        intervals = [later - earlier for earlier, later in zip(timestamps, timestamps[1:]) if later >= earlier]
+        ordered = sorted(intervals)
+        median_interval = ordered[len(ordered) // 2] if ordered else 0.0
+        expected = max(60.0, float(env_int("SOCX_RECORDER_EXPECTED_SECONDS", 900)))
+        gap_threshold = max(expected * 2.25, 1200.0)
+        gaps = [value for value in intervals if value > gap_threshold]
+        latest_age = int(max(0, now - newest)) if newest else None
+        retention = int(max(0, newest - oldest)) if newest and oldest else 0
+        markers = self.read_jsonl_tail(marker_path, 120)
+        file_size = 0
+        try:
+            file_size = path.stat().st_size
+        except OSError:
+            pass
+        if not rows:
+            label, score, summary = "LEARNING", 45, "No retained history samples yet; replay is warming up."
+        elif latest_age is not None and latest_age > gap_threshold:
+            label, score, summary = "STALE", 55, f"Latest recorder sample is {human_duration(latest_age)} old."
+        elif gaps:
+            label, score, summary = "GAPS", max(55, 88 - min(30, len(gaps) * 4)), f"{len(gaps)} sampling gap(s) exceed {human_duration(int(gap_threshold))}."
+        else:
+            label, score, summary = "CONTINUOUS", min(100, 90 + min(10, len(rows) // 100)), "Recorder continuity is good for the retained window."
+        integrity = [
+            {"check": "History file", "state": "OK" if file_size else "WAIT", "detail": f"{file_size:,} bytes at {path}"},
+            {"check": "Retention", "state": "OK" if retention >= 21600 else "LEARNING", "detail": human_duration(retention) if retention else "no timestamped samples"},
+            {"check": "Newest sample", "state": "OK" if latest_age is not None and latest_age <= gap_threshold else "WATCH", "detail": human_duration(latest_age) + " ago" if latest_age is not None else "waiting"},
+            {"check": "Sampling cadence", "state": "OK" if median_interval and median_interval <= gap_threshold else "WATCH", "detail": f"median {human_duration(int(median_interval))}" if median_interval else "waiting"},
+            {"check": "Evidence markers", "state": "OK", "detail": f"{len(markers)} retained auto-evidence marker(s); policy remains approval-gated"},
+        ]
+        return {
+            "title": "SOCX Flight Recorder Integrity",
+            "label": label,
+            "score": score,
+            "summary": summary,
+            "samples": len(rows),
+            "retention_seconds": retention,
+            "retention_h": human_duration(retention),
+            "latest_age_seconds": latest_age,
+            "latest_age_h": human_duration(latest_age) if latest_age is not None else "--",
+            "median_interval_seconds": round(median_interval),
+            "median_interval_h": human_duration(int(median_interval)) if median_interval else "--",
+            "gap_count": len(gaps),
+            "largest_gap_seconds": round(max(gaps)) if gaps else 0,
+            "largest_gap_h": human_duration(int(max(gaps))) if gaps else "none",
+            "markers": len(markers),
+            "integrity": integrity,
+            "next": [
+                "Use Replay for 15m, 1h, 6h, 24h, or 72h evidence windows.",
+                "Treat a gap or stale recorder as uncertainty, not proof that nothing happened.",
+                "Use Evidence or Snapshot before changing firewall, DNSBL, or IDS policy.",
+            ],
+            "read_only": True,
+            "updated_ms": now_ms(),
         }
 
     def collect_autopilot_review_queue(self) -> dict[str, Any]:
@@ -6286,6 +6350,9 @@ class SocxHandler(BaseHTTPRequestHandler):
                 window = 21600
             self.send_json(self.collector.collect_replay(window))
             return
+        if parsed.path == "/api/flight-recorder":
+            self.send_json(self.collector.collect_flight_recorder())
+            return
         if parsed.path == "/api/movie":
             self.send_json(self.collector.collect_network_movie())
             return
@@ -6540,7 +6607,7 @@ class SocxHandler(BaseHTTPRequestHandler):
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/memory", "/twin", "/automation", "/timeline", "/movie", "/projects", "/glitches", "/wall-health", "/review-queue", "/owner-map", "/owner-editor", "/packet-noise", "/confidence", "/incident-focus", "/maintenance", "/mission-console", "/config-sim", "/baseline", "/since-yesterday", "/daily-brief", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
+        if path in {"/speedtest", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/memory", "/twin", "/automation", "/timeline", "/movie", "/projects", "/glitches", "/wall-health", "/review-queue", "/owner-map", "/owner-editor", "/packet-noise", "/confidence", "/incident-focus", "/maintenance", "/mission-console", "/config-sim", "/baseline", "/since-yesterday", "/daily-brief", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/flight-recorder", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"

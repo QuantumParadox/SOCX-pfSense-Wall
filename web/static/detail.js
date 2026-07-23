@@ -46,6 +46,7 @@ const pageName = () => {
   if (path.includes("incident-focus")) return "incident-focus";
   if (path.includes("maintenance")) return "maintenance";
   if (path.includes("mission-console")) return "mission-console";
+  if (path.includes("flight-recorder")) return "flight-recorder";
   if (path.includes("config-sim")) return "config-sim";
   if (path.includes("baseline")) return "baseline";
   if (path.includes("since-yesterday")) return "since-yesterday";
@@ -620,6 +621,7 @@ function renderReplay(state, replay) {
     ["1h", 3600],
     ["6h", 21600],
     ["24h", 86400],
+    ["72h", 259200],
   ];
   const bookmarkRows = (replay.bookmarks || []).map((b) => [
     b.kind || "--",
@@ -671,6 +673,30 @@ function renderReplay(state, replay) {
   document.querySelectorAll("[data-replay-window]").forEach((button) => {
     button.addEventListener("click", () => setReplayWindow(button.getAttribute("data-replay-window")));
   });
+  wireAskButtons();
+}
+
+function renderFlightRecorder(state, recorder) {
+  title.textContent = "SOCX FLIGHT RECORDER";
+  subtitle.textContent = `${state.hostname || "pfSense"} / evidence continuity / read-only`;
+  const tone = recorder.label === "CONTINUOUS" ? "green" : recorder.label === "LEARNING" ? "cyan" : "yellow";
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Recorder Confidence", [
+      `<div class="detail-score ${tone}">${esc(recorder.label || "UNKNOWN")} ${esc(recorder.score ?? "--")}/100</div>`,
+      `<div class="detail-reason">${esc(recorder.summary || "Recorder state is warming up.")}</div>`,
+      kv("Retained", `${recorder.samples || 0} samples / ${recorder.retention_h || "--"}`, "cyan"),
+      kv("Latest", `${recorder.latest_age_h || "--"} ago`, Number(recorder.latest_age_seconds || 0) > 1800 ? "yellow" : "green"),
+      kv("Cadence", recorder.median_interval_h || "--", "cyan"),
+      kv("Gaps", `${recorder.gap_count || 0} / largest ${recorder.largest_gap_h || "--"}`, Number(recorder.gap_count || 0) ? "yellow" : "green"),
+      kv("Evidence Markers", recorder.markers || 0, "purple"),
+    ].join("")),
+    card("Integrity Checks", table(["Check", "State", "Detail"], (recorder.integrity || []).map((row) => [row.check || "--", row.state || "--", row.detail || "--"]))),
+    card("How To Use It", table(["#", "Operator Guidance"], (recorder.next || []).map((item, index) => [index + 1, item]))),
+    card("Recorder Links", `<div class="story-actions"><a href="/replay?window=21600">Open 6h Replay</a><a href="/replay?window=259200">Open 72h Replay</a><a href="/evidence">Open Evidence</a><a href="/timeline">Open Timeline</a></div>`),
+    card("Ask SOCX", `<div class="ask-list"><div><span>Ask whether the retained data is strong enough for an investigation.</span>${askButton("Is SOCX Flight Recorder continuity good enough to investigate the last 72 hours? Explain any gaps, uncertainty, and the safest evidence-preservation step.")}</div></div>`),
+  ].join("");
   wireAskButtons();
 }
 
@@ -2117,6 +2143,9 @@ async function refresh() {
   const replay = page === "replay"
     ? await fetch(`/api/replay?window=${encodeURIComponent(replayWindow || 21600)}`, { cache: "no-store" }).then((r) => r.json())
     : null;
+  const flightRecorder = page === "flight-recorder"
+    ? await fetch("/api/flight-recorder", { cache: "no-store" }).then((r) => r.json())
+    : null;
   const threatMap = page === "map"
     ? await fetch("/api/threat-map", { cache: "no-store" }).then((r) => r.json())
     : null;
@@ -2255,6 +2284,7 @@ async function refresh() {
   else if (page === "daily-brief") renderDailyBrief(state, dailyBrief || {});
   else if (page === "flows") renderFlowsPage(state, flowsData || {});
   else if (page === "replay") renderReplay(state, replay || {});
+  else if (page === "flight-recorder") renderFlightRecorder(state, flightRecorder || {});
   else if (page === "map") renderThreatMap(state, threatMap || {});
   else if (page === "devices") renderDevices(state);
   else if (page === "incidents") renderIncidents(state);
