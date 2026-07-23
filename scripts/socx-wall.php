@@ -89,9 +89,9 @@ $state = [
 
 if (!$once) {
     register_shutdown_function(static function (): void {
-        echo "\033[?25h\033[0m";
+        echo "\033[?7h\033[?25h\033[0m\033[?1049l";
     });
-    echo "\033[?25l\033[H\033[2J";
+    echo "\033[?1049h\033[?25l\033[?7l\033[H\033[2J\033[?7h";
 }
 
 do {
@@ -159,13 +159,13 @@ do {
         if (!$captureOk) {
             exit(3);
         }
-        echo "\033[H" . $screen;
+        echo terminal_atomic_write("\033[H\033[J" . $screen);
         $renderMs = (microtime(true) - $renderStart) * 1000;
         $state['ticker_changed'] = false;
     } else {
         $renderStart = microtime(true);
         if (($tickerConfig['mode'] ?? 'scroll') === 'scroll' || !empty($state['ticker_changed'])) {
-            echo render_ticker_update($frame, $cols, $rows, $color, $theme);
+            echo terminal_atomic_write(render_ticker_update($frame, $cols, $rows, $color, $theme));
             $state['ticker_changed'] = false;
         }
         $renderMs = (microtime(true) - $renderStart) * 1000;
@@ -175,6 +175,14 @@ do {
     fflush(STDOUT);
     usleep((int)($renderInterval * 1000000));
 } while (true);
+
+function terminal_atomic_write(string $payload): string
+{
+    if ($payload === '') {
+        return '';
+    }
+    return "\033[?7l" . $payload . "\033[?7h";
+}
 
 function log_wall_error(Throwable $e): void
 {

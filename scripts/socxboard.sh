@@ -101,6 +101,13 @@ tmux set-option -t socx -g mouse off
 tmux set-option -t socx -g default-size "${SOCX_TMUX_WIDTH}x${SOCX_TMUX_HEIGHT}" 2>/dev/null || true
 tmux set-option -t socx -g window-size latest 2>/dev/null || true
 tmux set-window-option -t socx -g aggressive-resize on 2>/dev/null || true
+tmux set-option -t socx -g activity-action none 2>/dev/null || true
+tmux set-option -t socx -g bell-action none 2>/dev/null || true
+tmux set-option -t socx -g visual-activity off 2>/dev/null || true
+tmux set-option -t socx -g visual-bell off 2>/dev/null || true
+tmux set-window-option -t socx -g monitor-activity off 2>/dev/null || true
+tmux set-window-option -t socx -g monitor-bell off 2>/dev/null || true
+tmux set-window-option -t socx -g remain-on-exit off 2>/dev/null || true
 tmux set-option -t socx -g pane-border-lines double
 tmux set-option -t socx -g pane-border-style 'fg=colour51'
 tmux set-option -t socx -g pane-active-border-style 'fg=colour51,bold'
@@ -123,6 +130,8 @@ tmux bind-key t display-popup -E -w 88% -h 74% -T 'TRAFFIC TOTALS' "sh -lc 'vnst
 tmux bind-key i display-popup -E -w 88% -h 74% -T 'SOCX INCIDENT CAPTURE' "sh -lc '/usr/local/sbin/socx-incident-capture; echo; echo Incident capture complete.; read -r _'"
 if [ "$MODE" = "wall" ]; then
     tmux set-option -t socx -g status off
+    tmux set-option -t socx -g history-limit 100 2>/dev/null || true
+    tmux set-window-option -t socx:NETX synchronize-panes on 2>/dev/null || true
     tmux set-window-option -t socx:NETX pane-border-status off
     tmux select-pane -t socx:NETX.0 -T 'SOCX WALL MODE'
 else
@@ -143,6 +152,7 @@ else
     tmux set-window-option -t socx:NETX pane-border-format '#[fg=colour51,bold]#{pane_title}'
 fi
 tmux select-pane -t socx:NETX.0
+tmux clear-history -t socx:NETX.0 2>/dev/null || true
 
 # W2 THREATX: retain the existing alert views, but with brighter grep color.
 tmux new-window -t socx -n THREATX "sh -c 'export GREP_COLOR=\"01;31\"; echo == SURICATA IDS ALERTS ==; tail -n 40 -F \"$ALERTS\" 2>/dev/null | grep --line-buffered --color=always -Ei \"alert|drop|blocked|malware|scan|trojan|cnc|c2|$\"'"
