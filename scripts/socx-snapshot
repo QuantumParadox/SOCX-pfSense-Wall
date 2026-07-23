@@ -36,6 +36,10 @@ run_save zeek-health socx-doctor zeek
 run_save unknown-services socx services
 run_save label-brain socx label-brain
 run_save pi-nodes socx pi-nodes
+run_save gateway-truth sh -c 'fetch -qo - http://127.0.0.1:8094/api/gateway-truth 2>/dev/null || true'
+run_save observability sh -c 'fetch -qo - http://127.0.0.1:8094/api/observability 2>/dev/null || true'
+run_save detection-validation socx detection-validate json
+run_save evidence-relay socx evidence-relay status
 
 copy_if /tmp/socx-autopilot.env
 copy_if /tmp/socx-speedtest-direct.env

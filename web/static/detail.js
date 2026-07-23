@@ -19,6 +19,7 @@ const pageName = () => {
   const path = location.pathname.replace(/^\/+/, "").toLowerCase();
   if (path.includes("flow")) return "flows";
   if (path.includes("gateway-truth")) return "gateway-truth";
+  if (path.includes("validation")) return "validation";
   if (path === "device") return "device";
   if (path.includes("device")) return "devices";
   if (path.includes("incident-report")) return "incident-report";
@@ -732,6 +733,28 @@ function renderGatewayTruth(state, truth) {
     card("How To Read It", table(["#", "Guidance"], (truth.guidance || []).map((item, index) => [index + 1, item]))),
     card("Safe Drilldowns", `<div class="story-actions"><a href="/speedtest">Open Speedtest</a><a href="/observability">Open Pi 4 Metrics</a><a href="/doctor">Open Doctor</a><a href="/flight-recorder">Open Recorder</a></div>`),
     card("Ask SOCX", `<div class="ask-list"><div><span>Ask why live gateway and Speedtest evidence agree or differ.</span>${askButton("Explain the current Gateway Truth Lab results in plain English. Tell me what dpinger, direct Speedtest, VPN Speedtest, and retained metrics agree on, what they do not prove, and the safest next step. Do not propose an automatic configuration change.")}</div></div>`),
+  ].join("");
+  wireAskButtons();
+}
+
+function renderValidation(state, validation) {
+  title.textContent = "SOCX DETECTION VALIDATION";
+  subtitle.textContent = `${state.hostname || "pfSense"} / synthetic fixtures / no live traffic`;
+  const tone = validation.label === "PASS" ? "green" : validation.label === "FAIL" ? "red" : "yellow";
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Validation Verdict", [
+      `<div class="detail-score ${tone}">${esc(validation.label || "WAIT")} ${esc(validation.score ?? "--")}/100</div>`,
+      `<div class="detail-reason">${esc(validation.summary || "Validation is waiting.")}</div>`,
+      kv("Freshness", `${validation.age_sec ?? "--"}s`, Number(validation.age_sec || 0) < 86400 ? "green" : "yellow"),
+      kv("Elapsed", `${validation.elapsed_ms ?? "--"}ms`, "cyan"),
+      kv("Policy", validation.read_only ? "no policy writes" : "--", "green"),
+    ].join("")),
+    card("Synthetic Checks", table(["Check", "State", "Detail"], (validation.rows || []).map((row) => [row.name || "--", row.state || "--", row.detail || "--"]))),
+    card("Method", table(["#", "Guardrail"], (validation.methods || []).map((item, index) => [index + 1, item]))),
+    card("Evidence Use", `<div class="detail-reason">This lab validates SOCX parsing and aggregation using fixtures only. It does not simulate exploitation, send packets, tune Suricata, or change pfSense policy. Its result is included in new SOCX incident and snapshot bundles.</div>`),
+    card("Ask SOCX", `<div class="ask-list"><div><span>Ask whether the detection chain is trustworthy enough for the current evidence.</span>${askButton("Explain the current SOCX Detection Validation Lab result. Say exactly what was validated, what was not validated, and the safest next test. Keep it defensive and do not propose live attack traffic.")}</div></div>`),
   ].join("");
   wireAskButtons();
 }
@@ -2195,6 +2218,9 @@ async function refresh() {
   const gatewayTruth = page === "gateway-truth"
     ? await fetch("/api/gateway-truth", { cache: "no-store" }).then((r) => r.json())
     : null;
+  const validation = page === "validation"
+    ? await fetch("/api/detection-validation", { cache: "no-store" }).then((r) => r.json())
+    : null;
   const threatMap = page === "map"
     ? await fetch("/api/threat-map", { cache: "no-store" }).then((r) => r.json())
     : null;
@@ -2335,6 +2361,7 @@ async function refresh() {
   else if (page === "replay") renderReplay(state, replay || {});
   else if (page === "flight-recorder") renderFlightRecorder(state, flightRecorder || {});
   else if (page === "gateway-truth") renderGatewayTruth(state, gatewayTruth || {});
+  else if (page === "validation") renderValidation(state, validation || {});
   else if (page === "map") renderThreatMap(state, threatMap || {});
   else if (page === "devices") renderDevices(state);
   else if (page === "incidents") renderIncidents(state);

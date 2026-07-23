@@ -1,0 +1,123 @@
+#!/usr/local/bin/python3.11
+"""Run harmless synthetic SOCX parser/detection checks.
+
+No packets are transmitted and no pfSense policy, IDS rule, alias, DNSBL list,
+or live log is modified. Results are written to /tmp for the browser lab.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+
+OUT = Path(os.environ.get("SOCX_DETECTION_VALIDATION_JSON", "/tmp/socx-detection-validation.json"))
+WEB = Path(os.environ.get("SOCX_WEB_SCRIPT", "/usr/local/share/socx-web/socx-web.py"))
+EVE = Path(os.environ.get("SOCX_SURICATA_EVE", "/usr/local/bin/socx-suricata-eve"))
+
+
+def load_web() -> object:
+    spec = importlib.util.spec_from_file_location("socx_web_validation", WEB)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load SOCX web parser from {WEB}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def filter_line(action: str, direction: str, src: str, dst: str, dport: str) -> str:
+    fields = ["0"] * 22
+    fields[6] = action
+    fields[7] = direction
+    fields[8] = "4"
+    fields[16] = "tcp"
+    fields[17] = "60"
+    fields[18] = src
+    fields[19] = dst
+    fields[20] = "51515"
+    fields[21] = dport
+    return "Jul 23 18:00:00 pfSense filterlog[1234]: " + ",".join(fields)
+
+
+def check(name: str, passed: bool, detail: str) -> dict[str, object]:
+    return {"name": name, "state": "PASS" if passed else "FAIL", "detail": detail, "safe": True}
+
+
+def main() -> int:
+    started = time.time()
+    rows: list[dict[str, object]] = []
+    try:
+        web = load_web()
+        collector = web.SocxCollector(interval_ms=500, demo=True)
+
+        wan = collector.parse_filterlog(filter_line("block", "in", "203.0.113.10", "192.168.1.1", "23"))
+        rows.append(check("WAN scan classification", bool(wan and wan.get("category") == "WAN scan stopped" and wan.get("severity") == "HIGH"), str((wan or {}).get("story") or "parser returned no packet")))
+
+        lan = collector.parse_filterlog(filter_line("block", "out", "192.168.1.50", "8.8.8.8", "53"))
+        rows.append(check("LAN policy classification", bool(lan and lan.get("category") == "LAN policy block" and lan.get("severity") == "MED"), str((lan or {}).get("story") or "parser returned no packet")))
+
+        dnsbl = collector.parse_dnsbl("2026-07-23,query,example-malicious.test,192.168.1.50")
+        rows.append(check("DNSBL parser", bool(dnsbl and "example-malicious.test" in dnsbl.get("text", "")), str((dnsbl or {}).get("text") or "parser returned no event")))
+
+        collector.push_event("FW", "MED", "synthetic aggregation test", "validation:aggregate")
+        collector.push_event("FW", "MED", "synthetic aggregation test", "validation:aggregate")
+        aggregate = collector.events.get("validation:aggregate", {})
+        rows.append(check("Repeated-event aggregation", int(aggregate.get("count", 0) or 0) == 2, f"collapsed count={aggregate.get('count', 0)}"))
+
+        rows.append(check("Routine IDS suppression", bool(web.is_routine_ids("SURICATA TCPv4 invalid checksum")) and not bool(web.is_high_signal_ids("SURICATA TCPv4 invalid checksum")), "routine decoder signature remains non-high-signal"))
+        rows.append(check("High-signal IDS recognition", bool(web.is_high_signal_ids("ET TROJAN Known Botnet command and control callback")), "botnet/C2 context remains high-signal"))
+
+        if EVE.exists():
+            with tempfile.TemporaryDirectory(prefix="socx-validation-") as temp:
+                root = Path(temp)
+                fixture = root / "eve.json"
+                fixture.write_text(json.dumps({
+                    "timestamp": "2026-07-23T18:00:00.000000+0000",
+                    "event_type": "alert",
+                    "src_ip": "203.0.113.10",
+                    "dest_ip": "192.168.1.50",
+                    "proto": "TCP",
+                    "app_proto": "http",
+                    "alert": {"severity": 1, "signature": "SOCX Synthetic Botnet Validation", "category": "Synthetic Validation"},
+                }) + "\n", encoding="utf-8")
+                env = os.environ.copy()
+                env.update({
+                    "SOCX_SURICATA_EVE_GLOBS": str(fixture),
+                    "SOCX_SURICATA_EVE_JSON": str(root / "eve-summary.json"),
+                    "SOCX_SURICATA_EVE_CACHE": str(root / "eve-summary.env"),
+                    "SOCX_SURICATA_EVE_LIMIT": "20",
+                })
+                subprocess.run([str(EVE), "json"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=12, check=False)
+                summary = json.loads((root / "eve-summary.json").read_text(encoding="utf-8"))
+                rows.append(check("Suricata EVE alert parser", int(summary.get("counts", {}).get("high", 0) or 0) == 1, summary.get("summary") or "no summary"))
+        else:
+            rows.append(check("Suricata EVE alert parser", False, f"missing helper {EVE}"))
+    except Exception as exc:
+        rows.append(check("Validation runtime", False, str(exc)[:220]))
+
+    passed = sum(1 for row in rows if row["state"] == "PASS")
+    failed = len(rows) - passed
+    payload = {
+        "title": "SOCX Detection Validation Lab",
+        "label": "PASS" if failed == 0 else "FAIL",
+        "score": round((passed / len(rows)) * 100) if rows else 0,
+        "summary": f"{passed}/{len(rows)} harmless synthetic detection checks passed; no live traffic or policy was changed.",
+        "rows": rows,
+        "updated": int(time.time()),
+        "elapsed_ms": int((time.time() - started) * 1000),
+        "read_only": True,
+        "methods": ["synthetic parser fixtures", "synthetic EVE JSON", "no packet transmission", "no pfSense policy writes"],
+    }
+    OUT.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    print(json.dumps(payload, indent=2) if len(sys.argv) > 1 and sys.argv[1] == "json" else f"SOCX DETECTION VALIDATION {payload['label']}: {payload['summary']}")
+    return 0 if failed == 0 else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

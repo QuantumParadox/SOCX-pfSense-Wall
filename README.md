@@ -142,6 +142,7 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds `socx tmux`, a pfSense-safe tmux session hub with optional lazy-tmux detection. It can list/attach SOCX sessions, start the wall, and write a conservative lazy-tmux guardrail config without making lazy-tmux a required dependency.
 - Adds Pi 4 observability support with `pi/install_socx_observability.sh` for InfluxDB/Grafana, `socx-telegraf-target.php` for pointing pfSense Telegraf at the external metrics host, and `socx observability` for quick health checks.
 - Adds a staged Pi 4 Evidence Relay: `pi/install_socx_evidence_relay.sh` accepts LAN-restricted TCP syslog only from pfSense, writes raw JSONL records with per-message hashes, rotates them, and emits daily SHA-256 manifests. `socx evidence-relay [status|plan]` remains read-only and never enables pfSense remote logging by itself.
+- Adds `socx detection-validate`, a no-traffic synthetic validation lab that checks firewall/DNSBL parser behavior, repeated-event aggregation, IDS severity handling, and Suricata EVE parsing. Incident and snapshot bundles automatically include its result plus Gateway Truth and observability evidence.
 - Adds SOCX Metrics Intelligence with `socx metrics-intel`, `/api/metrics-intel`, and browser Metrics/Observability cards that explain Grafana/Influx trends in plain English.
 - Adds `socx metrics-ai --pi`, a read-only Pi AI narration hook for asking the Pi 5 LLM operator endpoint to explain pfSense metric changes and safest next actions.
 - Adds a pfSense power-user pack: `socx flow-export`, `socx eve`, `socx topology`, `socx drift`, `socx vault`, and `socx quarantine`. These cover NetFlow/IPFIX planning, Suricata EVE summaries, LLDP topology, config drift, hashed evidence capture, and approval-only quarantine drafting.
@@ -230,6 +231,7 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - `scripts/socx-telegraf-target.php` - pfSense helper that backs up config.xml, updates the Telegraf InfluxDB target, and regenerates/restarts Telegraf through the package hook.
 - `scripts/socx-observability` - quick pfSense-side status check for external Grafana, InfluxDB, Telegraf, and core measurements.
 - `scripts/socx-evidence-relay` - read-only Pi 4 evidence relay status and reviewed remote-syslog plan.
+- `scripts/socx-detection-validation` - harmless synthetic SOCX parser and EVE validation suite; it never transmits packets or changes policy.
 - `scripts/socx-metrics-intel` - reads the Pi 4 InfluxDB/Grafana stack and explains metric health, watch items, and safe next steps.
 - `scripts/socx-flow-export` - read-only NetFlow/IPFIX/softflowd status and configuration plan for exporting flows to the Pi observability stack.
 - `scripts/socx-suricata-eve` - parses recent Suricata EVE JSON alerts and summarizes high/medium/low IDS signals, top signatures, services, sources, and destinations.

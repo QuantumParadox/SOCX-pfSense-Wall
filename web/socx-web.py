@@ -357,6 +357,8 @@ class SocxCollector:
         self.observability_cache: dict[str, Any] = {}
         self.gateway_truth_checked = 0.0
         self.gateway_truth_cache: dict[str, Any] = {}
+        self.detection_validation_checked = 0.0
+        self.detection_validation_cache: dict[str, Any] = {}
         self.metrics_intel_checked = 0.0
         self.metrics_intel_cache: dict[str, Any] = {}
         self.autonomy_loop_checked = 0.0
@@ -1110,6 +1112,39 @@ class SocxCollector:
         self.gateway_truth_cache = result
         self.gateway_truth_checked = now
         return result
+
+    def collect_detection_validation(self) -> dict[str, Any]:
+        """Expose the safe synthetic test result without testing live traffic."""
+        now = time.time()
+        ttl = env_int("SOCX_DETECTION_VALIDATION_POLL_SECONDS", 15)
+        if self.detection_validation_cache and now - self.detection_validation_checked < ttl:
+            cached = dict(self.detection_validation_cache)
+            cached["age_sec"] = int(max(0, now - float(cached.get("updated") or now)))
+            return cached
+        path = Path(os.environ.get("SOCX_DETECTION_VALIDATION_JSON", "/tmp/socx-detection-validation.json"))
+        age = self.file_age_seconds(path)
+        if age is None or age > 86400:
+            run_cmd("if command -v socx-detection-validation >/dev/null 2>&1; then socx-detection-validation json >/dev/null 2>&1; fi", timeout=15.0)
+        data: dict[str, Any] = {
+            "title": "SOCX Detection Validation Lab",
+            "label": "WAIT",
+            "score": 0,
+            "summary": "Synthetic validation has not run yet.",
+            "rows": [],
+            "updated": 0,
+            "read_only": True,
+            "methods": ["no live traffic", "no policy writes"],
+        }
+        try:
+            loaded = json.loads(path.read_text(errors="ignore"))
+            if isinstance(loaded, dict):
+                data.update(loaded)
+        except Exception:
+            pass
+        data["age_sec"] = int(max(0, now - float(data.get("updated") or now)))
+        self.detection_validation_cache = data
+        self.detection_validation_checked = now
+        return data
 
     def collect_metrics_intel(self) -> dict[str, Any]:
         now = time.time()
@@ -6466,6 +6501,9 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/gateway-truth":
             self.send_json(self.collector.collect_gateway_truth_lab())
             return
+        if parsed.path == "/api/detection-validation":
+            self.send_json(self.collector.collect_detection_validation())
+            return
         if parsed.path == "/api/metrics-intel":
             self.send_json(self.collector.collect_metrics_intel())
             return
@@ -6749,7 +6787,7 @@ class SocxHandler(BaseHTTPRequestHandler):
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/gateway-truth", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/memory", "/twin", "/automation", "/timeline", "/movie", "/projects", "/glitches", "/wall-health", "/review-queue", "/owner-map", "/owner-editor", "/packet-noise", "/confidence", "/incident-focus", "/maintenance", "/mission-console", "/config-sim", "/baseline", "/since-yesterday", "/daily-brief", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/flight-recorder", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
+        if path in {"/speedtest", "/gateway-truth", "/validation", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/memory", "/twin", "/automation", "/timeline", "/movie", "/projects", "/glitches", "/wall-health", "/review-queue", "/owner-map", "/owner-editor", "/packet-noise", "/confidence", "/incident-focus", "/maintenance", "/mission-console", "/config-sim", "/baseline", "/since-yesterday", "/daily-brief", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/flight-recorder", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"

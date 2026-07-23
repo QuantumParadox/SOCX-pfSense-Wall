@@ -48,6 +48,10 @@ run_capture socx_doctor_ids sh -c 'command -v socx-doctor >/dev/null 2>&1 && soc
 run_capture socx_doctor_vnstat sh -c 'command -v socx-doctor >/dev/null 2>&1 && socx-doctor vnstat || true'
 run_capture socx_doctor_speedtest_profiles sh -c 'command -v socx-doctor >/dev/null 2>&1 && socx-doctor speedtest-profiles || true'
 run_capture socx_doctor_logs sh -c 'command -v socx-doctor >/dev/null 2>&1 && socx-doctor logs || true'
+run_capture socx_gateway_truth sh -c 'command -v fetch >/dev/null 2>&1 && fetch -qo - http://127.0.0.1:8094/api/gateway-truth || true'
+run_capture socx_observability sh -c 'command -v fetch >/dev/null 2>&1 && fetch -qo - http://127.0.0.1:8094/api/observability || true'
+run_capture socx_detection_validation sh -c 'command -v socx-detection-validation >/dev/null 2>&1 && socx-detection-validation json || true'
+run_capture socx_evidence_relay sh -c 'command -v socx-evidence-relay >/dev/null 2>&1 && socx-evidence-relay status || true'
 run_capture socx_wall_capture sh -c 'tmux capture-pane -pt socx:0 -S -80 2>/dev/null || true'
 
 copy_if_exists /tmp/socx-packet-radar.log packet-radar.log

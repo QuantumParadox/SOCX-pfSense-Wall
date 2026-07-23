@@ -213,6 +213,10 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-evidence-relay "$@"
         ;;
+    detection-validate|validate|validation|detection-lab)
+        shift
+        exec /usr/local/bin/socx-detection-validation "$@"
+        ;;
     quarantine|quarantine-draft)
         shift
         exec /usr/local/bin/socx-quarantine-draft "$@"
