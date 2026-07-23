@@ -317,7 +317,7 @@ body.incident-focus .mark {
 .source-badge {
   display: inline-flex;
   align-items: center;
-  max-width: 86px;
+  max-width: 128px;
   margin-left: 4px;
   padding: 1px 5px;
   border: 1px solid currentColor;
@@ -360,6 +360,10 @@ body.incident-focus .mark {
 
 .decision-status {
   flex-wrap: wrap;
+}
+
+.decision-status .source-badge:first-child {
+  font-size: clamp(9px, .64vw, 11px);
 }
 
 .decision-actions {

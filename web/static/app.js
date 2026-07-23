@@ -189,22 +189,29 @@ function renderDecisionAssistant(state = {}) {
   if (!root) return;
   const confidence = state.confidence_meter || {};
   const truth = state.data_truth || {};
+  const care = state.care_score || {};
+  const watch = state.autonomy_watch || {};
+  const evidence = state.auto_evidence || {};
   const actions = (state.safe_action_queue || state.command_center?.actions || []).slice(0, 3);
   const firstAction = typeof actions[0] === "string" ? actions[0] : (actions[0]?.action || "Review current mission");
   const score = confidence.score ?? state.command_center?.score ?? "--";
   const label = String(confidence.label || truth.label || "WATCH").toUpperCase();
   const tone = label.includes("HIGH") || label.includes("LIVE") ? "green" : label.includes("LOW") || label.includes("STALE") ? "red" : "yellow";
+  const careTone = care.tone || (Number(care.score || 0) >= 80 ? "red" : Number(care.score || 0) >= 45 ? "yellow" : "green");
   root.innerHTML = `
     <div class="decision-status">
+      ${sourceBadge(`CARE ${care.score ?? "--"}/100`, careTone, care.summary || "Should-I-Care score")}
+      ${sourceBadge(watch.mode || "Quiet Watch", careTone, watch.summary || "Autonomous watch mode")}
+      ${sourceBadge(`evidence ${evidence.label || "QUIET"}`, evidence.label === "ERROR" ? "red" : evidence.triggers?.length ? "yellow" : "green", evidence.summary || "Auto evidence markers")}
       ${sourceBadge(`trust ${score}/100`, tone, confidence.summary || truth.reason || "SOCX confidence")}
       ${sourceBadge("raw pfSense", "green", "Local pfSense counters and logs")}
       ${sourceBadge("AI advisory", "yellow", "LLM output is advisory until evidence confirms it")}
       ${sourceBadge("approval gated", "purple", "SOCX will not silently change pfSense policy")}
     </div>
     <div class="decision-actions">
-      ${whyButton("Explain the whole SOCX wall. Tell me what matters, what is probably noise, what evidence is raw, what is AI opinion, and the safest next action.", "Explain Wall")}
-      ${whyButton(`What should I do first right now? Suggested action: ${firstAction}. Keep it read-only unless I approve a change.`, "First Action")}
-      ${whyButton("Preserve evidence for the current SOCX state. Tell me what bundle or snapshot command to use and what it will capture before any firewall or IDS change.", "Preserve")}
+      ${whyButton("Explain the whole SOCX wall. Include CARE score, watch mode, what matters, what is probably noise, what evidence is raw, what is AI opinion, and the safest next action.", "Explain Wall")}
+      ${whyButton(`Should I care right now? CARE is ${care.score ?? "--"}/100 ${care.label || ""}. Suggested action: ${firstAction}. Keep it read-only unless I approve a change.`, "Should I Care?")}
+      ${whyButton(`Preserve evidence for the current SOCX state. Auto evidence is ${evidence.label || "QUIET"} with triggers ${(evidence.triggers || []).join(", ") || "none"}. Tell me what bundle or snapshot command to use.`, "Preserve")}
     </div>
   `;
 }

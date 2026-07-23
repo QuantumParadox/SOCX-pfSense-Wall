@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added SOCX Autonomy With Guardrails: a live CARE score, autonomous watch mode, and lightweight auto-evidence markers for high-attention or stale-data conditions.
+- Expanded What Changed intelligence to track top app, Speedtest truth, VPN path state, top blocked port/source, learned-normal drift, data freshness, and rough network direction changes.
+- Safe Action Queue and Operator Chat now include CARE, watch-mode, and auto-evidence context so "should I care?" returns a clear score, reasons, and safe next command.
 - Added a browser-wall Decision Assistant strip with trust score, raw/AI/approval-gated source badges, and one-tap Explain Wall, First Action, and Preserve prompts.
 - Added Ask buttons to the Network, Firewall, UPS, CPU, Memory, Live Flows, and Packet Story cards so each major wall section can be explained in plain English from the wall.
 - Added compact source/confidence badges to Live Flow and Packet Story rows for raw pfSense evidence, learned labels, blocked packets, reputation/DNSBL-style classification, and approval-gated AI context.

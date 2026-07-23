@@ -366,6 +366,8 @@ class SocxCollector:
         self.owner_overrides_path = Path(os.environ.get("SOCX_OWNER_OVERRIDES", "/usr/local/etc/socx_owner_overrides.json"))
         self.packet_noise_path = Path(os.environ.get("SOCX_PACKET_NOISE_CONFIG", "/usr/local/etc/socx_packet_noise.json"))
         self.incident_focus_path = Path(os.environ.get("SOCX_INCIDENT_FOCUS", "/tmp/socx-incident-focus.json"))
+        self.auto_evidence_path = Path(os.environ.get("SOCX_AUTO_EVIDENCE_LOG", "/root/socx-auto-evidence/markers.jsonl"))
+        self.auto_evidence_last: dict[str, float] = {}
         self.label_history_last_write = 0.0
         self.label_history_cache: dict[str, Any] = self.load_label_history()
         self.owner_overrides: dict[str, Any] = self.load_owner_overrides()
@@ -510,6 +512,9 @@ class SocxCollector:
         packets = self.filter_wall_packets(packets_all)
         confidence = self.collect_confidence_meter(data_truth, pi_nodes, label_brain, packets_all)
         incident_focus = self.collect_incident_focus()
+        care_score = self.collect_care_score(command_center, incident, what_changed, data_truth, label_brain, pi_nodes, speedtest_history, packets_all, confidence)
+        autonomy_watch = self.collect_autonomy_watch(care_score, command_center, data_truth, incident, pi_nodes, speedtest_history)
+        auto_evidence = self.collect_auto_evidence(care_score, autonomy_watch, what_changed, incident, data_truth)
 
         for key, value in {
             "cpu": cpu["overall"],
@@ -566,6 +571,9 @@ class SocxCollector:
             "data_truth": data_truth,
             "confidence_meter": confidence,
             "incident_focus": incident_focus,
+            "care_score": care_score,
+            "autonomy_watch": autonomy_watch,
+            "auto_evidence": auto_evidence,
             "what_changed": what_changed,
             "intel": intel,
             "mission": mission,
@@ -2640,20 +2648,32 @@ class SocxCollector:
         top_flow = ""
         if flows:
             row = flows[0]
-            top_flow = f"{row.get('asset', '')}->{row.get('peer', '')} {row.get('service', '')}"
+            top_flow = f"{row.get('asset', '')}->{row.get('peer', '')} {row.get('app') or row.get('service', '')}"
         self.remember_change("top_flow", top_flow, "Top flow changed", top_flow or "no flow", "LOW")
+        top_app = str((flows[0] if flows else {}).get("app") or (flows[0] if flows else {}).get("service") or "")
+        self.remember_change("top_app", top_app, "Top app changed", top_app or "no app evidence", "LOW")
         direct = center.get("direct") if isinstance(center.get("direct"), dict) else {}
         vpn = center.get("vpn") if isinstance(center.get("vpn"), dict) else {}
         self.remember_change("speed_direct", f"{direct.get('path_state') or direct.get('status')}:{direct.get('down')}/{direct.get('up')}", "Direct Speedtest changed", f"{direct.get('down') or '--'}/{direct.get('up') or '--'} Mbps", "LOW")
         self.remember_change("speed_vpn", f"{vpn.get('path_state') or vpn.get('status')}:{vpn.get('down')}/{vpn.get('up')}", "VPN Speedtest changed", f"{vpn.get('path_state') or vpn.get('status') or 'waiting'} {vpn.get('down') or '--'}/{vpn.get('up') or '--'} Mbps", "MED")
+        self.remember_change("speed_truth", str((center.get("speed_truth") or {}).get("label") or ""), "Speed truth changed", str((center.get("speed_truth") or {}).get("summary") or (center.get("speed_truth") or {}).get("label") or ""), "MED")
+        vpn_paths = center.get("vpn_paths") if isinstance(center.get("vpn_paths"), list) else []
+        vpn_path_state = "|".join(f"{row.get('label') or row.get('path')}:{row.get('status') or row.get('path_state')}" for row in vpn_paths[:5] if isinstance(row, dict))
+        self.remember_change("vpn_paths", vpn_path_state, "VPN path state changed", vpn_path_state or "no VPN paths", "MED")
         self.remember_change("pi_fleet", f"{pi_nodes.get('online', 0)}/{pi_nodes.get('count', 0)}:{pi_nodes.get('state', '')}", "Pi fleet changed", f"{pi_nodes.get('online', 0)}/{pi_nodes.get('count', 0)} online, cache {pi_nodes.get('state', 'unknown')}", "MED")
         self.remember_change("incident", str(incident.get("verdict") or ""), "Incident verdict changed", str(incident.get("headline") or incident.get("verdict") or ""), "MED")
         top_src = (incident.get("blocked_sources") or [{}])[0].get("name", "") if isinstance(incident.get("blocked_sources"), list) else ""
         self.remember_change("top_blocked_source", str(top_src), "Top blocked source changed", str(top_src or "none"), "MED")
+        top_port = (incident.get("blocked_ports") or [{}])[0].get("name", "") if isinstance(incident.get("blocked_ports"), list) else ""
+        self.remember_change("top_blocked_port", str(top_port), "Top blocked port changed", str(top_port or "none"), "MED")
         anomalies = label_brain.get("anomalies") if isinstance(label_brain.get("anomalies"), list) else []
         self.remember_change("device_anomalies", str(len(anomalies)), "Learned-normal changes changed", f"{len(anomalies)} unusual device observations", "MED" if anomalies else "LOW")
         self.remember_change("data_truth", str(data_truth.get("label")), "Data truth changed", f"{data_truth.get('label')} score {data_truth.get('score')}", "MED")
         self.remember_change("ups", "stale" if ups.get("stale") else "fresh", "UPS freshness changed", "UPS cache " + ("stale" if ups.get("stale") else "fresh"), "LOW")
+        wan = net.get("wan") if isinstance(net.get("wan"), dict) else {}
+        lan = net.get("lan") if isinstance(net.get("lan"), dict) else {}
+        net_shape = f"wan:{round(float(wan.get('rx_bps',0) or 0)/1000000,1)}/{round(float(wan.get('tx_bps',0) or 0)/1000000,1)} lan:{round(float(lan.get('rx_bps',0) or 0)/1000000,1)}/{round(float(lan.get('tx_bps',0) or 0)/1000000,1)}"
+        self.remember_change("network_shape", net_shape, "Network direction changed", net_shape, "LOW")
         return {
             "count": len(self.change_events),
             "rows": list(self.change_events)[:12],
@@ -4945,6 +4965,155 @@ class SocxCollector:
             "updated_ms": now_ms(),
         }
 
+    def collect_care_score(
+        self,
+        center: dict[str, Any],
+        incident: dict[str, Any],
+        what_changed: dict[str, Any],
+        data_truth: dict[str, Any],
+        label_brain: dict[str, Any],
+        pi_nodes: dict[str, Any],
+        speedtest_history: dict[str, Any],
+        packets: list[dict[str, Any]],
+        confidence: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Operator attention score: how much the human should care right now."""
+        reasons: list[dict[str, Any]] = []
+
+        def add(points: int, signal: str, detail: str, tone: str = "yellow") -> None:
+            if points <= 0:
+                return
+            reasons.append({"points": int(points), "signal": signal, "detail": str(detail)[:180], "tone": tone})
+
+        counts = incident.get("counts") if isinstance(incident.get("counts"), dict) else {}
+        ids = incident.get("ids") if isinstance(incident.get("ids"), dict) else {}
+        fw_blocks = int(counts.get("sources", 0) or counts.get("blocked", 0) or 0)
+        dnsbl = int(counts.get("dnsbl", 0) or 0)
+        ids_high = int(ids.get("high_signal", 0) or counts.get("ids_high", 0) or 0)
+        ids_watch = int(ids.get("watch", 0) or 0)
+        if ids_high:
+            add(30, "IDS high signal", f"{ids_high} high-signal IDS alert(s); preserve evidence before tuning.", "red")
+        if fw_blocks >= 80:
+            add(18, "Firewall pressure", f"{fw_blocks} blocked-source clusters in the current window.", "yellow")
+        elif fw_blocks >= 20:
+            add(9, "Firewall pressure", f"{fw_blocks} blocked-source clusters, likely internet noise unless paired with other signals.", "yellow")
+        if dnsbl >= 100:
+            add(12, "DNSBL burst", f"{dnsbl} DNSBL hits; review top domains before allowlisting.", "purple")
+        if ids_watch >= 250:
+            add(10, "IDS watch volume", f"{ids_watch} routine/watch IDS rows; correlate before action.", "yellow")
+
+        if str(data_truth.get("label") or "").upper() not in {"LIVE", "OK"}:
+            add(16, "Data freshness", f"Data Truth is {data_truth.get('label', 'UNKNOWN')}: {data_truth.get('reason', 'freshness unknown')}", "red")
+        if int(pi_nodes.get("online", 0) or 0) < int(pi_nodes.get("count", 0) or 0):
+            add(8, "Pi fleet", f"{pi_nodes.get('online', 0)}/{pi_nodes.get('count', 0)} Pi nodes online.", "yellow")
+        if int(confidence.get("score", 0) or 0) < 70:
+            add(10, "Low confidence", f"SOCX confidence is {confidence.get('score', '--')}/100.", "yellow")
+
+        changes = what_changed.get("rows") if isinstance(what_changed.get("rows"), list) else []
+        notable = [row for row in changes[:8] if str(row.get("severity", "")).upper() in {"MED", "HIGH", "WARN"}]
+        if notable:
+            add(min(16, 4 * len(notable)), "Recent change", "; ".join(str(row.get("title") or row.get("detail") or "change") for row in notable[:3]), "yellow")
+        anomalies = label_brain.get("anomalies") if isinstance(label_brain.get("anomalies"), list) else []
+        if anomalies:
+            add(min(18, 6 * len(anomalies)), "Device behavior drift", f"{len(anomalies)} learned-normal device/app change(s).", "yellow")
+
+        speed_paths = speedtest_history.get("paths") if isinstance(speedtest_history.get("paths"), list) else []
+        degraded = [row for row in speed_paths if str(row.get("state") or row.get("status") or "").upper() in {"WARN", "DOWN", "STALE", "FAIL"}]
+        if degraded:
+            add(8, "Speed/VPN path", f"{len(degraded)} Speedtest path(s) need review.", "yellow")
+        blocked_packets = sum(1 for row in packets[:30] if str(row.get("action") or "").upper() == "BLOCK")
+        if blocked_packets >= 12:
+            add(6, "Packet story", f"{blocked_packets} blocked packet stories in the visible evidence window.", "yellow")
+
+        score = min(100, sum(row["points"] for row in reasons))
+        if score >= 80:
+            label = "INVESTIGATE"
+            tone = "red"
+            summary = "High attention: preserve evidence and review before changing policy."
+        elif score >= 45:
+            label = "WATCH"
+            tone = "yellow"
+            summary = "Watch-worthy movement: check top evidence, probably no emergency."
+        elif score >= 15:
+            label = "NOTICE"
+            tone = "cyan"
+            summary = "Some movement, but current evidence looks manageable."
+        else:
+            label = "ROUTINE"
+            tone = "green"
+            summary = "Routine background activity; no immediate operator action."
+        return {"title": "SOCX Should-I-Care Score", "score": score, "label": label, "tone": tone, "summary": summary, "reasons": reasons[:8], "read_only": True, "updated_ms": now_ms()}
+
+    def collect_autonomy_watch(self, care: dict[str, Any], center: dict[str, Any], data_truth: dict[str, Any], incident: dict[str, Any], pi_nodes: dict[str, Any], speedtest_history: dict[str, Any]) -> dict[str, Any]:
+        score = int(care.get("score", 0) or 0)
+        label = str(care.get("label") or "ROUTINE")
+        speed_paths = speedtest_history.get("paths") if isinstance(speedtest_history.get("paths"), list) else []
+        vpn_paths = [row for row in speed_paths if "vpn" in str(row.get("path") or row.get("label") or "").lower()]
+        if str(data_truth.get("label") or "").upper() not in {"LIVE", "OK"}:
+            mode = "Data Truth Watch"
+            focus = "collector freshness and stale evidence"
+        elif int((incident.get("ids") or {}).get("high_signal", 0) or 0):
+            mode = "Incident Watch"
+            focus = "IDS/firewall/DNSBL correlation"
+        elif vpn_paths and any(str(row.get("state") or row.get("status") or "").upper() in {"WARN", "DOWN", "STALE", "FAIL"} for row in vpn_paths):
+            mode = "VPN Watch"
+            focus = "VPN route, latency, and Speedtest truth"
+        elif int(pi_nodes.get("online", 0) or 0) < int(pi_nodes.get("count", 0) or 0):
+            mode = "AI Lab Watch"
+            focus = "Pi model routes and SOCX bridge freshness"
+        elif score >= 45:
+            mode = "Security Watch"
+            focus = "recent changes and top blocked evidence"
+        else:
+            mode = "Quiet Watch"
+            focus = "baseline learning and routine internet noise"
+        cadence = "fast review" if score >= 80 else "normal review" if score >= 45 else "quiet review"
+        return {"title": "SOCX Autonomous Watch Mode", "mode": mode, "focus": focus, "cadence": cadence, "care_label": label, "care_score": score, "summary": f"{mode}: {focus}; {cadence}.", "read_only": True, "updated_ms": now_ms()}
+
+    def collect_auto_evidence(self, care: dict[str, Any], watch: dict[str, Any], what_changed: dict[str, Any], incident: dict[str, Any], data_truth: dict[str, Any]) -> dict[str, Any]:
+        score = int(care.get("score", 0) or 0)
+        reasons = care.get("reasons") if isinstance(care.get("reasons"), list) else []
+        triggers = []
+        if score >= 80:
+            triggers.append("care-investigate")
+        if int((incident.get("ids") or {}).get("high_signal", 0) or 0):
+            triggers.append("ids-high")
+        if str(data_truth.get("label") or "").upper() not in {"LIVE", "OK"}:
+            triggers.append("data-stale")
+        latest_change = (what_changed.get("rows") or [{}])[0] if isinstance(what_changed.get("rows"), list) else {}
+        if latest_change and str(latest_change.get("severity", "")).upper() in {"HIGH", "MED", "WARN"}:
+            triggers.append("change-" + str(latest_change.get("key") or "event")[:40])
+
+        now = time.time()
+        cooldown = env_int("SOCX_AUTO_EVIDENCE_COOLDOWN_SECONDS", 1800)
+        written = []
+        for trigger in sorted(set(triggers)):
+            if now - self.auto_evidence_last.get(trigger, 0) < cooldown:
+                continue
+            marker = {
+                "ts": now_ms(),
+                "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "trigger": trigger,
+                "care": {"score": score, "label": care.get("label"), "summary": care.get("summary")},
+                "watch": {"mode": watch.get("mode"), "focus": watch.get("focus")},
+                "change": latest_change,
+                "reasons": reasons[:4],
+                "recommended_command": "socx snapshot" if score < 80 else "socx incident quick",
+                "policy_changed": False,
+            }
+            try:
+                self.auto_evidence_path.parent.mkdir(parents=True, exist_ok=True)
+                with self.auto_evidence_path.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(marker, separators=(",", ":")) + "\n")
+                self.auto_evidence_last[trigger] = now
+                written.append(marker)
+                self.push_event("AUTO", "WARN" if score >= 45 else "LOW", f"[AUTO][{care.get('label')}] evidence marker: {trigger} score {score}", f"auto:{trigger}:{int(now // cooldown)}")
+            except Exception as exc:
+                return {"title": "SOCX Auto Evidence", "label": "ERROR", "summary": str(exc)[:180], "triggers": triggers, "written": written, "path": str(self.auto_evidence_path), "read_only": True, "updated_ms": now_ms()}
+        label = "MARKED" if written else ("ARMED" if triggers else "QUIET")
+        summary = f"{len(written)} new marker(s); {len(triggers)} active trigger(s). Full bundle remains operator-approved."
+        return {"title": "SOCX Auto Evidence", "label": label, "summary": summary, "triggers": triggers, "written": written[-3:], "path": str(self.auto_evidence_path), "recommended_command": "socx incident quick" if score >= 80 else "socx snapshot", "read_only": True, "updated_ms": now_ms()}
+
     def filter_wall_packets(self, packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
         noise = self.packet_noise if isinstance(self.packet_noise, dict) else {}
         suppress = {str(x) for x in noise.get("suppress_on_wall", []) if x}
@@ -5202,7 +5371,7 @@ class SocxCollector:
         phases = ["collected pfSense telemetry", f"classified request as {intent}"]
         local = self.local_chat_answer(text, intent, context)
         pi_answer: dict[str, Any] = {}
-        prefer_local_truth = bool(re.search(r"\b(weird|strange|unusual|anomal|normal|bandwidth|top talker|top talkers|who is using|netflow|ipfix|flow|traffic)\b", text.lower()))
+        prefer_local_truth = bool(re.search(r"\b(care|should i care|autonomy|autonomous|watch mode|auto evidence|first action|weird|strange|unusual|anomal|normal|bandwidth|top talker|top talkers|who is using|netflow|ipfix|flow|traffic)\b", text.lower()))
         if intent in {"explain", "diagnose", "draft"} and not prefer_local_truth:
             pi_answer = self.ask_pi_operator_chat(text, intent, context)
             if pi_answer.get("ok"):
@@ -5311,11 +5480,19 @@ class SocxCollector:
             context = self.chat_context(self.snapshot())
         threat = context.get("threat") or {}
         incident = context.get("incident") or {}
+        care = context.get("care_score") or {}
+        auto_evidence = context.get("auto_evidence") or {}
         queue = [
             {"priority": "P2" if intent == "draft" else "P3", "action": "Preserve evidence bundle", "why": "capture current state before policy or package changes", "command": "socx snapshot", "approval": "safe-read-only"},
             {"priority": "P3", "action": "Review current mission", "why": "see what changed, what matters, and likely noise", "command": "open /mission", "approval": "safe-read-only"},
             {"priority": "P3", "action": "Check ATT&CK coverage", "why": "understand visibility and blind spots", "command": "open /coverage", "approval": "safe-read-only"},
         ]
+        if int(care.get("score", 0) or 0) >= 80:
+            queue.insert(0, {"priority": "P1", "action": "Preserve incident evidence now", "why": f"CARE is {care.get('score')}/100 {care.get('label')}: {care.get('summary')}", "command": "socx incident quick", "approval": "safe-read-only"})
+        elif int(care.get("score", 0) or 0) >= 45:
+            queue.insert(0, {"priority": "P2", "action": "Review CARE reasons", "why": f"CARE is {care.get('score')}/100 {care.get('label')}", "command": "open /timeline", "approval": "safe-read-only"})
+        if auto_evidence.get("triggers"):
+            queue.append({"priority": "P2", "action": "Review auto-evidence marker", "why": ", ".join(str(x) for x in (auto_evidence.get("triggers") or [])[:3]), "command": auto_evidence.get("recommended_command") or "socx snapshot", "approval": "safe-read-only"})
         if int(threat.get("dnsbl_hits", 0) or 0):
             queue.append({"priority": "P3", "action": "Review DNSBL candidates", "why": "avoid allowlisting reputation hits without context", "command": "open /why", "approval": "review-required"})
         if int((incident.get("ids") or {}).get("high_signal", 0) or 0):
@@ -5348,6 +5525,9 @@ class SocxCollector:
         device_trust = snap.get("device_trust") or {}
         mission_assurance = snap.get("mission_assurance") or {}
         wall_health = snap.get("wall_health") or {}
+        care = snap.get("care_score") or {}
+        auto_watch = snap.get("autonomy_watch") or {}
+        auto_evidence = snap.get("auto_evidence") or {}
         return {
             "generated_at": snap.get("generated_at"),
             "health": snap.get("status", {}).get("health"),
@@ -5394,6 +5574,9 @@ class SocxCollector:
                 "checks": (wall_health.get("checks") or [])[:6],
                 "glitch": wall_health.get("glitch") or {},
             },
+            "care_score": {"score": care.get("score"), "label": care.get("label"), "summary": care.get("summary"), "reasons": (care.get("reasons") or [])[:6]},
+            "autonomy_watch": {"mode": auto_watch.get("mode"), "focus": auto_watch.get("focus"), "cadence": auto_watch.get("cadence"), "summary": auto_watch.get("summary")},
+            "auto_evidence": {"label": auto_evidence.get("label"), "summary": auto_evidence.get("summary"), "triggers": auto_evidence.get("triggers") or [], "path": auto_evidence.get("path"), "recommended_command": auto_evidence.get("recommended_command")},
             "flows": (snap.get("flows") or [])[:6],
             "packets": (snap.get("packets") or [])[:6],
             "pi": {"summary": pi_nodes.get("summary"), "nodes": (pi_nodes.get("nodes") or [])[:3]},
@@ -5434,9 +5617,21 @@ class SocxCollector:
         trust = context.get("device_trust") or {}
         assurance = context.get("mission_assurance") or {}
         wall_health = context.get("wall_health") or {}
+        care = context.get("care_score") or {}
+        watch = context.get("autonomy_watch") or {}
+        auto_evidence = context.get("auto_evidence") or {}
         lines = []
         if intent == "blocked":
             return "I cannot help with destructive, bypass, or stealth requests. I can explain the alert, preserve evidence, or draft a safe approval-only pfSense change plan."
+        if "care" in q or "should i care" in q or "autonomy" in q or "autonomous" in q or "first action" in q:
+            lines.append(f"CARE is {care.get('score', '--')}/100 {care.get('label', 'UNKNOWN')}: {care.get('summary', 'care score warming up')}")
+            if watch:
+                lines.append(f"Watch mode: {watch.get('mode', 'Quiet Watch')} focused on {watch.get('focus', 'routine evidence')}; cadence {watch.get('cadence', '--')}.")
+            reasons = care.get("reasons") or []
+            if reasons:
+                lines.append("Why: " + " | ".join(f"{r.get('signal')} +{r.get('points')}" for r in reasons[:4]))
+            if auto_evidence:
+                lines.append(f"Auto evidence: {auto_evidence.get('label', 'QUIET')} ({auto_evidence.get('summary', 'no marker yet')}). Recommended safe command: {auto_evidence.get('recommended_command', 'socx snapshot')}.")
         if "morning brief" in q or "what changed" in q:
             lines.append(f"{brief.get('headline') or 'SOCX brief is available.'}")
             for item in (brief.get("sections") or [])[:5]:
@@ -6193,7 +6388,8 @@ class SocxHandler(BaseHTTPRequestHandler):
             self.send_json(self.collector.collect_analyst_notebook())
             return
         if parsed.path == "/api/actions":
-            self.send_json({"title": "Safe Action Queue", "rows": self.collector.collect_safe_action_queue(), "read_only": True, "updated_ms": now_ms()})
+            snap = self.collector.snapshot()
+            self.send_json({"title": "Safe Action Queue", "rows": self.collector.collect_safe_action_queue(self.collector.chat_context(snap), "actions"), "care_score": snap.get("care_score", {}), "auto_evidence": snap.get("auto_evidence", {}), "read_only": True, "updated_ms": now_ms()})
             return
         if parsed.path == "/api/mission-mode":
             self.send_json(self.collector.collect_mission_mode_signal())
