@@ -31,6 +31,10 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-autonomy-cron "$@"
         ;;
+    recorder-cron|recorder-schedule|flight-recorder)
+        shift
+        exec /usr/local/bin/socx-recorder-cron "$@"
+        ;;
     menu|command|commands)
         shift
         exec /usr/local/bin/socx-menu "$@"

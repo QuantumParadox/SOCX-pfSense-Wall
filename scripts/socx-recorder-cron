@@ -1,0 +1,141 @@
+#!/bin/sh
+# Lightweight SOCX flight-recorder scheduler. It deliberately collects only
+# compact local health history and never changes pfSense firewall/DNS/IDS policy.
+set -u
+
+ACTION="${1:-install}"
+CRON_FILE="${SOCX_RECORDER_CRON_FILE:-/etc/cron.d/socx-recorder}"
+INTERVAL="${SOCX_RECORDER_INTERVAL_MINUTES:-15}"
+HISTORY="${SOCX_HISTORY_FILE:-/var/db/socx_history.jsonl}"
+MANIFEST="${SOCX_RECORDER_MANIFEST:-/var/db/socx_recorder_manifest.jsonl}"
+STATUS="${SOCX_RECORDER_STATUS:-/tmp/socx-recorder-status.env}"
+ASSURANCE="${SOCX_SERVICE_ASSURANCE_STATUS:-/tmp/socx-service-assurance.env}"
+LOCKDIR="${SOCX_RECORDER_LOCKDIR:-/tmp/socx-recorder.lock}"
+
+write_status() {
+    state="$1"
+    detail="$2"
+    {
+        echo "updated=$(date +%s)"
+        echo "state=$state"
+        echo "detail=$(printf '%s' "$detail" | tr '\n' ' ' | cut -c1-220)"
+        echo "history=$HISTORY"
+        echo "manifest=$MANIFEST"
+    } > "$STATUS"
+}
+
+append_sample() {
+    if ! mkdir "$LOCKDIR" 2>/dev/null; then
+        write_status "SKIP" "previous recorder sample still running"
+        exit 0
+    fi
+    trap 'rmdir "$LOCKDIR" 2>/dev/null || true' EXIT INT TERM
+    mark_gap_before_append
+    if /usr/local/bin/socx-history append >/dev/null 2>&1; then
+        run_service_assurance
+        write_status "OK" "compact local history sample appended"
+    else
+        write_status "WARN" "history append failed"
+        exit 1
+    fi
+}
+
+mark_gap_before_append() {
+    [ -f "$HISTORY" ] || return 0
+    last="$(tail -1 "$HISTORY" 2>/dev/null | sed -n 's/.*"ts":\([0-9][0-9]*\).*/\1/p')"
+    case "$last" in ''|*[!0-9]*) return 0 ;; esac
+    now="$(date +%s)"
+    limit=$((INTERVAL * 60 * 2))
+    age=$((now - last))
+    [ "$age" -gt "$limit" ] || return 0
+    marker_dir="/root/socx-auto-evidence"
+    marker_file="$marker_dir/markers.jsonl"
+    mkdir -p "$marker_dir" 2>/dev/null || true
+    printf '{"ts":%s,"trigger":"recorder-gap","severity":"MED","detail":"Flight Recorder gap %ss before next compact sample","read_only":true}\n' \
+        "$now" "$age" >> "$marker_file"
+}
+
+run_service_assurance() {
+    web="WATCH"
+    dns="WATCH"
+    pi="WAIT"
+    if fetch -qo /dev/null http://127.0.0.1:8094/api/state 2>/dev/null; then web="OK"; fi
+    dns_host="${SOCX_DNS_PROBE_HOST:-}"
+    if [ -z "$dns_host" ]; then
+        dns_host="$(sockstat -4 -l 2>/dev/null | awk '/unbound/ && /:53/ {split($6, parts, ":"); print parts[1]; exit}')"
+    fi
+    [ -n "$dns_host" ] || dns_host="127.0.0.1"
+    if command -v drill >/dev/null 2>&1 && drill "@$dns_host" cloudflare.com A 2>/dev/null | grep -q 'IN[[:space:]]\+A'; then dns="OK"; fi
+    pi_json="$(/usr/local/bin/socx-pi-nodes 2>/dev/null || true)"
+    if printf '%s' "$pi_json" | grep -q '"online"'; then pi="OK"; fi
+    state="OK"
+    [ "$web" = "OK" ] && [ "$dns" = "OK" ] || state="WATCH"
+    {
+        echo "updated=$(date +%s)"
+        echo "state=$state"
+        echo "web=$web"
+        echo "dns=$dns"
+        echo "pi=$pi"
+        echo "detail=local web=$web dns=$dns@$dns_host pi_fleet=$pi; read-only synthetic checks"
+    } > "$ASSURANCE"
+}
+
+write_manifest() {
+    [ -f "$HISTORY" ] || {
+        write_status "WAIT" "history file is not present yet"
+        exit 0
+    }
+    mkdir -p "$(dirname "$MANIFEST")" 2>/dev/null || true
+    digest="$(sha256 -q "$HISTORY" 2>/dev/null || true)"
+    bytes="$(stat -f %z "$HISTORY" 2>/dev/null || echo 0)"
+    lines="$(wc -l "$HISTORY" 2>/dev/null | awk '{print $1}')"
+    ts="$(date +%s)"
+    printf '{"ts":%s,"history":"%s","bytes":%s,"lines":%s,"sha256":"%s","kind":"daily-history-manifest","read_only":true}\n' \
+        "$ts" "$HISTORY" "${bytes:-0}" "${lines:-0}" "$digest" >> "$MANIFEST"
+    tail -120 "$MANIFEST" > "$MANIFEST.tmp" 2>/dev/null && mv "$MANIFEST.tmp" "$MANIFEST"
+    write_status "OK" "daily history manifest written"
+}
+
+show_status() {
+    if [ -f "$CRON_FILE" ]; then
+        echo "SOCX recorder cron enabled: $CRON_FILE"
+        cat "$CRON_FILE"
+    else
+        echo "SOCX recorder cron is not installed."
+    fi
+    [ -f "$STATUS" ] && sed 's/^/  /' "$STATUS" || true
+    [ -f "$MANIFEST" ] && tail -1 "$MANIFEST" || true
+}
+
+case "$ACTION" in
+    install|enable)
+        case "$INTERVAL" in
+            ''|*[!0-9]*|0) INTERVAL=15 ;;
+        esac
+        mkdir -p "$(dirname "$CRON_FILE")"
+        cat > "$CRON_FILE" <<EOF
+# SOCX flight recorder: compact local history and a daily evidence-integrity manifest.
+SHELL=/bin/sh
+PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+
+*/$INTERVAL * * * * root /usr/local/bin/socx-recorder-cron append >/dev/null 2>&1
+5 0 * * * root /usr/local/bin/socx-recorder-cron manifest >/dev/null 2>&1
+EOF
+        chmod 0644 "$CRON_FILE"
+        append_sample
+        echo "SOCX recorder cron enabled: $CRON_FILE"
+        ;;
+    append) append_sample ;;
+    assurance) run_service_assurance ;;
+    manifest) write_manifest ;;
+    status) show_status ;;
+    remove|disable)
+        rm -f "$CRON_FILE"
+        write_status "OFF" "recorder schedule disabled by operator"
+        echo "SOCX recorder cron disabled."
+        ;;
+    *)
+        echo "Usage: socx-recorder-cron install|append|assurance|manifest|status|remove" >&2
+        exit 2
+        ;;
+esac

@@ -57,6 +57,7 @@ install -m 0755 "$ROOT/scripts/socx-evidence-vault" /usr/local/bin/socx-evidence
 install -m 0755 "$ROOT/scripts/socx-quarantine-draft" /usr/local/bin/socx-quarantine-draft
 install -m 0755 "$ROOT/scripts/socx-autonomy-loop" /usr/local/bin/socx-autonomy-loop
 install -m 0755 "$ROOT/scripts/socx-autonomy-cron" /usr/local/bin/socx-autonomy-cron
+install -m 0755 "$ROOT/scripts/socx-recorder-cron" /usr/local/bin/socx-recorder-cron
 install -m 0755 "$ROOT/scripts/socx-doctor" /usr/local/bin/socx-doctor
 install -m 0755 "$ROOT/scripts/socx-v1-check" /usr/local/bin/socx-v1-check
 install -m 0755 "$ROOT/scripts/socx-ai-explain" /usr/local/bin/socx-ai-explain

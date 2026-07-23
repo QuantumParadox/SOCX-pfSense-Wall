@@ -3850,6 +3850,14 @@ class SocxCollector:
         latest_age = int(max(0, now - newest)) if newest else None
         retention = int(max(0, newest - oldest)) if newest and oldest else 0
         markers = self.read_jsonl_tail(marker_path, 120)
+        recorder_status = parse_env_file(Path(os.environ.get("SOCX_RECORDER_STATUS", "/tmp/socx-recorder-status.env")))
+        assurance = parse_env_file(Path(os.environ.get("SOCX_SERVICE_ASSURANCE_STATUS", "/tmp/socx-service-assurance.env")))
+        manifest_path = Path(os.environ.get("SOCX_RECORDER_MANIFEST", "/var/db/socx_recorder_manifest.jsonl"))
+        manifests = self.read_jsonl_tail(manifest_path, 3)
+        coverage: OrderedDict[str, int] = OrderedDict()
+        for ts in timestamps:
+            day = time.strftime("%a %m/%d", time.localtime(ts))
+            coverage[day] = coverage.get(day, 0) + 1
         file_size = 0
         try:
             file_size = path.stat().st_size
@@ -3869,6 +3877,9 @@ class SocxCollector:
             {"check": "Newest sample", "state": "OK" if latest_age is not None and latest_age <= gap_threshold else "WATCH", "detail": human_duration(latest_age) + " ago" if latest_age is not None else "waiting"},
             {"check": "Sampling cadence", "state": "OK" if median_interval and median_interval <= gap_threshold else "WATCH", "detail": f"median {human_duration(int(median_interval))}" if median_interval else "waiting"},
             {"check": "Evidence markers", "state": "OK", "detail": f"{len(markers)} retained auto-evidence marker(s); policy remains approval-gated"},
+            {"check": "Recorder schedule", "state": recorder_status.get("state") or "WAIT", "detail": recorder_status.get("detail") or "schedule has not sampled yet"},
+            {"check": "Service assurance", "state": assurance.get("state") or "WAIT", "detail": assurance.get("detail") or "waiting for recorder check"},
+            {"check": "Daily manifest", "state": "OK" if manifests else "WAIT", "detail": f"{len(manifests)} retained SHA-256 manifest(s)" if manifests else "waiting for first nightly manifest"},
         ]
         return {
             "title": "SOCX Flight Recorder Integrity",
@@ -3886,11 +3897,17 @@ class SocxCollector:
             "largest_gap_seconds": round(max(gaps)) if gaps else 0,
             "largest_gap_h": human_duration(int(max(gaps))) if gaps else "none",
             "markers": len(markers),
+            "schedule": recorder_status,
+            "assurance": assurance,
+            "coverage": [{"day": day, "samples": count} for day, count in list(coverage.items())[-8:]],
+            "manifest_count": len(manifests),
+            "latest_manifest": manifests[-1] if manifests else {},
             "integrity": integrity,
             "next": [
                 "Use Replay for 15m, 1h, 6h, 24h, or 72h evidence windows.",
                 "Treat a gap or stale recorder as uncertainty, not proof that nothing happened.",
                 "Use Evidence or Snapshot before changing firewall, DNSBL, or IDS policy.",
+                "Recorder samples are isolated from the heavier AI autonomy loop.",
             ],
             "read_only": True,
             "updated_ms": now_ms(),
