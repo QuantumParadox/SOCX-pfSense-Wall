@@ -7,6 +7,11 @@
 - Added Replay links to the browser wall and detail navigation so operators can jump from live monitoring to after-action context without crowding the main wall.
 - Added SOCX Answer Dock and Ask SOCX buttons across Replay, Speedtest, Devices, Flows, and Incidents drilldowns so rows can be explained in plain English without leaving the page.
 - Added richer Device Cards with profile, identity confidence, likely apps, flow count, learned-normal warnings, and one-click device explanation.
+- Added Replay time-window controls for 15m, 1h, 6h, and 24h after-action review without changing the live wall layout.
+- Added Replay incident bookmarks for the biggest security, speed, flow, thermal, and UPS moments, each with a safe Ask SOCX prompt.
+- Added Threat Map Lite at `/map` and `/api/threat-map`, a local-context blocked-source radar with severity, port, geo-hint, and reputation-style summaries.
+- Added a browser Night Mode toggle that dims the wall, softens glow, and slows ticker motion for late-night readability.
+- Added `docs/socx-project-backlog.md`, a long-form project roadmap for future SOCX, pfSense, Pi, AI, and research-lab enhancements.
 
 ## v1.5.0
 

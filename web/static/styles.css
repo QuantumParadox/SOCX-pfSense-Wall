@@ -40,6 +40,20 @@ body {
   padding: clamp(10px, 1.1vw, 18px);
 }
 
+body.night-wall {
+  filter: saturate(.74) brightness(.58);
+}
+
+body.night-wall .ticker-track {
+  animation-duration: calc(var(--ticker-duration) * 1.6);
+}
+
+body.night-wall .card,
+body.night-wall .topbar,
+body.night-wall .ticker-shell {
+  box-shadow: none;
+}
+
 .wall {
   width: 100%;
   height: 100%;
@@ -1762,6 +1776,42 @@ body {
 
 .detail-chat-cards {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.replay-controls {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.replay-controls button {
+  min-height: 42px;
+  border: 1px solid rgba(52, 215, 242, .34);
+  border-radius: 7px;
+  background: rgba(52, 215, 242, .055);
+  color: var(--cyan);
+  font: inherit;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.replay-controls button.active,
+.replay-controls button:hover {
+  border-color: rgba(118, 242, 125, .7);
+  color: var(--green);
+  background: rgba(118, 242, 125, .08);
+}
+
+.threat-map-canvas {
+  width: 100%;
+  height: 390px;
+  display: block;
+  margin: 10px 0;
+  border: 1px solid rgba(52, 215, 242, .2);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(52, 215, 242, .10), transparent 34%),
+    rgba(0, 0, 0, .22);
 }
 
 .ask-dock {

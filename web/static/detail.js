@@ -2,6 +2,7 @@ const root = document.getElementById("detail-grid");
 const title = document.getElementById("detail-title");
 const subtitle = document.getElementById("detail-subtitle");
 let whyTarget = new URLSearchParams(location.search).get("target") || "";
+let replayWindow = Number(new URLSearchParams(location.search).get("window") || 21600);
 let bundleStatus = "";
 let storyArchiveStatus = "";
 
@@ -22,6 +23,7 @@ const pageName = () => {
   if (path.includes("story")) return "story";
   if (path.includes("mission")) return "mission";
   if (path.includes("replay")) return "replay";
+  if (path.includes("map")) return "map";
   if (path.includes("observability") || path.includes("metrics")) return "observability";
   if (path.includes("guide")) return "guide";
   if (path.includes("chat")) return "chat";
@@ -184,6 +186,74 @@ async function runContextAsk(question) {
 function wireAskButtons() {
   document.querySelectorAll("[data-ask]").forEach((button) => {
     button.addEventListener("click", () => runContextAsk(button.getAttribute("data-ask") || ""));
+  });
+}
+
+function setReplayWindow(seconds) {
+  replayWindow = Number(seconds || 21600);
+  const url = new URL(location.href);
+  url.searchParams.set("window", String(replayWindow));
+  history.replaceState(null, "", url);
+  refresh();
+}
+
+function drawThreatRadar(canvas, map) {
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const width = Math.max(1, Math.floor(rect.width * dpr));
+  const height = Math.max(1, Math.floor(rect.height * dpr));
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, width, height);
+  const cx = width / 2;
+  const cy = height / 2;
+  const r = Math.min(width, height) * 0.42;
+  ctx.strokeStyle = "rgba(52, 215, 242, .22)";
+  ctx.lineWidth = Math.max(1, 1.2 * dpr);
+  for (let i = 1; i <= 4; i++) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, (r * i) / 4, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = "rgba(52, 215, 242, .12)";
+  for (let a = 0; a < 360; a += 45) {
+    const rad = (a * Math.PI) / 180;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(rad) * r, cy + Math.sin(rad) * r);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#34d7f2";
+  ctx.beginPath();
+  ctx.arc(cx, cy, 8 * dpr, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#041016";
+  ctx.font = `${Math.max(9, 11 * dpr)}px Consolas, monospace`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("WAN", cx, cy);
+  (map.nodes || []).forEach((node) => {
+    const rad = ((Number(node.angle || 0) - 90) * Math.PI) / 180;
+    const rr = r * Number(node.radius || .5);
+    const x = cx + Math.cos(rad) * rr;
+    const y = cy + Math.sin(rad) * rr;
+    const sev = String(node.severity || "LOW");
+    const color = sev === "HIGH" ? "#ff5c7a" : sev === "MED" ? "#ffe267" : "#76f27d";
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = .58;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, Math.max(4 * dpr, Math.min(12 * dpr, 4 * dpr + Number(node.count || 0) / 10)), 0, Math.PI * 2);
+    ctx.fill();
   });
 }
 
@@ -448,9 +518,23 @@ function renderReplay(state, replay) {
       question: `Explain this SOCX Replay flow in plain English. Path: ${flowPath(r)}. App: ${r.app || r.service || "--"}. Bytes: ${r.bytes_h || "--"}. Baseline: ${r.baseline_state || "--"}. Why: ${r.why || "--"}.`,
     })),
   ];
+  const windows = [
+    ["15m", 900],
+    ["1h", 3600],
+    ["6h", 21600],
+    ["24h", 86400],
+  ];
+  const bookmarkRows = (replay.bookmarks || []).map((b) => [
+    b.kind || "--",
+    b.severity || "--",
+    b.title || "--",
+    b.detail || "--",
+    b.page || "--",
+  ]);
   root.innerHTML = [
     ...renderTruthCards(state),
     askDock(),
+    card("Replay Controls", `<div class="replay-controls">${windows.map(([label, seconds]) => `<button class="${Number(replay.window_seconds || replayWindow) === seconds ? "active" : ""}" data-replay-window="${seconds}">${label}</button>`).join("")}</div>`),
     card("Replay Readout", [
       `<div class="detail-score ${replay.status === "LIVE" ? "green" : "yellow"}">${esc(replay.status || "UNKNOWN")} ${esc(replay.score?.current || replay.score?.avg || "--")}/100</div>`,
       `<div class="detail-reason">Last ${esc(replay.window_h || "--")} from ${esc(replay.samples || 0)} retained SOCX samples. Trend is ${esc(replay.score?.trend?.label || "--")}.</div>`,
@@ -470,6 +554,11 @@ function renderReplay(state, replay) {
       kv("Memory Samples", replay.security?.memory_samples || 0, "cyan"),
     ].join("")),
     card("What Happened", table(["Time", "Lane", "Severity", "Signal", "Detail"], timelineRows)),
+    card("Incident Bookmarks", [
+      `<div class="detail-reason">Auto-marked moments worth revisiting. Use Explain for context, then open the related page if needed.</div>`,
+      table(["Kind", "Severity", "Title", "Detail", "Page"], bookmarkRows),
+      `<div class="ask-list">${(replay.bookmarks || []).slice(0, 8).map((b) => `<div><span title="${esc(b.detail)}">${esc(b.kind)} ${esc(b.severity)}: ${esc(b.title)}</span>${askButton(b.question || `Explain replay bookmark ${b.title || ""}`)}</div>`).join("") || "<span class=\"muted\">No bookmarks in this window.</span>"}</div>`,
+    ].join("")),
     card("Speedtest Playback", table(["Time", "Path", "Status", "Down/Up", "Ping", "Detail"], speedRows)),
     card("Flow Playback", [
       `<div class="detail-reason">${esc(replay.flow?.summary || "NetFlow waiting")}</div>`,
@@ -482,6 +571,9 @@ function renderReplay(state, replay) {
     ]))),
     card("Ask About Replay Rows", `<div class="ask-list">${askReplayRows.map((item) => `<div><span title="${esc(item.detail)}">${esc(item.label)}: ${esc(item.detail)}</span>${askButton(item.question)}</div>`).join("") || "<span class=\"muted\">No replay rows ready yet.</span>"}</div>`),
   ].join("");
+  document.querySelectorAll("[data-replay-window]").forEach((button) => {
+    button.addEventListener("click", () => setReplayWindow(button.getAttribute("data-replay-window")));
+  });
   wireAskButtons();
 }
 
@@ -531,6 +623,7 @@ function renderGuide(state) {
     card("Drilldowns", table(["Page", "Best For"], [
       ["Mission", "What matters, what changed, what to check, probable noise."],
       ["Replay", "A calm flight recorder for recent trends, Speedtest, security events, and Flow Truth."],
+      ["Map", "Threat Map Lite radar for blocked WAN sources and scan pressure."],
       ["Speed", "Direct vs VPN speed tests and router/client truth."],
       ["Devices", "Friendly device and application labels."],
       ["Incidents", "Firewall/DNSBL/IDS evidence tables."],
@@ -547,6 +640,32 @@ function renderGuide(state) {
       ]),
     ].join("")),
   ].join("");
+}
+
+function renderThreatMap(state, map) {
+  title.textContent = "SOCX THREAT MAP";
+  subtitle.textContent = `${state.hostname || "pfSense"} / blocked WAN radar / ${new Date().toLocaleTimeString()}`;
+  const rows = (map.nodes || []).map((n) => [
+    n.label || "--",
+    n.count || 0,
+    n.severity || "--",
+    n.country || "--",
+    n.top_ports || "--",
+    n.disposition || "--",
+  ]);
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Threat Radar", [
+      `<div class="story-title"><span>${esc(map.summary || "Threat map waiting")}</span><b class="${map.status === "QUIET" ? "green" : "yellow"}">${esc(map.status || "--")}</b></div>`,
+      `<canvas class="threat-map-canvas" id="threat-map-canvas"></canvas>`,
+      `<div class="detail-reason">${esc(map.note || "Geo/reputation hints are local SOCX context, not proof.")}</div>`,
+    ].join("")),
+    card("Blocked Source Rows", table(["Source", "Count", "Severity", "Geo", "Top Ports", "Disposition"], rows)),
+    card("Ask About Sources", `<div class="ask-list">${(map.nodes || []).slice(0, 10).map((n) => `<div><span title="${esc(n.disposition)}">${esc(n.label)} ${esc(n.country)} x${esc(n.count)} ports ${esc(n.top_ports)}</span>${askButton(n.question)}</div>`).join("") || "<span class=\"muted\">No mapped blocked sources yet.</span>"}</div>`),
+  ].join("");
+  requestAnimationFrame(() => drawThreatRadar(document.getElementById("threat-map-canvas"), map));
+  wireAskButtons();
 }
 
 function renderChatPage(state) {
@@ -897,11 +1016,15 @@ async function refresh() {
     ? await fetch("/api/flows", { cache: "no-store" }).then((r) => r.json())
     : null;
   const replay = page === "replay"
-    ? await fetch("/api/replay", { cache: "no-store" }).then((r) => r.json())
+    ? await fetch(`/api/replay?window=${encodeURIComponent(replayWindow || 21600)}`, { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const threatMap = page === "map"
+    ? await fetch("/api/threat-map", { cache: "no-store" }).then((r) => r.json())
     : null;
   subtitle.textContent = `${state.hostname || "pfSense"} / ${state.mode || "live"} / ${new Date().toLocaleTimeString()}`;
   if (page === "flows") renderFlowsPage(state, flowsData || {});
   else if (page === "replay") renderReplay(state, replay || {});
+  else if (page === "map") renderThreatMap(state, threatMap || {});
   else if (page === "devices") renderDevices(state);
   else if (page === "incidents") renderIncidents(state);
   else if (page === "ai") renderAi(state);

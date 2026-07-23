@@ -663,8 +663,11 @@ function renderTicker(events = []) {
 
 function applyWallPrefs() {
   document.body.classList.toggle("big-wall", localStorage.getItem("socxBigWall") === "1");
+  document.body.classList.toggle("night-wall", localStorage.getItem("socxNightWall") === "1");
   const button = $("ticker-speed");
   if (button) button.textContent = tickerMode;
+  const nightButton = $("night-mode");
+  if (nightButton) nightButton.textContent = localStorage.getItem("socxNightWall") === "1" ? "day" : "night";
 }
 
 function render(state) {
@@ -938,6 +941,19 @@ $("big-mode")?.addEventListener("click", () => {
   const next = localStorage.getItem("socxBigWall") === "1" ? "0" : "1";
   localStorage.setItem("socxBigWall", next);
   applyWallPrefs();
+});
+
+$("night-mode")?.addEventListener("click", () => {
+  const next = localStorage.getItem("socxNightWall") === "1" ? "0" : "1";
+  localStorage.setItem("socxNightWall", next);
+  if (next === "1" && tickerMode === "fast") {
+    tickerMode = "slow";
+    localStorage.setItem("socxTickerMode", tickerMode);
+  }
+  lastTickerText = "";
+  tickerLastSwap = 0;
+  applyWallPrefs();
+  renderTicker(latestState?.events || []);
 });
 
 $("chat-send")?.addEventListener("click", runOperatorChat);

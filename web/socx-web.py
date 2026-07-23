@@ -2863,12 +2863,13 @@ class SocxCollector:
             by_window[label] = sum(1 for row in rows if float(row.get("ts") or 0) >= now - seconds)
         return {"rows": rows[-80:], "paths": sorted(summaries, key=lambda item: str(item.get("path"))), "count": len(rows), "latest_age_sec": age, "windows": by_window}
 
-    def collect_replay(self) -> dict[str, Any]:
+    def collect_replay(self, window_seconds: int | None = None) -> dict[str, Any]:
         """Build a calm, read-only flight recorder from existing SOCX history."""
         snap = self.snapshot()
         rows = self.collect_history(720)
         now = time.time()
-        window_seconds = env_int("SOCX_REPLAY_WINDOW_SECONDS", 21600)
+        window_seconds = window_seconds or env_int("SOCX_REPLAY_WINDOW_SECONDS", 21600)
+        window_seconds = int(clamp(window_seconds, 900, 86400))
         recent = [row for row in rows if self.replay_row_ts(row) >= now - window_seconds]
         if not recent:
             recent = rows[-180:]
@@ -2929,9 +2930,11 @@ class SocxCollector:
                 "message": str(row.get("message") or row.get("server_name") or "")[:120],
             })
 
+        bookmarks = self.replay_bookmarks(recent, snap, speed_rows, replay_rows)
         return {
             "updated_ms": now_ms(),
             "window_h": human_duration(window_seconds),
+            "window_seconds": window_seconds,
             "samples": len(recent),
             "status": data_truth.get("label") or "UNKNOWN",
             "score": {
@@ -2971,6 +2974,7 @@ class SocxCollector:
                 "top": (netflow.get("rows") or [])[:6] if isinstance(netflow.get("rows"), list) else [],
             },
             "buckets": buckets,
+            "bookmarks": bookmarks,
             "timeline": replay_rows[:14],
             "commands": [
                 {"label": "Open Mission", "href": "/mission", "why": "read the current plain-English SOCX mission"},
@@ -2979,6 +2983,104 @@ class SocxCollector:
                 {"label": "Ask Chat", "href": "/chat", "why": "ask SOCX what changed or what to check next"},
             ],
         }
+
+    def replay_bookmarks(
+        self,
+        rows: list[dict[str, Any]],
+        snap: dict[str, Any],
+        speed_rows: list[dict[str, Any]],
+        replay_rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        bookmarks: list[dict[str, Any]] = []
+
+        def add(kind: str, severity: str, title: str, detail: str, page: str = "/mission") -> None:
+            bookmarks.append({
+                "kind": kind,
+                "severity": severity,
+                "title": title[:80],
+                "detail": detail[:180],
+                "page": page,
+                "question": f"Explain this SOCX replay bookmark. Kind: {kind}. Severity: {severity}. Title: {title}. Detail: {detail}. Tell me why it matters and what safe thing to check next.",
+            })
+
+        if replay_rows:
+            for row in replay_rows[:6]:
+                sev = str(row.get("severity") or "LOW").upper()
+                page = "/incidents" if str(row.get("lane", "")).upper() in {"FW", "DNSBL", "IDS", "INCIDENT"} else "/mission"
+                add(str(row.get("lane") or "CHANGE"), sev, str(row.get("title") or "SOCX change"), str(row.get("detail") or "--"), page)
+        for row in speed_rows[-4:]:
+            status = str(row.get("status") or "UNKNOWN")
+            if status not in {"OK", "STABLE", ""} or self.safe_float(row.get("down")) <= 0:
+                add("SPEED", "MED", f"{row.get('path', 'path')} Speedtest {status}", f"{row.get('down', '--')}/{row.get('up', '--')} Mbps {row.get('ping', '--')}ms {row.get('message', '')}", "/speedtest")
+        truth = snap.get("data_truth") if isinstance(snap.get("data_truth"), dict) else {}
+        if str(truth.get("label") or "").upper() != "LIVE":
+            add("TRUTH", "MED", f"Data Truth {truth.get('label', 'UNKNOWN')}", str(truth.get("reason") or "collector freshness needs review"), "/health")
+        flow = snap.get("netflow_intel") if isinstance(snap.get("netflow_intel"), dict) else {}
+        watch_rows = flow.get("watch_rows") if isinstance(flow.get("watch_rows"), list) else []
+        if watch_rows:
+            top = watch_rows[0]
+            add("FLOW", "MED", "New/watch flow", f"{top.get('display_path') or top.get('asset')} {top.get('app') or top.get('service')} {top.get('why')}", "/flows")
+        cpu_vals = [self.safe_float(row.get("cpu_temp_max") or row.get("cpu_temp")) for row in rows if self.safe_float(row.get("cpu_temp_max") or row.get("cpu_temp")) > 0]
+        if cpu_vals and max(cpu_vals) >= env_int("SOCX_CPU_WARN_C", 75):
+            add("THERMAL", "MED", "CPU thermal headroom tight", f"peak {max(cpu_vals):.1f}C in replay window", "/health")
+        return bookmarks[:12]
+
+    def collect_threat_map(self) -> dict[str, Any]:
+        snap = self.snapshot()
+        incident = snap.get("incident") if isinstance(snap.get("incident"), dict) else self.collect_incident_light(snap.get("command_center", {}))
+        sources = incident.get("blocked_sources") if isinstance(incident.get("blocked_sources"), list) else []
+        ports = incident.get("blocked_ports") if isinstance(incident.get("blocked_ports"), list) else []
+        top_ports = ", ".join(str(item.get("name")) for item in ports[:4]) or "mixed"
+        nodes: list[dict[str, Any]] = []
+        max_count = max([int(item.get("count", 0) or 0) for item in sources] + [1])
+        for idx, item in enumerate(sources[:16]):
+            label = str(item.get("name") or "EXT")
+            count = int(item.get("count", 0) or 0)
+            hint = self.threat_geo_hint(label)
+            severity = "HIGH" if count >= 80 else "MED" if count >= 20 else "LOW"
+            disposition = "investigate" if severity == "HIGH" else "probably internet noise"
+            nodes.append({
+                "label": label,
+                "count": count,
+                "severity": severity,
+                "country": hint["country"],
+                "region": hint["region"],
+                "angle": round((idx / max(1, min(16, len(sources)))) * 360),
+                "radius": round(0.28 + (0.62 * (count / max_count)), 3),
+                "top_ports": top_ports,
+                "disposition": disposition,
+                "reputation": "abuse:high" if count >= 20 else "scanner?",
+                "question": f"Explain this SOCX Threat Map source. Source: {label}. Count: {count}. Severity: {severity}. Ports: {top_ports}. Geo hint: {hint['country']}. Disposition: {disposition}. Is it probably routine WAN scan noise or something to investigate?",
+            })
+        return {
+            "updated_ms": now_ms(),
+            "status": "WATCH" if nodes else "QUIET",
+            "summary": f"{len(nodes)} blocked WAN sources mapped; top ports {top_ports}" if nodes else "No blocked WAN sources in the current sample",
+            "top_ports": top_ports,
+            "nodes": nodes,
+            "note": "Geo is a lightweight SOCX hint from local evidence, not authoritative GeoIP.",
+        }
+
+    def threat_geo_hint(self, label: str) -> dict[str, str]:
+        match = re.search(r"EXT\.(\d+)\.(\d+)", label)
+        if not match:
+            return {"country": "--", "region": "unknown"}
+        a = int(match.group(1))
+        if a < 32:
+            return {"country": "US", "region": "North America"}
+        if a < 64:
+            return {"country": "EU?", "region": "Europe"}
+        if a < 96:
+            return {"country": "AP?", "region": "Asia-Pacific"}
+        if a < 128:
+            return {"country": "US?", "region": "North America"}
+        if a < 160:
+            return {"country": "EU?", "region": "Europe"}
+        if a < 192:
+            return {"country": "AP?", "region": "Asia-Pacific"}
+        if a < 224:
+            return {"country": "US?", "region": "North America"}
+        return {"country": "GL?", "region": "global"}
 
     def replay_row_ts(self, row: dict[str, Any]) -> float:
         raw = row.get("ts") or row.get("updated") or row.get("time") or row.get("timestamp") or 0
@@ -4135,7 +4237,16 @@ class SocxHandler(BaseHTTPRequestHandler):
             })
             return
         if parsed.path == "/api/replay":
-            self.send_json(self.collector.collect_replay())
+            params = parse_qs(parsed.query)
+            raw_window = params.get("window", ["21600"])[0]
+            try:
+                window = int(float(raw_window))
+            except ValueError:
+                window = 21600
+            self.send_json(self.collector.collect_replay(window))
+            return
+        if parsed.path == "/api/threat-map":
+            self.send_json(self.collector.collect_threat_map())
             return
         if parsed.path == "/api/autonomy-loop":
             self.send_json(self.collector.collect_autonomy_loop())
@@ -4256,7 +4367,7 @@ class SocxHandler(BaseHTTPRequestHandler):
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health", "/why", "/story", "/mission", "/flows", "/replay", "/observability", "/metrics", "/guide", "/chat"}:
+        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/observability", "/metrics", "/guide", "/chat"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"

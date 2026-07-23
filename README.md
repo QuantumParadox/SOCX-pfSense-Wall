@@ -53,6 +53,7 @@ Useful idea areas include new UPS/environment sensors, better VPN provider detec
 - v1 release notes: [`docs/v1.0.0-release-notes.md`](docs/v1.0.0-release-notes.md)
 - Latest hardware/stability notes: [`docs/v1.1.2-release-notes.md`](docs/v1.1.2-release-notes.md)
 - Operator Intelligence notes: [`docs/v1.2.0-release-notes.md`](docs/v1.2.0-release-notes.md)
+- Long project backlog: [`docs/socx-project-backlog.md`](docs/socx-project-backlog.md)
 
 ## Real Wall Showcase
 
@@ -97,6 +98,9 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds VPN crypto headroom on the browser Speedtest page so DIRECT/VPN throughput can be read beside current CPU temperature and thermal headroom.
 - Adds SOCX Mission / Operator Intelligence through `/mission`, `/api/mission`, and `socx mission`, summarizing what changed, what matters, what to check, and what is probably noise.
 - Adds SOCX Replay through `/replay` and `/api/replay`, a read-only flight recorder that turns retained history into score buckets, security playback, Speedtest playback, Flow Truth context, thermal/UPS spikes, and safe drilldown links.
+- Adds Replay time controls, incident bookmarks, and safe Ask SOCX prompts so after-action review can jump to the exact security, speed, flow, thermal, or UPS moment.
+- Adds Threat Map Lite through `/map` and `/api/threat-map`, a local-context blocked-source radar that uses pfSense/SOCX evidence without treating geo hints as proof.
+- Adds a browser Night Mode toggle that dims the wall, reduces glow, and slows ticker motion for readable late-night operation.
 - Adds SOCX ATT&CK / D3FEND / KEV Intelligence through `/api/intel`, Mission cards, and `socx intel`. It maps current firewall/DNSBL/IDS/asset-drift evidence to conservative ATT&CK context, defensive countermeasure names, CISA KEV status, priority, disposition, and a compact kill-chain story. It is read-only and never changes pfSense policy.
 - Adds SOCX Operator Chat through the browser Command Center, `/api/chat`, and `socx chat`. Ask plain-English questions about firewall blocks, DNSBL, IDS/Suricata, VPN, Speedtest, Pi AI, devices, or draft-only pfSense configuration plans. Chat can delegate to the Pi 5 LLM endpoint when available, shows visible operational steps, and never applies pfSense changes from chat.
 - Adds the full-size `/chat` Operator Chat page with suggested questions, current signal context, readable action cards, and safety mode descriptions. Live Flow and Packet Story rows on the wall can be clicked to ask SOCX to explain that exact row.
