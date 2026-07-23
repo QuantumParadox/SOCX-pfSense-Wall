@@ -100,6 +100,12 @@ hist_count="$(json_count /var/db/socx_speedtest_history.jsonl)"
 mem_count="$(json_count /var/db/socx_incident_memory.jsonl)"
 [ "$mem_count" -gt 0 ] 2>/dev/null && mark OK "incident memory samples=$mem_count" || mark WARN "incident memory empty"
 
+if [ -f /etc/cron.d/socx-evidence-vault ]; then
+    mark OK "daily hashed Evidence Vault schedule installed"
+else
+    mark WARN "Evidence Vault schedule missing; run socx vault-cron install"
+fi
+
 [ -f /var/db/socx_label_brain.json ] && mark OK "Label Brain memory present" || mark WARN "Label Brain memory missing"
 
 if command -v socx-hosts-audit >/dev/null 2>&1; then

@@ -167,6 +167,7 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds `socx v1-check`, a readiness gate that verifies the terminal wall, browser API, Daily Story, renderer log, Speedtest paths, incident memory, Label Brain, host naming, Pi fleet, Pi 3-LLM roles, and pfSense service visibility.
 - Adds `socx snapshot`, a read-only evidence bundle for status, why-now, history, timeline, Speedtest paths, topology, unknown services, and web API JSON.
 - Adds `socx snapshot-cron`, a nightly read-only evidence snapshot schedule with retention cleanup.
+- Adds `socx vault-cron`, a daily hashed Evidence Vault schedule. It collects a local, read-only incident bundle before the nightly snapshot and retains fourteen days by default. It does not transmit data off-box or change pfSense policy.
 - Adds `/api/history` plus a tiny Command Center score sparkline in the browser wall.
 - Adds a browser Incident Cockpit and safe Commander buttons for status, Incident Mode, snapshots, Zeek health, and Pi AI checks.
 - Adds a browser Mission Control strip with Threat Pulse, LAN Asset Watch, and AI Verdict Timeline.

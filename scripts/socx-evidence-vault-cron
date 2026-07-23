@@ -1,0 +1,34 @@
+#!/bin/sh
+# Install/remove the daily SOCX Evidence Vault capture schedule.
+
+CRON="${SOCX_EVIDENCE_VAULT_CRON_FILE:-/etc/cron.d/socx-evidence-vault}"
+HOUR="${SOCX_EVIDENCE_VAULT_HOUR:-2}"
+MINUTE="${SOCX_EVIDENCE_VAULT_MINUTE:-41}"
+KEEP_DAYS="${SOCX_EVIDENCE_VAULT_KEEP_DAYS:-14}"
+
+case "${1:-status}" in
+    install)
+        cat > "$CRON" <<EOF
+SHELL=/bin/sh
+PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+$MINUTE $HOUR * * * root /usr/local/bin/socx-evidence-vault scheduled >/tmp/socx-evidence-vault-cron.log 2>&1; find /root/socx-evidence-vault -type f \( -name 'socx-evidence-*.tgz' -o -name 'socx-evidence-*.tgz.sha256' \) -mtime +$KEEP_DAYS -delete 2>/dev/null || true
+EOF
+        echo "installed $CRON"
+        ;;
+    remove|uninstall)
+        rm -f "$CRON"
+        echo "removed $CRON"
+        ;;
+    status)
+        if [ -f "$CRON" ]; then
+            echo "installed: $CRON"
+            cat "$CRON"
+        else
+            echo "not installed: $CRON"
+        fi
+        ;;
+    *)
+        echo "Usage: socx-evidence-vault-cron [install|remove|status]" >&2
+        exit 2
+        ;;
+esac

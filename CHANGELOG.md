@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added `socx vault-cron` for daily, hashed, read-only Evidence Vault captures with fourteen-day retention and readiness-gate coverage.
+
+## Unreleased
+
 - Added an independent 15-minute SOCX Flight Recorder schedule, gap marker, lightweight local service assurance, and daily SHA-256 history manifest. It writes compact local telemetry only, records its own status, and never changes pfSense policy.
 - Added `/flight-recorder`, a read-only evidence-continuity view that shows SOCX history retention, sampling cadence, gaps, freshness, and auto-evidence-marker count; Replay now supports a 72-hour window when retained history is available.
 - Stabilized terminal wall painting with synchronized-output markers so modern tmux terminals reveal a completed SOCX frame rather than a partially painted one.

@@ -209,6 +209,10 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-evidence-vault "$@"
         ;;
+    vault-cron|evidence-vault-cron|evidence-schedule)
+        shift
+        exec /usr/local/bin/socx-evidence-vault-cron "$@"
+        ;;
     evidence-relay|remote-evidence|remote-logs)
         shift
         exec /usr/local/bin/socx-evidence-relay "$@"
