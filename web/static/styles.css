@@ -54,6 +54,18 @@ body.night-wall .ticker-shell {
   box-shadow: none;
 }
 
+body.incident-focus .topbar,
+body.incident-focus .card,
+body.incident-focus .ticker-shell {
+  border-color: rgba(255, 226, 103, .62);
+  box-shadow: 0 0 26px rgba(255, 226, 103, .10);
+}
+
+body.incident-focus .mark {
+  background: linear-gradient(180deg, var(--yellow), var(--orange));
+  box-shadow: 0 0 18px rgba(255, 226, 103, .62);
+}
+
 .wall {
   width: 100%;
   height: 100%;
@@ -2100,6 +2112,103 @@ body.night-wall .ticker-shell {
   white-space: nowrap;
 }
 
+.owner-editor,
+.noise-list {
+  display: grid;
+  gap: 8px;
+}
+
+.owner-edit-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.1fr) minmax(130px, 1fr) minmax(110px, .9fr) minmax(100px, .8fr);
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid rgba(52, 215, 242, .18);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, .035);
+}
+
+.owner-edit-row b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cyan);
+}
+
+.owner-edit-row input,
+.noise-list input[type="checkbox"] {
+  accent-color: var(--green);
+}
+
+.owner-edit-row input {
+  min-width: 0;
+  border: 1px solid rgba(52, 215, 242, .28);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, .28);
+  color: var(--text);
+  font: inherit;
+  font-size: clamp(11px, .76vw, 14px);
+  padding: 7px 8px;
+}
+
+.owner-edit-row input:focus {
+  outline: 1px solid rgba(118, 242, 125, .72);
+  border-color: rgba(118, 242, 125, .62);
+}
+
+.noise-list label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 9px;
+  border: 1px solid rgba(52, 215, 242, .18);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, .035);
+  cursor: pointer;
+}
+
+.noise-list label:hover,
+.owner-edit-row:hover {
+  border-color: rgba(52, 215, 242, .42);
+  background: rgba(52, 215, 242, .065);
+}
+
+.noise-list b,
+.noise-list span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.noise-list b {
+  color: var(--yellow);
+}
+
+.noise-list span {
+  color: var(--muted);
+  text-align: right;
+}
+
+.detail-card button {
+  border: 1px solid rgba(52, 215, 242, .36);
+  border-radius: 6px;
+  background: rgba(52, 215, 242, .055);
+  color: var(--cyan);
+  font: inherit;
+  font-weight: 950;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.detail-card button:hover {
+  border-color: rgba(118, 242, 125, .62);
+  color: var(--green);
+}
+
 .chat-page-shell {
   display: grid;
   gap: 10px;
@@ -2492,6 +2601,10 @@ body.night-wall .ticker-shell {
     grid-template-columns: 1fr;
   }
 
+  .owner-edit-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .story-evidence-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2619,6 +2732,15 @@ body.night-wall .ticker-shell {
 
   .detail-card {
     padding: 12px;
+  }
+
+  .owner-edit-row,
+  .noise-list label {
+    grid-template-columns: 1fr;
+  }
+
+  .noise-list span {
+    text-align: left;
   }
 
   .detail-row {

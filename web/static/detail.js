@@ -39,7 +39,12 @@ const pageName = () => {
   if (path.includes("glitch")) return "glitches";
   if (path.includes("wall-health")) return "wall-health";
   if (path.includes("review-queue")) return "review-queue";
+  if (path.includes("owner-editor")) return "owner-editor";
   if (path.includes("owner-map")) return "owner-map";
+  if (path.includes("packet-noise")) return "packet-noise";
+  if (path.includes("confidence")) return "confidence";
+  if (path.includes("incident-focus")) return "incident-focus";
+  if (path.includes("maintenance")) return "maintenance";
   if (path.includes("mission-console")) return "mission-console";
   if (path.includes("config-sim")) return "config-sim";
   if (path.includes("baseline")) return "baseline";
@@ -1485,6 +1490,127 @@ function renderOwnerMap(state, owner) {
   wireAskButtons();
 }
 
+function renderOwnerEditor(state, owner) {
+  title.textContent = "SOCX OWNER EDITOR";
+  subtitle.textContent = `${state.hostname || "pfSense"} / SOCX labels only / approval-safe`;
+  const rows = owner.rows || [];
+  const editorRows = rows.map((r, idx) => `
+    <div class="owner-edit-row">
+      <input data-owner-field="asset" data-owner-idx="${idx}" value="${esc(r.asset || "")}" readonly>
+      <input data-owner-field="friendly" data-owner-idx="${idx}" value="${esc(r.friendly || r.asset || "")}" placeholder="Friendly name">
+      <input data-owner-field="owner" data-owner-idx="${idx}" value="${esc(r.owner || "Home / Lab")}" placeholder="Owner">
+      <input data-owner-field="role" data-owner-idx="${idx}" value="${esc(r.profile || "device")}" placeholder="Role">
+    </div>`).join("");
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    card("Label Editor", [
+      `<div class="detail-reason">Saves SOCX display labels only. No pfSense firewall, DNSBL, IDS, VPN, or DHCP setting is changed.</div>`,
+      `<div class="owner-editor">${editorRows || "<span class=\"muted\">No learned devices ready yet.</span>"}</div>`,
+      `<div class="story-actions"><button id="owner-save">Save SOCX Labels</button><a href="/owner-map">Open Owner Map</a></div>`,
+      `<pre class="why-output" id="owner-save-output">Overrides file: ${esc(owner.override_file || "/usr/local/etc/socx_owner_overrides.json")}</pre>`,
+    ].join("")),
+    card("Current Guess", table(["Asset", "Friendly", "Owner", "Role", "Source"], rows.map((r) => [r.asset || "--", r.friendly || "--", r.owner || "--", r.profile || "--", r.label_source || "--"]))),
+  ].join("");
+  document.getElementById("owner-save")?.addEventListener("click", async () => {
+    const grouped = {};
+    document.querySelectorAll("[data-owner-idx]").forEach((input) => {
+      const idx = input.getAttribute("data-owner-idx");
+      const field = input.getAttribute("data-owner-field");
+      grouped[idx] = grouped[idx] || {};
+      grouped[idx][field] = input.value.trim();
+    });
+    const out = document.getElementById("owner-save-output");
+    out.textContent = "Saving SOCX label overrides...";
+    try {
+      const result = await fetch("/api/owner-overrides", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows: Object.values(grouped) }) }).then((r) => r.json());
+      out.textContent = result.ok ? `Saved ${result.count} SOCX label override(s) to ${result.path}` : `Save failed: ${result.error || "unknown"}`;
+    } catch (err) {
+      out.textContent = `Save failed: ${err}`;
+    }
+  });
+}
+
+function renderPacketNoise(state, noise) {
+  title.textContent = "SOCX PACKET NOISE";
+  subtitle.textContent = `${state.hostname || "pfSense"} / hide from wall, keep evidence`;
+  const rows = noise.rows || [];
+  const selected = new Set(noise.suppress_on_wall || []);
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    card("Noise Reducer", [
+      `<div class="detail-score ${noise.label === "ACTIVE" ? "green" : "cyan"}">${esc(noise.label || "OFF")}</div>`,
+      `<div class="detail-reason">${esc(noise.summary || "Packet noise reducer is waiting.")}</div>`,
+      `<div class="noise-list">${rows.map((r) => `<label><input type="checkbox" data-noise-category="${esc(r.category)}" ${selected.has(r.category) ? "checked" : ""}> <b>${esc(r.category)}</b> <span>${esc(r.count)} row(s), ${esc(r.wall)}</span></label>`).join("") || "<span class=\"muted\">No packet categories yet.</span>"}</div>`,
+      `<div class="story-actions"><button id="noise-save">Save Wall Filter</button><a href="/incidents">Open Incidents</a></div>`,
+      `<pre class="why-output" id="noise-output">${esc(noise.safety || "")}\n${esc(noise.config_file || "")}</pre>`,
+    ].join("")),
+    card("Current Categories", table(["Category", "Count", "Wall", "Evidence"], rows.map((r) => [r.category || "--", r.count || 0, r.wall || "--", r.evidence || "--"]))),
+  ].join("");
+  document.getElementById("noise-save")?.addEventListener("click", async () => {
+    const suppress = [...document.querySelectorAll("[data-noise-category]:checked")].map((x) => x.getAttribute("data-noise-category"));
+    const out = document.getElementById("noise-output");
+    out.textContent = "Saving SOCX wall packet filter...";
+    try {
+      const result = await fetch("/api/packet-noise", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ suppress_on_wall: suppress }) }).then((r) => r.json());
+      out.textContent = result.ok ? `Saved wall filter: ${(result.config?.suppress_on_wall || []).join(", ") || "none"}` : `Save failed: ${result.error || "unknown"}`;
+    } catch (err) {
+      out.textContent = `Save failed: ${err}`;
+    }
+  });
+}
+
+function renderConfidence(state, confidence) {
+  title.textContent = "SOCX CONFIDENCE";
+  subtitle.textContent = `${state.hostname || "pfSense"} / source truth meter`;
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    card("Confidence Meter", [
+      `<div class="detail-score ${confidence.label === "HIGH" ? "green" : "yellow"}">${esc(confidence.label || "UNKNOWN")} ${esc(confidence.score ?? "--")}/100</div>`,
+      `<div class="detail-reason">${esc(confidence.summary || "Confidence evidence is warming up.")}</div>`,
+    ].join("")),
+    card("Evidence Sources", table(["Source", "Kind", "Confidence", "Detail"], (confidence.rows || []).map((r) => [r.source || "--", r.kind || "--", r.confidence || "--", r.detail || "--"]))),
+  ].join("");
+}
+
+function renderIncidentFocus(state, focus) {
+  title.textContent = "SOCX INCIDENT FOCUS";
+  subtitle.textContent = `${state.hostname || "pfSense"} / temporary operator mode`;
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    card("Focus Mode", [
+      `<div class="detail-score ${focus.active ? "yellow" : "green"}">${esc(focus.mode || "NORMAL")}</div>`,
+      `<div class="detail-reason">${esc(focus.summary || "Normal wall mode")}</div>`,
+      kv("Remaining", `${Math.ceil(Number(focus.remaining_sec || 0) / 60)}m`, focus.active ? "yellow" : "green"),
+      `<div class="story-actions"><button id="focus-on">Start 10m Focus</button><button id="focus-off">Stop Focus</button><a href="/review-queue">Review Queue</a></div>`,
+      `<pre class="why-output" id="focus-output">Focus mode changes SOCX display behavior only. pfSense policy is unchanged.</pre>`,
+    ].join("")),
+  ].join("");
+  const setFocus = async (active) => {
+    const out = document.getElementById("focus-output");
+    out.textContent = active ? "Starting incident focus..." : "Stopping incident focus...";
+    const result = await fetch("/api/incident-focus", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active, minutes: 10 }) }).then((r) => r.json());
+    out.textContent = `${result.mode || "--"} ${result.remaining_sec || 0}s`;
+    refresh();
+  };
+  document.getElementById("focus-on")?.addEventListener("click", () => setFocus(true));
+  document.getElementById("focus-off")?.addEventListener("click", () => setFocus(false));
+}
+
+function renderMaintenance(state, maint) {
+  title.textContent = "SOCX MAINTENANCE";
+  subtitle.textContent = `${state.hostname || "pfSense"} / services, files, freshness`;
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    card("Maintenance State", [
+      `<div class="detail-score ${maint.label === "OK" ? "green" : "yellow"}">${esc(maint.label || "WATCH")}</div>`,
+      `<div class="detail-reason">${esc(maint.summary || "Maintenance center warming up.")}</div>`,
+    ].join("")),
+    card("Checks", table(["Check", "State", "Detail"], (maint.checks || []).map((r) => [r.name || "--", r.state || "--", r.detail || "--"]))),
+    card("Files", table(["File", "State", "Age", "Size", "Path"], (maint.files || []).map((r) => [r.name || "--", r.state || "--", r.age || "--", r.size || 0, r.path || "--"]))),
+    card("Commands", table(["#", "Command"], (maint.commands || []).map((cmd, idx) => [idx + 1, cmd]))),
+  ].join("");
+}
+
 function renderMissionConsole(state, consoleData) {
   title.textContent = "SOCX AI SOC CONSOLE";
   subtitle.textContent = `${state.hostname || "pfSense"} / mission assurance / read-only`;
@@ -2063,6 +2189,21 @@ async function refresh() {
   const ownerMap = page === "owner-map"
     ? await fetch("/api/owner-map", { cache: "no-store" }).then((r) => r.json())
     : null;
+  const ownerEditor = page === "owner-editor"
+    ? await fetch("/api/owner-map", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const packetNoise = page === "packet-noise"
+    ? await fetch("/api/packet-noise", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const confidence = page === "confidence"
+    ? await fetch("/api/confidence", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const incidentFocus = page === "incident-focus"
+    ? await fetch("/api/incident-focus", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const maintenance = page === "maintenance"
+    ? await fetch("/api/maintenance", { cache: "no-store" }).then((r) => r.json())
+    : null;
   const missionConsole = page === "mission-console"
     ? await fetch("/api/mission-console", { cache: "no-store" }).then((r) => r.json())
     : null;
@@ -2102,6 +2243,11 @@ async function refresh() {
   else if (page === "wall-health") renderWallHealth(state, wallHealth || {});
   else if (page === "review-queue") renderReviewQueue(state, reviewQueue || {});
   else if (page === "owner-map") renderOwnerMap(state, ownerMap || {});
+  else if (page === "owner-editor") renderOwnerEditor(state, ownerEditor || {});
+  else if (page === "packet-noise") renderPacketNoise(state, packetNoise || {});
+  else if (page === "confidence") renderConfidence(state, confidence || {});
+  else if (page === "incident-focus") renderIncidentFocus(state, incidentFocus || {});
+  else if (page === "maintenance") renderMaintenance(state, maintenance || {});
   else if (page === "mission-console") renderMissionConsole(state, missionConsole || {});
   else if (page === "config-sim") renderConfigSim(state, configSim || {});
   else if (page === "baseline") renderBaseline(state, baseline || {});

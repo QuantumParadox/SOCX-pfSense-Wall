@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added SOCX Trust & Control pages: `/owner-editor`, `/packet-noise`, `/confidence`, `/incident-focus`, and `/maintenance`.
+- Added `/api/owner-overrides`, a SOCX-only friendly-name/profile/owner editor that writes label metadata without changing pfSense rules.
+- Added `/api/packet-noise`, a wall-only Packet Story noise reducer that can hide routine categories while preserving the full evidence stream in `packets_all`.
+- Added `/api/confidence`, a readable confidence meter separating raw pfSense counters, freshness checks, learned labels, Pi LLM advisory signals, and derived packet stories.
+- Added `/api/incident-focus`, a temporary display focus mode that highlights the wall for incident review without applying policy changes.
+- Added `/api/maintenance`, a read-only SOCX Maintenance Center for service status, file freshness, wall health, Pi fleet, Data Truth, and display filters.
 - Added `/since-yesterday`, `/daily-brief`, and matching APIs so SOCX can show baseline movement, daily brief context, and what changed across retained history.
 - Improved Packet Story with human-readable packet category, story, and why fields, including routine IPv6 multicast/local noise, WAN scans, LAN policy blocks, DNS, VPN, and web/cloud traffic.
 - Improved Autopilot Review Queue with disposition, confidence, why-it-matters text, duplicate grouping, page links, and clearer approval state.

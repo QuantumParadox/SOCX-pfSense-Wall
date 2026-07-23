@@ -364,9 +364,12 @@ class SocxCollector:
         self.ups_samples: deque[float] = deque(maxlen=120)
         self.label_history_path = Path(os.environ.get("SOCX_LABEL_BRAIN_HISTORY", "/var/db/socx_label_brain.json"))
         self.owner_overrides_path = Path(os.environ.get("SOCX_OWNER_OVERRIDES", "/usr/local/etc/socx_owner_overrides.json"))
+        self.packet_noise_path = Path(os.environ.get("SOCX_PACKET_NOISE_CONFIG", "/usr/local/etc/socx_packet_noise.json"))
+        self.incident_focus_path = Path(os.environ.get("SOCX_INCIDENT_FOCUS", "/tmp/socx-incident-focus.json"))
         self.label_history_last_write = 0.0
         self.label_history_cache: dict[str, Any] = self.load_label_history()
         self.owner_overrides: dict[str, Any] = self.load_owner_overrides()
+        self.packet_noise: dict[str, Any] = self.load_packet_noise()
         self.last_incident_memory_write = 0.0
         self.kev_memory: dict[str, Any] = {"checked": 0.0, "data": {}, "error": ""}
         self.state: dict[str, Any] = self.demo_state()
@@ -403,6 +406,27 @@ class SocxCollector:
             if isinstance(value, str):
                 return {"friendly": value, "owner": "Manual"}
         return {}
+
+    def load_packet_noise(self) -> dict[str, Any]:
+        default = {"suppress_on_wall": ["IPv6 multicast/local noise"], "keep_in_evidence": True}
+        try:
+            data = json.loads(self.packet_noise_path.read_text(errors="ignore"))
+            if isinstance(data, dict):
+                default.update(data)
+        except Exception:
+            pass
+        return default
+
+    def save_json_file(self, path: Path, data: dict[str, Any], mode: int = 0o640) -> tuple[bool, str]:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+            tmp.chmod(mode)
+            tmp.replace(path)
+            return True, str(path)
+        except Exception as exc:
+            return False, str(exc)[:220]
 
     def load_label_history(self) -> dict[str, Any]:
         try:
@@ -482,6 +506,10 @@ class SocxCollector:
             self.last_event_read = time.time()
         else:
             packets = self.state.get("packets", [])
+        packets_all = list(packets)
+        packets = self.filter_wall_packets(packets_all)
+        confidence = self.collect_confidence_meter(data_truth, pi_nodes, label_brain, packets_all)
+        incident_focus = self.collect_incident_focus()
 
         for key, value in {
             "cpu": cpu["overall"],
@@ -536,12 +564,15 @@ class SocxCollector:
             "speedtest_history": speedtest_history,
             "incident_memory": incident_memory,
             "data_truth": data_truth,
+            "confidence_meter": confidence,
+            "incident_focus": incident_focus,
             "what_changed": what_changed,
             "intel": intel,
             "mission": mission,
             "netflow_intel": netflow_intel,
             "flows": flows,
             "packets": packets,
+            "packets_all": packets_all,
             "events": list(self.events.values())[-self.event_max :],
         }
 
@@ -4914,6 +4945,127 @@ class SocxCollector:
             "updated_ms": now_ms(),
         }
 
+    def filter_wall_packets(self, packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        noise = self.packet_noise if isinstance(self.packet_noise, dict) else {}
+        suppress = {str(x) for x in noise.get("suppress_on_wall", []) if x}
+        if not suppress:
+            return packets
+        visible = [row for row in packets if str(row.get("category") or "") not in suppress]
+        return visible[:16] if visible else packets[:3]
+
+    def collect_packet_noise_control(self) -> dict[str, Any]:
+        snap = self.snapshot()
+        all_packets = snap.get("packets_all") if isinstance(snap.get("packets_all"), list) else snap.get("packets", [])
+        cats: dict[str, int] = {}
+        for row in all_packets if isinstance(all_packets, list) else []:
+            cat = str(row.get("category") or "uncategorized")
+            cats[cat] = cats.get(cat, 0) + 1
+        suppress = list(self.packet_noise.get("suppress_on_wall", [])) if isinstance(self.packet_noise, dict) else []
+        rows = [{"category": k, "count": v, "wall": "hidden" if k in suppress else "visible", "evidence": "kept"} for k, v in sorted(cats.items(), key=lambda kv: (-kv[1], kv[0]))]
+        return {
+            "title": "SOCX Packet Noise Reducer",
+            "label": "ACTIVE" if suppress else "OFF",
+            "summary": f"{len(suppress)} packet categor(y/ies) hidden from wall only; full evidence retained",
+            "rows": rows,
+            "suppress_on_wall": suppress,
+            "config_file": str(self.packet_noise_path),
+            "read_only": False,
+            "safety": "SOCX display filter only; pfSense policy is unchanged",
+            "updated_ms": now_ms(),
+        }
+
+    def collect_confidence_meter(self, data_truth: dict[str, Any] | None = None, pi_nodes: dict[str, Any] | None = None, label_brain: dict[str, Any] | None = None, packets: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        data_truth = data_truth or (self.state.get("data_truth") if isinstance(self.state.get("data_truth"), dict) else {})
+        pi_nodes = pi_nodes or (self.state.get("pi_nodes") if isinstance(self.state.get("pi_nodes"), dict) else {})
+        label_brain = label_brain or (self.state.get("label_brain") if isinstance(self.state.get("label_brain"), dict) else {})
+        packets = packets if packets is not None else (self.state.get("packets_all") if isinstance(self.state.get("packets_all"), list) else [])
+        signals = [
+            {"source": "pfSense raw counters", "kind": "ground truth", "confidence": "high", "detail": "PF states, interface counters, CPU, memory, and UPS are collected locally."},
+            {"source": "Data Truth", "kind": "freshness", "confidence": "high" if str(data_truth.get("label")) == "LIVE" else "medium", "detail": data_truth.get("reason") or "--"},
+            {"source": "Label Brain", "kind": "inference", "confidence": "medium" if label_brain.get("devices") else "low", "detail": f"{len(label_brain.get('devices') or [])} passive device labels"},
+            {"source": "Pi LLM", "kind": "advisory", "confidence": "medium" if int(pi_nodes.get("online", 0) or 0) else "low", "detail": pi_nodes.get("summary") or "--"},
+            {"source": "Packet Story", "kind": "derived", "confidence": "medium" if packets else "low", "detail": f"{len(packets or [])} recent packet story rows"},
+        ]
+        score = sum({"high": 22, "medium": 16, "low": 9}.get(row["confidence"], 10) for row in signals)
+        return {"title": "SOCX Confidence Meter", "label": "HIGH" if score >= 90 else "MEDIUM" if score >= 65 else "LOW", "score": min(100, score), "rows": signals, "summary": "Shows what is raw pfSense truth, cached/freshness evidence, inferred labels, and AI opinion.", "read_only": True, "updated_ms": now_ms()}
+
+    def collect_incident_focus(self) -> dict[str, Any]:
+        try:
+            data = json.loads(self.incident_focus_path.read_text(errors="ignore"))
+        except Exception:
+            data = {}
+        until = float(data.get("until", 0) or 0) if isinstance(data, dict) else 0
+        active = until > time.time()
+        return {"title": "SOCX Incident Focus", "active": active, "remaining_sec": int(max(0, until - time.time())), "mode": "INCIDENT FOCUS" if active else "NORMAL", "summary": data.get("summary") if active else "Normal wall mode", "read_only": True, "updated_ms": now_ms()}
+
+    def collect_maintenance_center(self) -> dict[str, Any]:
+        snap = self.snapshot()
+        files = [self.owner_overrides_path, self.packet_noise_path, self.label_history_path, Path("/tmp/socx-wall.err")]
+        file_rows = []
+        for path in files:
+            try:
+                st = path.stat()
+                file_rows.append({"name": path.name, "path": str(path), "state": "OK", "age": human_duration(int(time.time() - st.st_mtime)) + " ago", "size": st.st_size})
+            except OSError:
+                file_rows.append({"name": path.name, "path": str(path), "state": "WAITING", "age": "--", "size": 0})
+        checks = []
+        for c in ((snap.get("wall_health") or {}).get("checks") or []):
+            checks.append({"name": c.get("name"), "state": c.get("state"), "detail": c.get("detail")})
+        checks.append({"name": "Pi Fleet", "state": "OK" if (snap.get("pi_nodes") or {}).get("online") else "WATCH", "detail": (snap.get("pi_nodes") or {}).get("summary")})
+        checks.append({"name": "Data Truth", "state": (snap.get("data_truth") or {}).get("label"), "detail": (snap.get("data_truth") or {}).get("reason")})
+        checks.append({"name": "Packet Noise", "state": "ACTIVE" if self.packet_noise.get("suppress_on_wall") else "OFF", "detail": ", ".join(self.packet_noise.get("suppress_on_wall", [])) or "no categories hidden"})
+        return {"title": "SOCX Maintenance Center", "label": "OK" if all(str(c.get("state")) in {"OK", "LIVE"} for c in checks[:5]) else "WATCH", "summary": "SOCX services, files, cache age, wall health, Pi fleet, and display filters.", "checks": checks, "files": file_rows, "commands": ["socx v1-check", "socx glitch-watch once", "service socxweb status", "open /confidence"], "read_only": True, "updated_ms": now_ms()}
+
+    def save_owner_overrides_payload(self, data: dict[str, Any]) -> dict[str, Any]:
+        rows = data.get("rows")
+        current = self.load_owner_overrides()
+        if isinstance(rows, list):
+            new: dict[str, Any] = {}
+            for row in rows[:200]:
+                if not isinstance(row, dict):
+                    continue
+                asset = str(row.get("asset") or "").strip()[:120]
+                if not asset:
+                    continue
+                new[asset] = {
+                    "friendly": str(row.get("friendly") or row.get("name") or asset).strip()[:120],
+                    "owner": str(row.get("owner") or "Home / Lab").strip()[:80],
+                    "role": str(row.get("role") or row.get("profile") or "device").strip()[:80],
+                }
+            current = new
+        else:
+            asset = str(data.get("asset") or "").strip()[:120]
+            if not asset:
+                return {"ok": False, "error": "asset is required"}
+            current[asset] = {
+                "friendly": str(data.get("friendly") or data.get("name") or asset).strip()[:120],
+                "owner": str(data.get("owner") or "Home / Lab").strip()[:80],
+                "role": str(data.get("role") or data.get("profile") or "device").strip()[:80],
+            }
+        ok, msg = self.save_json_file(self.owner_overrides_path, current)
+        self.owner_overrides = current if ok else self.owner_overrides
+        return {"ok": ok, "path": str(self.owner_overrides_path), "error": "" if ok else msg, "count": len(current), "safety": "SOCX labels only; pfSense policy unchanged"}
+
+    def save_packet_noise_payload(self, data: dict[str, Any]) -> dict[str, Any]:
+        suppress = data.get("suppress_on_wall")
+        if not isinstance(suppress, list):
+            suppress = []
+        config = {"suppress_on_wall": [str(x)[:80] for x in suppress if str(x).strip()][:20], "keep_in_evidence": True}
+        ok, msg = self.save_json_file(self.packet_noise_path, config)
+        self.packet_noise = config if ok else self.packet_noise
+        return {"ok": ok, "path": str(self.packet_noise_path), "error": "" if ok else msg, "config": config, "safety": "SOCX wall display filter only; evidence retained"}
+
+    def set_incident_focus_payload(self, data: dict[str, Any]) -> dict[str, Any]:
+        active = bool(data.get("active", True))
+        minutes = int(clamp(float(data.get("minutes", 10) or 10), 1, 60))
+        payload = {"until": time.time() + minutes * 60, "summary": f"Incident focus active for {minutes}m"}
+        if not active:
+            payload = {"until": 0, "summary": "Incident focus disabled"}
+        ok, msg = self.save_json_file(self.incident_focus_path, payload, 0o600)
+        result = self.collect_incident_focus()
+        result.update({"ok": ok, "error": "" if ok else msg})
+        return result
+
     def collect_history(self, limit: int = 120) -> list[dict[str, Any]]:
         history_path = Path(os.environ.get("SOCX_HISTORY_FILE", "/var/db/socx_history.jsonl"))
         rows: list[dict[str, Any]] = []
@@ -5969,6 +6121,32 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/since-yesterday":
             self.send_json(self.collector.collect_since_yesterday())
             return
+        if parsed.path == "/api/owner-overrides":
+            overrides = self.collector.load_owner_overrides()
+            rows = [
+                {
+                    "asset": asset,
+                    "friendly": row.get("friendly") or row.get("name") or asset,
+                    "owner": row.get("owner") or "Home / Lab",
+                    "role": row.get("role") or row.get("profile") or "device",
+                }
+                for asset, row in sorted(overrides.items())
+                if isinstance(row, dict)
+            ]
+            self.send_json({"title": "SOCX Owner Overrides", "rows": rows, "path": str(self.collector.owner_overrides_path), "updated_ms": now_ms(), "safety": "SOCX labels only"})
+            return
+        if parsed.path == "/api/packet-noise":
+            self.send_json(self.collector.collect_packet_noise_control())
+            return
+        if parsed.path == "/api/confidence":
+            self.send_json(self.collector.snapshot().get("confidence_meter", self.collector.collect_confidence_meter()))
+            return
+        if parsed.path == "/api/incident-focus":
+            self.send_json(self.collector.collect_incident_focus())
+            return
+        if parsed.path == "/api/maintenance":
+            self.send_json(self.collector.collect_maintenance_center())
+            return
         if parsed.path == "/api/threat-map":
             self.send_json(self.collector.collect_threat_map())
             return
@@ -6089,7 +6267,7 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/story-archive":
             self.send_json(self.collector.create_story_archive())
             return
-        if parsed.path not in {"/api/commander", "/api/chat"}:
+        if parsed.path not in {"/api/commander", "/api/chat", "/api/owner-overrides", "/api/packet-noise", "/api/incident-focus"}:
             self.send_error(404)
             return
         try:
@@ -6104,6 +6282,15 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/chat":
             question = str(data.get("question") or data.get("message") or "")
             self.send_json(self.collector.operator_chat(question))
+            return
+        if parsed.path == "/api/owner-overrides":
+            self.send_json(self.collector.save_owner_overrides_payload(data))
+            return
+        if parsed.path == "/api/packet-noise":
+            self.send_json(self.collector.save_packet_noise_payload(data))
+            return
+        if parsed.path == "/api/incident-focus":
+            self.send_json(self.collector.set_incident_focus_payload(data))
             return
         action = str(data.get("action", "")).strip().lower()
         self.send_json(self.run_commander_action(action))
@@ -6157,7 +6344,7 @@ class SocxHandler(BaseHTTPRequestHandler):
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/memory", "/twin", "/automation", "/timeline", "/movie", "/projects", "/glitches", "/wall-health", "/review-queue", "/owner-map", "/mission-console", "/config-sim", "/baseline", "/since-yesterday", "/daily-brief", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
+        if path in {"/speedtest", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/memory", "/twin", "/automation", "/timeline", "/movie", "/projects", "/glitches", "/wall-health", "/review-queue", "/owner-map", "/owner-editor", "/packet-noise", "/confidence", "/incident-focus", "/maintenance", "/mission-console", "/config-sim", "/baseline", "/since-yesterday", "/daily-brief", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"

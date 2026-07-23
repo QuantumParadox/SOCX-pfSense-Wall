@@ -779,6 +779,10 @@ function render(state) {
   renderFlows(state.flows || []);
   renderPackets(state.packets || []);
   renderTicker(state.events || []);
+  document.body.classList.toggle("incident-focus", Boolean(state.incident_focus?.active));
+  if (state.incident_focus?.active) {
+    setText("cmd-note", `${safe(state.incident_focus.mode, "INCIDENT FOCUS")} ${Math.ceil(Number(state.incident_focus.remaining_sec || 0) / 60)}m`);
+  }
 }
 
 function commanderActionFromSpeech(text) {
