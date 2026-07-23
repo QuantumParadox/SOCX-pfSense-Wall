@@ -280,6 +280,45 @@ function renderObservability(obs = {}, intel = {}, autonomy = {}) {
   root.innerHTML = bits.join("");
 }
 
+function renderPowerMods(power = {}) {
+  const root = $("power-mods");
+  if (!root) return;
+  const items = power.items || {};
+  const labels = [
+    ["flow_export", "Flow"],
+    ["suricata_eve", "IDS EVE"],
+    ["lldp", "LLDP"],
+    ["config_drift", "Drift"],
+    ["evidence_vault", "Vault"],
+    ["quarantine_draft", "Q Draft"],
+  ];
+  const toneFor = (status) => {
+    const value = String(status || "").toUpperCase();
+    if (["OK", "LIVE", "READY"].includes(value)) return "green";
+    if (["WARN", "WATCH", "PLAN", "STOPPED", "DOWN"].includes(value)) return "yellow";
+    if (["CRITICAL", "FAIL", "ERROR"].includes(value)) return "red";
+    return "cyan";
+  };
+  root.innerHTML = `
+    <div class="power-head">
+      <span>Power Mods</span>
+      <b class="${escapeHtml(toneFor(power.status))}" title="${escapeHtml(power.summary || "")}">${escapeHtml(power.status || "WAITING")}</b>
+    </div>
+    <div class="power-grid">
+      ${labels.map(([key, label]) => {
+        const item = items[key] || {};
+        const status = String(item.status || "WAIT").toUpperCase();
+        const age = item.age_sec === null || item.age_sec === undefined ? "" : `${item.age_sec}s`;
+        return `<div class="power-chip ${escapeHtml(toneFor(status))}" title="${escapeHtml(item.summary || "")}">
+          <span>${escapeHtml(label)}</span>
+          <b>${escapeHtml(status)}</b>
+          <em>${escapeHtml(age)}</em>
+        </div>`;
+      }).join("")}
+    </div>
+  `;
+}
+
 function renderRuleAssistant(assistant = {}) {
   const root = $("rule-assistant");
   if (!root) return;
@@ -687,6 +726,7 @@ function render(state) {
   renderDailyBrief(state.daily_brief || {});
   renderRuleAssistant(state.rule_assistant || {});
   renderObservability(state.observability || {}, state.metrics_intel || {}, state.autonomy_loop || {});
+  renderPowerMods(state.power_mods || {});
   renderSpeedtestHistory(state.speedtest_history || {});
   renderIncidentMemory(state.incident_memory || {});
   renderFlows(state.flows || []);
@@ -700,6 +740,12 @@ function commanderActionFromSpeech(text) {
   if (/(incident|watch|investigate)/.test(value)) return "incident";
   if (/(bundle|preserve|package)/.test(value)) return "bundle";
   if (/(snapshot|evidence|capture)/.test(value)) return "snapshot";
+  if (/(vault|preserve evidence|evidence first)/.test(value)) return "vault";
+  if (/(drift|config backup|config change)/.test(value)) return "drift";
+  if (/(suricata|eve|ids json)/.test(value)) return "eve";
+  if (/(flow export|netflow|ipfix|softflow)/.test(value)) return "flow-export";
+  if (/(lldp|topology|neighbor)/.test(value)) return "topology";
+  if (/(quarantine|containment)/.test(value)) return "quarantine-draft";
   if (/(zeek|logs?)/.test(value)) return "zeek";
   if (/(metrics ai|metric narrator|grafana ai)/.test(value)) return "metrics-ai";
   if (/(why metrics|metrics why|metric intelligence|metrics intel)/.test(value)) return "metrics-intel";
@@ -740,7 +786,7 @@ function runVoiceCommand() {
     const action = commanderActionFromSpeech(transcript);
     if (!action) {
       if (title) title.textContent = "Voice command not mapped";
-    if (body) body.textContent = `Heard: ${transcript}\nAllowed: status, incident, bundle, snapshot, speedtest, zeek, pi, explain, story, brief, timeline, rules, doctor, speed-history, memory, lab.`;
+    if (body) body.textContent = `Heard: ${transcript}\nAllowed: status, incident, bundle, vault, drift, eve, flow, topology, quarantine, speedtest, zeek, pi, explain, story, brief, timeline, rules, doctor, speed-history, memory, lab.`;
       return;
     }
     runCommander(action);

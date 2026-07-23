@@ -54,6 +54,7 @@ case "${1:-status}" in
     status|map)
         echo "LLDP $status: $summary"
         [ -n "$neighbors" ] && printf '%s\n' "$neighbors" | sed 's/:/ -> /'
+        exit 0
         ;;
     json)
         cat "$JSON"

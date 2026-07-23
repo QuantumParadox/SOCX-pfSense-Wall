@@ -24,6 +24,7 @@ write_env() {
     port="$4"
     installed="$5"
     running="$6"
+    receiver="$7"
     {
         printf 'status=%s\n' "$status"
         printf 'summary=%s\n' "$summary"
@@ -31,6 +32,7 @@ write_env() {
         printf 'port=%s\n' "$port"
         printf 'softflowd_installed=%s\n' "$installed"
         printf 'softflowd_running=%s\n' "$running"
+        printf 'receiver=%s\n' "$receiver"
         printf 'updated=%s\n' "$(date +%s)"
     } > "$CACHE"
 }
@@ -58,24 +60,42 @@ if pgrep -f 'softflowd' >/dev/null 2>&1; then
     running="true"
 fi
 
+receiver="unknown"
+influx_query_url="${influx_url%/}/query?db=pfsense&q=SHOW%20MEASUREMENTS"
+if [ -n "$influx_url" ]; then
+    if command -v fetch >/dev/null 2>&1; then
+        if fetch -T 2 -qo - "$influx_query_url" 2>/dev/null | grep -q '"netflow"'; then
+            receiver="netflow"
+        fi
+    elif command -v curl >/dev/null 2>&1; then
+        if curl -fsS --max-time 2 "$influx_query_url" 2>/dev/null | grep -q '"netflow"'; then
+            receiver="netflow"
+        fi
+    fi
+fi
+
 case "${1:-status}" in
     status)
-        if [ "$installed" = "true" ] && [ "$running" = "true" ]; then
-            write_env "OK" "flow export process running" "$collector" "$port" "$installed" "$running"
+        if [ "$installed" = "true" ] && [ "$running" = "true" ] && [ "$receiver" = "netflow" ]; then
+            write_env "OK" "softflowd running and Pi receiver has netflow data" "$collector" "$port" "$installed" "$running" "$receiver"
+            echo "FLOW EXPORT OK: softflowd running; Pi receiver has netflow data"
+        elif [ "$installed" = "true" ] && [ "$running" = "true" ]; then
+            write_env "OK" "softflowd running; receiver data not verified yet" "$collector" "$port" "$installed" "$running" "$receiver"
             echo "FLOW EXPORT OK: softflowd running"
         elif [ "$installed" = "true" ]; then
-            write_env "WARN" "softflowd installed but not running" "$collector" "$port" "$installed" "$running"
+            write_env "WARN" "softflowd installed but not running" "$collector" "$port" "$installed" "$running" "$receiver"
             echo "FLOW EXPORT WARN: softflowd installed but not running"
         else
-            write_env "PLAN" "softflowd package is not installed; SOCX flow export plan is ready" "$collector" "$port" "$installed" "$running"
+            write_env "PLAN" "softflowd package is not installed; SOCX flow export plan is ready" "$collector" "$port" "$installed" "$running" "$receiver"
             echo "FLOW EXPORT PLAN: softflowd is not installed on this pfSense box."
             echo "Recommended target: $collector:$port (Pi observability host)"
             echo "Install from pfSense Package Manager, then configure WAN/LAN export to the collector."
         fi
         echo "collector: $collector:$port"
+        echo "receiver: $receiver"
         ;;
     plan)
-        write_env "PLAN" "review pfSense softflowd package install and export target" "$collector" "$port" "$installed" "$running"
+        write_env "PLAN" "review pfSense softflowd package install and export target" "$collector" "$port" "$installed" "$running" "$receiver"
         cat <<EOF
 SOCX FLOW EXPORT PLAN
 

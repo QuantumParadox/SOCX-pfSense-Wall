@@ -2914,6 +2914,7 @@ class SocxCollector:
         brief = snap.get("daily_brief") or {}
         metrics = snap.get("metrics_intel") or {}
         observability = snap.get("observability") or {}
+        power_mods = snap.get("power_mods") or {}
         return {
             "generated_at": snap.get("generated_at"),
             "health": snap.get("status", {}).get("health"),
@@ -2927,6 +2928,7 @@ class SocxCollector:
             "brief": {"headline": brief.get("headline"), "status": brief.get("status"), "sections": (brief.get("sections") or [])[:5], "next": (brief.get("next") or [])[:5]},
             "metrics_intel": {"severity": metrics.get("severity"), "summary": metrics.get("summary"), "alerts": (metrics.get("alerts") or [])[:8], "next_steps": (metrics.get("next_steps") or [])[:5]},
             "observability": {"label": observability.get("label"), "summary": observability.get("summary"), "core_measurements": observability.get("core_measurements"), "grafana_url": observability.get("grafana_url")},
+            "power_mods": power_mods,
             "flows": (snap.get("flows") or [])[:6],
             "packets": (snap.get("packets") or [])[:6],
             "pi": {"summary": pi_nodes.get("summary"), "nodes": (pi_nodes.get("nodes") or [])[:3]},
@@ -2962,6 +2964,7 @@ class SocxCollector:
         intel = context.get("intel") or {}
         brief = context.get("brief") or {}
         metrics = context.get("metrics_intel") or {}
+        power = context.get("power_mods") or {}
         lines = []
         if intent == "blocked":
             return "I cannot help with destructive, bypass, or stealth requests. I can explain the alert, preserve evidence, or draft a safe approval-only pfSense change plan."
@@ -2979,6 +2982,16 @@ class SocxCollector:
                 lines.append("Metrics to watch: " + ", ".join(f"{a.get('signal')} {a.get('state')}" for a in watch_items[:4]))
             else:
                 lines.append("Metrics look stable: CPU, memory, swap, PF states/search, WAN ping, processes, and disk are in normal bounds.")
+        if "power" in q or "flow" in q or "netflow" in q or "ipfix" in q or "lldp" in q or "drift" in q or "vault" in q or "quarantine" in q or "eve" in q:
+            lines.append(f"Power-user pack is {power.get('status', 'UNKNOWN')}: {power.get('summary', 'waiting')}")
+            items = power.get("items") or {}
+            watch = []
+            for key, item in items.items():
+                if str(item.get("status", "")).upper() not in {"", "OK", "LIVE", "READY"}:
+                    watch.append(f"{key.replace('_', ' ')} {item.get('status')}: {item.get('summary')}")
+            if watch:
+                lines.append("Power-user watch items: " + "; ".join(watch[:4]))
+            lines.append("Safe buttons: Evidence preserves a hashed vault, Drift checks config.xml, IDS EVE summarizes Suricata, Flow checks softflowd, Topology checks LLDP, and Quarantine only drafts a plan.")
         if "dnsbl" in q:
             lines.append("DNSBL means DNS Block List. pfBlockerNG blocked or redirected a domain lookup because the domain matched a reputation/category list.")
         if "ids" in q or "suricata" in q:
@@ -3005,8 +3018,17 @@ class SocxCollector:
         lower = text.lower()
         if "ids" in lower or "suricata" in lower:
             commands.append("socx-doctor ids")
+            commands.append("socx eve")
         if "dnsbl" in lower:
             commands.append("socx-doctor dnsbl-review")
+        if "power" in lower or "flow" in lower or "netflow" in lower or "ipfix" in lower:
+            commands.append("socx flow-export status")
+        if "lldp" in lower or "topology" in lower:
+            commands.append("socx topology")
+        if "drift" in lower or "config" in lower:
+            commands.append("socx drift status")
+        if "vault" in lower or "evidence" in lower:
+            commands.append("socx vault")
         if intent == "draft":
             commands.append("socx rules")
             commands.append("socx snapshot")
@@ -3559,8 +3581,14 @@ class SocxHandler(BaseHTTPRequestHandler):
         commands: dict[str, tuple[list[str], float, str]] = {
             "snapshot": (["/usr/local/bin/socx", "snapshot"], 90.0, "Evidence snapshot"),
             "bundle": (["/usr/local/bin/socx", "incident", "quick"], 120.0, "Incident bundle"),
+            "vault": (["/usr/local/bin/socx", "vault"], 160.0, "Evidence vault"),
             "incident-bundle": (["/usr/local/bin/socx", "incident", "quick"], 120.0, "Incident bundle"),
             "incident": (["/usr/local/bin/socx", "incident-mode", "120"], 25.0, "Incident Mode"),
+            "drift": (["/usr/local/bin/socx", "drift", "status"], 35.0, "Config drift"),
+            "eve": (["/usr/local/bin/socx", "eve"], 45.0, "Suricata EVE"),
+            "flow-export": (["/usr/local/bin/socx", "flow-export", "status"], 35.0, "Flow export"),
+            "topology": (["/usr/local/bin/socx", "topology"], 35.0, "LLDP topology"),
+            "quarantine-draft": (["/usr/local/bin/socx", "quarantine", "192.168.1.121"], 35.0, "Quarantine draft"),
             "zeek": (["/usr/local/bin/socx-doctor", "zeek"], 25.0, "Zeek health"),
             "speedtest": (["/usr/local/bin/socx-doctor", "speedtest-profiles"], 25.0, "Speedtest profiles"),
             "pi": (["/usr/local/bin/socx", "pi-llm"], 330.0, "Pi 3-LLM analysis"),
@@ -3582,7 +3610,7 @@ class SocxHandler(BaseHTTPRequestHandler):
             "autonomy-cron": (["/usr/local/bin/socx", "autonomy-cron", "status"], 20.0, "SOCX autonomy schedule"),
         }
         if action not in commands:
-            return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, bundle, incident, zeek, speedtest, pi, status, explain, brief, story, timeline, rules, doctor, speed-history, memory, lab, observability, metrics-intel, metrics-ai, autonomy, autonomy-cron"}
+            return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, bundle, vault, drift, eve, flow-export, topology, quarantine-draft, incident, zeek, speedtest, pi, status, explain, brief, story, timeline, rules, doctor, speed-history, memory, lab, observability, metrics-intel, metrics-ai, autonomy, autonomy-cron"}
         args, timeout, title = commands[action]
         result = run_cmd_capture(args, timeout=timeout)
         return {"action": action, "title": title, **result}

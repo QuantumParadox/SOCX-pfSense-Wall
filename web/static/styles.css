@@ -1155,12 +1155,81 @@ body {
 .incident-timeline,
 .rule-assistant,
 .observability-strip,
+.power-mods,
 .speed-history,
 .incident-memory {
   margin-top: 8px;
   display: grid;
   gap: 5px;
   min-width: 0;
+}
+
+.power-mods {
+  padding: 7px 8px;
+  border-left: 3px solid var(--purple);
+  background: rgba(183, 140, 255, .045);
+}
+
+.power-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.power-head span {
+  color: var(--cyan);
+  font-weight: 950;
+  letter-spacing: .02em;
+}
+
+.power-head b {
+  font-size: clamp(10px, .72vw, 13px);
+}
+
+.power-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.power-chip {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  gap: 1px 6px;
+  padding: 5px 6px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  background: rgba(255, 255, 255, .035);
+}
+
+.power-chip span,
+.power-chip b,
+.power-chip em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.power-chip span {
+  color: var(--muted);
+  font-size: clamp(9px, .66vw, 11px);
+  text-transform: uppercase;
+}
+
+.power-chip b {
+  font-size: clamp(10px, .72vw, 13px);
+}
+
+.power-chip em {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-style: normal;
+  font-size: clamp(8px, .62vw, 10px);
 }
 
 .observability-strip {

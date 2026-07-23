@@ -107,6 +107,9 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds `socx metrics-ai --pi`, a read-only Pi AI narration hook for asking the Pi 5 LLM operator endpoint to explain pfSense metric changes and safest next actions.
 - Adds a pfSense power-user pack: `socx flow-export`, `socx eve`, `socx topology`, `socx drift`, `socx vault`, and `socx quarantine`. These cover NetFlow/IPFIX planning, Suricata EVE summaries, LLDP topology, config drift, hashed evidence capture, and approval-only quarantine drafting.
 - Adds `/api/power-mods`, a compact browser/API summary of the power-user pack state so SOCX can show which advanced pfSense integrations are healthy, waiting, or need attention.
+- Adds browser Power Mods chips and safe Commander buttons for Evidence, Drift, IDS EVE, Flow, Topology, and Quarantine. Buttons run fixed allowlisted SOCX commands only; quarantine remains draft-only.
+- Supports pfSense `softflowd` IPFIX export into the Pi 4 observability stack. `socx flow-export status` verifies both the pfSense exporter and whether the Pi receiver has `netflow` data in InfluxDB.
+- Adds hourly config-drift cron support so intentional and unexpected pfSense config changes can be detected against a SOCX backup baseline.
 - Adds `socx autonomy-loop` and `socx autonomy-cron`, a read-only brainstem loop that refreshes Autopilot, Metrics Intelligence, Pi discovery, Pi 3-LLM analysis, and the Morning Brief with lock/timeout protection.
 - Adds Pi 3-LLM role watchdogs so slow or stuck model roles show timeout/error status instead of hanging the SOCX refresh path indefinitely.
 - Adds starter Grafana alert rules for WAN ping pressure, memory pressure, and PF state pressure plus a daily retained Pi 4 observability backup.

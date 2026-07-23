@@ -175,6 +175,7 @@
             <button data-question="Is my VPN healthy right now? Compare VPN state, latency, and speed truth.">VPN Truth</button>
             <button data-question="Summarize Grafana and Influx metrics trends and tell me if anything is getting worse.">Metrics</button>
             <button data-question="Draft a safe read-only investigation plan for the current IDS and DNSBL activity.">IDS/DNSBL Plan</button>
+            <button data-question="Explain the power-user pack: flow export, Suricata EVE, LLDP, config drift, vault, and quarantine draft status.">Power Mods</button>
           </div>
           <div class="chat-output" id="chat-output">Ask in plain English. Config requests return draft-only plans.</div>
           <div class="chat-cards" id="chat-cards"></div>
@@ -183,8 +184,14 @@
           <button data-action="status" title="Run SOCX health status">Status</button>
           <button data-action="incident" title="Summarize current firewall/DNSBL/IDS incident pressure">Incident</button>
           <button data-action="bundle" title="Preserve an evidence bundle without changing policy">Bundle</button>
+          <button data-action="vault" title="Capture a hashed evidence vault bundle">Evidence</button>
           <button data-action="snapshot" title="Capture a read-only troubleshooting snapshot">Snapshot</button>
+          <button data-action="drift" title="Check pfSense config drift">Drift</button>
           <button data-action="speedtest" title="Check Speedtest profiles and freshness">Speed</button>
+          <button data-action="eve" title="Summarize Suricata EVE JSON alerts">IDS EVE</button>
+          <button data-action="flow-export" title="Check NetFlow/IPFIX softflowd export status">Flow</button>
+          <button data-action="topology" title="Check LLDP topology visibility">Topology</button>
+          <button data-action="quarantine-draft" title="Draft a quarantine plan without applying policy">Quarantine</button>
           <button data-action="observability" title="Check Grafana, InfluxDB, and Telegraf">Metrics</button>
           <button data-action="metrics-intel" title="Explain what changed in Grafana/Influx metrics">Why Metrics</button>
           <button data-action="metrics-ai" title="Ask the Pi 5 LLM to narrate metrics trends">Metrics AI</button>
@@ -198,6 +205,7 @@
         </div>
         <canvas class="spark mini" id="cmd-spark"></canvas>
         <div class="table command-table" id="command-center"></div>
+        <div class="power-mods" id="power-mods"></div>
         <div class="observability-strip" id="observability"></div>
         <div class="speed-history" id="speed-history"></div>
         <div class="daily-brief" id="daily-brief"></div>
