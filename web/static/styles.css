@@ -1873,11 +1873,11 @@ body.night-wall .ticker-shell {
 }
 
 .packet-table .row {
-  grid-template-columns: 62px 62px 50px minmax(72px, 1fr) minmax(72px, 1fr) 64px;
+  grid-template-columns: 62px 62px minmax(150px, 1.6fr) minmax(72px, .85fr) minmax(72px, .85fr) 70px minmax(120px, 1fr);
 }
 
 .packet-table .row span:nth-child(7) {
-  display: none;
+  display: block;
 }
 
 .command-output {

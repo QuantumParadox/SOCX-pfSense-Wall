@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added `/since-yesterday`, `/daily-brief`, and matching APIs so SOCX can show baseline movement, daily brief context, and what changed across retained history.
+- Improved Packet Story with human-readable packet category, story, and why fields, including routine IPv6 multicast/local noise, WAN scans, LAN policy blocks, DNS, VPN, and web/cloud traffic.
+- Improved Autopilot Review Queue with disposition, confidence, why-it-matters text, duplicate grouping, page links, and clearer approval state.
+- Added local Owner Map override support through `/usr/local/etc/socx_owner_overrides.json` via `SOCX_OWNER_OVERRIDES`, while keeping labeling passive/read-only.
+- Changed Data Truth so an optional/inactive VPN Speedtest path no longer makes the whole wall look unhealthy when no VPN test is expected.
 - Added `/review-queue` and `/api/review-queue`, a read-only Autopilot Review Queue for human-approved SOCX next steps with browser-local acknowledge and Ask SOCX prompts.
 - Added `/owner-map` and `/api/owner-map`, a Device Owner Map that turns Label Brain and Device Trust data into friendly owner/profile/app/trust rows.
 - Added `/mission-console`, `/config-sim`, `/baseline`, and matching APIs for an AI SOC mission console, draft-only pfSense config blast-radius simulator, and learned-normal baseline view.

@@ -40,6 +40,8 @@
         <a class="detail-link" href="/review-queue" title="Autopilot review queue for human-approved next steps">Review</a>
         <a class="detail-link" href="/owner-map" title="Friendly device owner, role, app, and trust map">Owners</a>
         <a class="detail-link" href="/mission-console" title="AI SOC mission console with uncertainty and better-evidence prompts">Mission+</a>
+        <a class="detail-link" href="/daily-brief" title="Daily SOCX brief with since-yesterday context">Brief</a>
+        <a class="detail-link" href="/since-yesterday" title="What changed across retained SOCX history">Changed</a>
         <a class="detail-link" href="/config-sim" title="Draft-only pfSense config blast-radius simulator">Config Sim</a>
         <a class="detail-link" href="/baseline" title="Learned-normal network baseline view">Baseline</a>
         <a class="detail-link" href="/memory" title="SOCX learned-normal memory and device baselines">Memory</a>
@@ -201,6 +203,9 @@
           </div>
           <div class="chat-suggestions" aria-label="Suggested SOCX questions">
             <button data-question="Give me the SOCX morning brief. What changed, what matters, and what should I check first?">Morning Brief</button>
+            <button data-question="What changed since yesterday? Show me what matters, what is stable, and what I can ignore for now.">Changed</button>
+            <button data-question="Review the SOCX autopilot queue and tell me which item needs action first.">Review Queue</button>
+            <button data-question="Explain the device owner map and tell me which labels or owners I should fix.">Owners</button>
             <button data-question="Why is SOCX in watch or warning mode? Explain it in plain English.">Why Watch</button>
             <button data-question="Explain the top blocked IP, top ports, and whether this looks like routine internet noise.">Top Block</button>
             <button data-question="Is my VPN healthy right now? Compare VPN state, latency, and speed truth.">VPN Truth</button>
@@ -213,7 +218,7 @@
             <button data-question="Build the current threat story and tell me what is probably noise, what matters, and what to do next.">Threat Story</button>
             <button data-question="Give me a mobile cockpit summary with next actions and safe commands.">Cockpit</button>
           </div>
-          <div class="chat-output" id="chat-output">Ask in plain English. Config requests return draft-only plans.</div>
+          <div class="chat-output" id="chat-output">Ask in plain English. Try Brief, Changed, Review Queue, Owners, Packet Story, IDS, DNSBL, VPN, Speedtest, or draft-only config plans.</div>
           <div class="chat-cards" id="chat-cards"></div>
         </div>
         <div class="commander-buttons">

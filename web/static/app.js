@@ -642,19 +642,21 @@ function renderFlows(flows = []) {
 function renderPackets(packets = []) {
   const root = $("packets");
   if (!root) return;
-  const lines = [row(["time", "act", "proto", "source", "dest", "svc", "info"], "header")];
+  const lines = [row(["time", "act", "story", "source", "dest", "svc", "why"], "header")];
   packets.slice(0, 13).forEach((p) => {
     const severity = p.severity === "HIGH" ? "red" : p.action === "BLOCK" ? "yellow" : "green";
-    const question = `Explain this packet story: time ${safe(p.time)} action ${safe(p.action)} protocol ${safe(p.proto)} source ${safe(p.src_label)} destination ${safe(p.dst_label)} service ${safe(p.service)} info ${safe(p.info)}. Is it expected, blocked, or suspicious?`;
+    const story = p.story || `${p.proto || ""} ${p.src_label || ""} -> ${p.dst_label || ""}`;
+    const why = p.why || p.info || "";
+    const question = `Explain this packet story: time ${safe(p.time)} action ${safe(p.action)} category ${safe(p.category)} story ${safe(story)} source ${safe(p.src_label)} destination ${safe(p.dst_label)} service ${safe(p.service)} why ${safe(why)}. Is it expected, blocked, or suspicious?`;
     lines.push(`
       <div class="row explainable" data-question="${escapeHtml(question)}" title="Click to explain this packet">
         <span>${escapeHtml(p.time)}</span>
         <span class="${severity}">${escapeHtml(p.action)}</span>
-        <span class="cyan">${escapeHtml(p.proto)}</span>
+        <span class="cyan" title="${escapeHtml(p.category || p.proto)}">${escapeHtml(story)}</span>
         <span title="${escapeHtml(p.src || p.src_label)}">${escapeHtml(p.src_label)}</span>
         <span title="${escapeHtml(p.dst || p.dst_label)}">${escapeHtml(p.dst_label)}</span>
         <span>${escapeHtml(p.service)}</span>
-        <span>${escapeHtml(p.info)}</span>
+        <span title="${escapeHtml(why)}">${escapeHtml(why)}</span>
       </div>
     `);
   });

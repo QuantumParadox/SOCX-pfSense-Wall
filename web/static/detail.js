@@ -43,6 +43,8 @@ const pageName = () => {
   if (path.includes("mission-console")) return "mission-console";
   if (path.includes("config-sim")) return "config-sim";
   if (path.includes("baseline")) return "baseline";
+  if (path.includes("since-yesterday")) return "since-yesterday";
+  if (path.includes("daily-brief")) return "daily-brief";
   if (path.includes("incident")) return "incidents";
   if (path.includes("why")) return "why";
   if (path.includes("story")) return "story";
@@ -1431,17 +1433,18 @@ function renderReviewQueue(state, review) {
       kv("Pending", pending.length, pending.length ? "yellow" : "green"),
       kv("Safety", review.read_only ? "no pfSense change applied" : "unknown", review.read_only ? "green" : "yellow"),
     ].join("")),
-    card("Autopilot Items", table(["Pri", "Item", "Observation", "Recommendation", "Risk", "Approval"], rows.map((r) => [
-      r.ack ? "ACK" : r.priority || "--",
+    card("Autopilot Items", table(["Pri", "Item", "Disposition", "Confidence", "Why It Matters", "Recommendation", "Approval"], rows.map((r) => [
+      r.ack ? "ACK" : `${r.priority || "--"}${Number(r.count || 1) > 1 ? ` x${r.count}` : ""}`,
       r.item || "--",
-      r.observation || "--",
+      r.disposition || "--",
+      r.confidence || "--",
+      r.why_matters || r.observation || "--",
       r.recommendation || "--",
-      r.risk || "--",
       r.approval || "--",
     ]))),
     card("Operator Controls", `<div class="ask-list">${rows.map((r) => {
       const key = reviewKey(r);
-      return `<div class="${r.ack ? "muted" : ""}"><span title="${esc(r.recommendation)}">${esc(r.priority)} ${esc(r.item)}: ${esc(r.command || "--")}</span><button data-review-ack="${esc(key)}">${r.ack ? "Acknowledged" : "Acknowledge"}</button>${askButton(r.question || `Explain review item ${r.item || ""}`)}</div>`;
+      return `<div class="${r.ack ? "muted" : ""}"><span title="${esc(r.recommendation)}">${esc(r.priority)} ${esc(r.item)}: ${esc(r.command || "--")}</span><a href="${esc(r.page || "/mission")}">Open</a><button data-review-ack="${esc(key)}">${r.ack ? "Acknowledged" : "Acknowledge"}</button>${askButton(r.question || `Explain review item ${r.item || ""}`)}</div>`;
     }).join("") || "<span class=\"muted\">No review rows ready.</span>"}</div>`),
     card("Queue Actions", table(["Action", "Meaning"], (review.actions || []).map((a) => [a, a === "Acknowledge is browser-local" ? "hide it for this browser only" : "opens or drafts evidence; no automatic firewall changes"]))),
   ].join("");
@@ -1461,7 +1464,7 @@ function renderOwnerMap(state, owner) {
       kv("Owners", (owner.owners || []).join(", ") || "--", "cyan"),
       kv("Safety", owner.read_only ? "passive labels only" : "unknown", owner.read_only ? "green" : "yellow"),
     ].join("")),
-    card("Assets", table(["Asset", "Friendly", "Owner", "Profile", "Apps", "Traffic", "Trust", "State"], rows.map((r) => [
+    card("Assets", table(["Asset", "Friendly", "Owner", "Profile", "Apps", "Traffic", "Trust", "State", "Source"], rows.map((r) => [
       r.asset || "--",
       r.friendly || "--",
       r.owner || "--",
@@ -1470,6 +1473,7 @@ function renderOwnerMap(state, owner) {
       r.traffic || "--",
       r.trust ?? "--",
       r.state || "--",
+      r.label_source || "--",
     ]))),
     card("What To Confirm", table(["Device", "Current Guess", "Next"], rows.filter((r) => r.confidence !== "confirmed" || r.state === "WATCH").slice(0, 10).map((r) => [
       r.friendly || r.asset || "--",
@@ -1563,6 +1567,61 @@ function renderBaseline(state, baseline) {
       r.why || "--",
     ]))),
   ].join("");
+}
+
+function renderSinceYesterday(state, since) {
+  title.textContent = "SOCX SINCE YESTERDAY";
+  subtitle.textContent = `${state.hostname || "pfSense"} / baseline movement / read-only`;
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Change Readout", [
+      `<div class="detail-score ${since.label === "STABLE" ? "green" : "yellow"}">${esc(since.label || "LEARNING")} ${esc(since.score ?? "--")}/100</div>`,
+      `<div class="detail-reason">${esc(since.summary || "SOCX retained history is warming up.")}</div>`,
+    ].join("")),
+    card("Important Movement", table(["Signal", "State", "Delta", "Detail"], (since.important || []).map((r) => [
+      r.signal || "--",
+      r.state || "--",
+      r.delta ?? "--",
+      r.detail || "--",
+    ]))),
+    card("All Signals", table(["Signal", "State", "Delta", "Detail"], (since.rows || []).map((r) => [
+      r.signal || "--",
+      r.state || "--",
+      r.delta ?? "--",
+      r.detail || "--",
+    ]))),
+    card("Ask About Changes", `<div class="ask-list">${(since.important || since.rows || []).slice(0, 8).map((r) => `<div><span>${esc(r.signal)} ${esc(r.state)}: ${esc(r.detail)}</span>${askButton(`Explain this SOCX since-yesterday change. Signal: ${r.signal || "--"}. State: ${r.state || "--"}. Delta: ${r.delta ?? "--"}. Detail: ${r.detail || "--"}. Tell me if it matters and what safe thing to check next.`)}</div>`).join("") || "<span class=\"muted\">No change rows ready.</span>"}</div>`),
+  ].join("");
+  wireAskButtons();
+}
+
+function renderDailyBrief(state, brief) {
+  title.textContent = "SOCX DAILY BRIEF";
+  subtitle.textContent = `${state.hostname || "pfSense"} / morning readout / read-only`;
+  const since = brief.since_yesterday || {};
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Brief", [
+      `<div class="story-title"><span>${esc(brief.headline || "SOCX brief warming up")}</span><b class="${brief.status === "normal" ? "green" : "yellow"}">${esc(brief.status || "watch")}</b></div>`,
+      `<div class="detail-reason">${esc(brief.generated || "--")}</div>`,
+    ].join("")),
+    card("Summary", table(["#", "Signal"], (brief.summary || []).map((x, idx) => [idx + 1, x]))),
+    card("Sections", table(["Section", "Readout"], (brief.sections || []).map((r) => [r.label || "--", r.value || "--"]))),
+    card("Since Yesterday", [
+      `<div class="detail-reason">${esc(since.summary || "History warming up.")}</div>`,
+      table(["Signal", "State", "Delta", "Detail"], (since.important || since.rows || []).slice(0, 8).map((r) => [r.signal || "--", r.state || "--", r.delta ?? "--", r.detail || "--"])),
+    ].join("")),
+    card("Next", table(["#", "Command"], (brief.next || []).map((x, idx) => [idx + 1, x]))),
+    card("Ask About Brief", `<div class="why-targets">${[
+      "Explain the SOCX daily brief in plain English.",
+      "What changed since yesterday and what should I check first?",
+      "What in this brief is probably noise?",
+      "What evidence would make this brief more certain?",
+    ].map((q) => `<button class="why-target-button" data-ask="${esc(q)}">${esc(q)}</button>`).join("")}</div>`),
+  ].join("");
+  wireAskButtons();
 }
 
 function renderMovie(state, movie) {
@@ -2013,6 +2072,12 @@ async function refresh() {
   const baseline = page === "baseline"
     ? await fetch("/api/baseline", { cache: "no-store" }).then((r) => r.json())
     : null;
+  const sinceYesterday = page === "since-yesterday"
+    ? await fetch("/api/since-yesterday", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const dailyBrief = page === "daily-brief"
+    ? await fetch("/api/daily-brief", { cache: "no-store" }).then((r) => r.json())
+    : null;
   subtitle.textContent = `${state.hostname || "pfSense"} / ${state.mode || "live"} / ${new Date().toLocaleTimeString()}`;
   if (page === "cockpit") renderCockpit(state, cockpit || {});
   else if (page === "threat-story") renderThreatStory(state, threatStory || {});
@@ -2040,6 +2105,8 @@ async function refresh() {
   else if (page === "mission-console") renderMissionConsole(state, missionConsole || {});
   else if (page === "config-sim") renderConfigSim(state, configSim || {});
   else if (page === "baseline") renderBaseline(state, baseline || {});
+  else if (page === "since-yesterday") renderSinceYesterday(state, sinceYesterday || {});
+  else if (page === "daily-brief") renderDailyBrief(state, dailyBrief || {});
   else if (page === "flows") renderFlowsPage(state, flowsData || {});
   else if (page === "replay") renderReplay(state, replay || {});
   else if (page === "map") renderThreatMap(state, threatMap || {});

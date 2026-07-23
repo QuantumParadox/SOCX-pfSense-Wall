@@ -363,8 +363,10 @@ class SocxCollector:
         self.wall_health_cache: dict[str, Any] = {}
         self.ups_samples: deque[float] = deque(maxlen=120)
         self.label_history_path = Path(os.environ.get("SOCX_LABEL_BRAIN_HISTORY", "/var/db/socx_label_brain.json"))
+        self.owner_overrides_path = Path(os.environ.get("SOCX_OWNER_OVERRIDES", "/usr/local/etc/socx_owner_overrides.json"))
         self.label_history_last_write = 0.0
         self.label_history_cache: dict[str, Any] = self.load_label_history()
+        self.owner_overrides: dict[str, Any] = self.load_owner_overrides()
         self.last_incident_memory_write = 0.0
         self.kev_memory: dict[str, Any] = {"checked": 0.0, "data": {}, "error": ""}
         self.state: dict[str, Any] = self.demo_state()
@@ -381,6 +383,26 @@ class SocxCollector:
         except Exception:
             pass
         return hosts
+
+    def load_owner_overrides(self) -> dict[str, Any]:
+        try:
+            data = json.loads(self.owner_overrides_path.read_text(errors="ignore"))
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def owner_override_for(self, asset: str) -> dict[str, Any]:
+        overrides = self.owner_overrides if isinstance(self.owner_overrides, dict) else {}
+        candidates = [asset, asset.split("/", 1)[0], asset.rsplit("/", 1)[-1]]
+        if asset.startswith("LAN."):
+            candidates.append("192.168.1." + asset.split(".", 1)[-1])
+        for key in candidates:
+            value = overrides.get(key)
+            if isinstance(value, dict):
+                return value
+            if isinstance(value, str):
+                return {"friendly": value, "owner": "Manual"}
+        return {}
 
     def load_label_history(self) -> dict[str, Any]:
         try:
@@ -1197,15 +1219,20 @@ class SocxCollector:
         direct = center.get("direct") if isinstance(center.get("direct"), dict) else {}
         vpn = center.get("vpn") if isinstance(center.get("vpn"), dict) else {}
 
-        def add_speed(label: str, row: dict[str, Any]) -> None:
+        def add_speed(label: str, row: dict[str, Any], optional: bool = False) -> None:
             state = row.get("path_state") or row.get("status") or "waiting"
+            if optional and str(state or "").lower() in {"waiting", "inactive", "unavailable", "missing"} and not (row.get("down") or row.get("up")):
+                signal = self.truth_signal(label, "optional", row.get("age_sec"), "speedtest-cache", "optional VPN test path waiting; not a wall-health fault")
+                signal["tone"] = "cyan"
+                signals.append(signal)
+                return
             signals.append(self.truth_signal(label, state, row.get("age_sec"), "speedtest-cache", f"{row.get('down') or '--'}/{row.get('up') or '--'} Mbps {row.get('ping') or '--'}ms"))
 
         signals.append(self.truth_signal("Wall/API", "live", 0, "socxweb", "browser state is being generated"))
         signals.append(self.truth_signal("UPS", "stale" if ups.get("stale") else "fresh", ups.get("age_sec"), "NUT/APC", f"{ups.get('watts_h') or ups.get('watts') or '--'}"))
         add_speed("Speed Active", active)
         add_speed("Speed Direct", direct)
-        add_speed("Speed VPN", vpn)
+        add_speed("Speed VPN", vpn, optional=True)
         pi_state = "fresh" if pi_nodes.get("fresh") else ("stale" if pi_nodes.get("count") else "waiting")
         signals.append(self.truth_signal("Pi Fleet", pi_state, pi_nodes.get("age_sec"), "socx-pi-nodes", f"{pi_nodes.get('online', 0)}/{pi_nodes.get('count', 0)} online"))
         signals.append(self.truth_signal("Pi AI", "ready" if any(str(n.get("roles_online") or "") == "3/3" for n in pi_nodes.get("nodes", []) if isinstance(n, dict)) else "waiting", pi_nodes.get("age_sec"), "Pi 3-LLM", "role health from Pi dashboard"))
@@ -3362,10 +3389,16 @@ class SocxCollector:
             profile = self.device_profile(row["asset"], app_rank, service_rank)
             baseline = self.baseline_for_asset(history, row["asset"])
             unusual = self.unusual_for_asset(baseline, app_rank, service_rank)
+            override = self.owner_override_for(row["asset"])
+            friendly = override.get("friendly") or override.get("name") or row["asset"].split("/", 1)[0]
+            if override.get("profile"):
+                profile = str(override.get("profile"))
+            identity = "confirmed" if override else self.identity_confidence(row["asset"], confidence)
             rows.append({
                 "asset": row["asset"],
-                "friendly_name": row["asset"].split("/", 1)[0],
-                "identity_confidence": self.identity_confidence(row["asset"], confidence),
+                "friendly_name": friendly,
+                "identity_confidence": identity,
+                "label_source": "manual override" if override else "local passive",
                 "flows": row["flows"],
                 "apps": app_rank,
                 "services": service_rank,
@@ -3463,11 +3496,14 @@ class SocxCollector:
         speed_truth = center.get("speed_truth") if isinstance(center.get("speed_truth"), dict) else {}
         direct = center.get("direct") if isinstance(center.get("direct"), dict) else {}
         vpn = center.get("vpn") if isinstance(center.get("vpn"), dict) else {}
+        since = self.collect_since_yesterday()
         summary = [
             f"Autopilot {str(center.get('mode') or 'UNKNOWN').upper()} score {center.get('score', '--')}/100",
             f"FW blocks {counts.get('sources', 0)} | DNSBL {counts.get('dnsbl', 0)} | IDS signal {ids.get('high_signal', 0)}",
             f"Pi fleet {pi_nodes.get('online', 0)}/{pi_nodes.get('count', 0)} online",
         ]
+        if since.get("important"):
+            summary.append("Since yesterday: " + "; ".join(f"{row.get('signal')} {row.get('state')}" for row in since.get("important", [])[:3]))
         if metrics_intel:
             summary.append(f"Metrics {metrics_intel.get('severity', 'UNKNOWN')}: {metrics_intel.get('summary', 'waiting')}")
         if top_apps:
@@ -3503,6 +3539,7 @@ class SocxCollector:
             "headline": "WATCH: review the highlighted signals" if watch else "STABLE: no urgent action needed",
             "summary": summary,
             "sections": sections,
+            "since_yesterday": since,
             "next": next_steps[:5],
             "status": "watch" if watch else "normal",
         }
@@ -3756,11 +3793,22 @@ class SocxCollector:
         incident = snap.get("incident", {}) if isinstance(snap.get("incident"), dict) else {}
         rows: list[dict[str, Any]] = []
 
-        def add(priority: str, item: str, observation: str, recommendation: str, risk: str, page: str, command: str, approval: str = "read-only") -> None:
+        def add(priority: str, item: str, observation: str, recommendation: str, risk: str, page: str, command: str, approval: str = "read-only", confidence: str = "") -> None:
+            why_matters = {
+                "P1": "Could affect trust in the wall or indicate a high-signal security condition.",
+                "P2": "Worth human review before policy, DNSBL, IDS, or automation decisions.",
+                "P3": "Improves readability and learned-normal accuracy.",
+                "P4": "Informational; keep watching.",
+            }.get(priority, "Review for operator context.")
+            disposition = "needs action" if priority == "P1" else ("review soon" if priority == "P2" else ("ignore for now" if priority == "P4" else "watch"))
             rows.append({
                 "priority": priority,
+                "disposition": disposition,
+                "confidence": confidence or ("high" if priority == "P1" else "medium" if priority == "P2" else "low"),
+                "group": re.sub(r"[^A-Za-z0-9]+", "-", item.lower()).strip("-")[:32] or "review",
                 "item": item[:80],
                 "observation": observation[:180],
+                "why_matters": why_matters,
                 "recommendation": recommendation[:180],
                 "risk": risk[:100],
                 "page": page,
@@ -3770,20 +3818,31 @@ class SocxCollector:
             })
 
         if str(truth.get("label") or "").upper() != "LIVE":
-            add("P1", "Data Truth", truth.get("reason") or "collector freshness is not fully live", "Open Health and verify stale collectors before trusting the wall.", "stale evidence can cause wrong decisions", "/health", "socx v1-check")
+            add("P1", "Data Truth", truth.get("reason") or "collector freshness is not fully live", "Open Health and verify stale collectors before trusting the wall.", "stale evidence can cause wrong decisions", "/health", "socx v1-check", confidence="high")
         if str(wall.get("label") or "").upper() != "OK":
-            add("P1", "Wall Health", wall.get("summary") or "wall renderer has a watch item", "Run glitch-watch once after the next visual flash, then review wall health.", "display glitches can hide operator signals", "/wall-health", "socx glitch-watch once")
+            add("P1", "Wall Health", wall.get("summary") or "wall renderer has a watch item", "Run glitch-watch once after the next visual flash, then review wall health.", "display glitches can hide operator signals", "/wall-health", "socx glitch-watch once", confidence="high")
         for draft in (rule.get("drafts") if isinstance(rule.get("drafts"), list) else [])[:4]:
-            add("P2", draft.get("kind") or "Rule review", draft.get("evidence") or "--", draft.get("recommendation") or "--", "policy changes require human approval", "/rules-lab", draft.get("safe_command") or "socx rules", "approval required")
+            add("P2", draft.get("kind") or "Rule review", draft.get("evidence") or "--", draft.get("recommendation") or "--", "policy changes require human approval", "/rules-lab", draft.get("safe_command") or "socx rules", "approval required", confidence=draft.get("confidence") or "medium")
         for item in safe[:5]:
-            add("P2" if str(item.get("approval") or "").lower() != "read-only" else "P3", item.get("action") or item.get("title") or "Safe action", item.get("why") or item.get("detail") or "--", item.get("next") or "Review evidence and use the safe command only if it matches your intent.", item.get("risk") or item.get("approval") or "low", "/actions", item.get("command") or "socx status", item.get("approval") or "read-only")
+            pri = "P2" if str(item.get("approval") or "").lower() != "read-only" else "P3"
+            add(pri, item.get("action") or item.get("title") or "Safe action", item.get("why") or item.get("detail") or "--", item.get("next") or "Review evidence and use the safe command only if it matches your intent.", item.get("risk") or item.get("approval") or "low", "/actions", item.get("command") or "socx status", item.get("approval") or "read-only")
         for anomaly in (brain.get("anomalies") if isinstance(brain.get("anomalies"), list) else [])[:3]:
             add("P3", "Device baseline change", f"{anomaly.get('asset', 'device')} changed: {', '.join(str(x) for x in (anomaly.get('items') or [])[:3])}", "Open Owner Map or Device Detail and confirm whether this is normal.", "could be a new app, update, or unwanted activity", "/owner-map", "socx label-brain")
         ids = incident.get("ids") if isinstance(incident.get("ids"), dict) else {}
         if int(ids.get("high_signal", 0) or 0) > 0:
-            add("P1", "High IDS Signal", f"{ids.get('high_signal')} high-signal IDS rows in the current sample", "Preserve evidence before tuning or suppressing signatures.", "possible true positive", "/incidents", "socx snapshot", "approval required")
+            add("P1", "High IDS Signal", f"{ids.get('high_signal')} high-signal IDS rows in the current sample", "Preserve evidence before tuning or suppressing signatures.", "possible true positive", "/incidents", "socx snapshot", "approval required", confidence="high")
         if not rows:
-            add("P4", "No urgent review", mission.get("headline") or "No high-confidence review item right now.", "Keep watching Mission and Timeline.", "low", "/mission", "socx mission")
+            add("P4", "No urgent review", mission.get("headline") or "No high-confidence review item right now.", "Keep watching Mission and Timeline.", "low", "/mission", "socx mission", confidence="high")
+        grouped: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        for row in rows:
+            key = str(row.get("group") or row.get("item"))
+            if key in grouped:
+                grouped[key]["count"] = int(grouped[key].get("count", 1)) + 1
+                grouped[key]["observation"] = f"{grouped[key]['observation']} | {row.get('observation', '')}"[:180]
+                continue
+            row["count"] = 1
+            grouped[key] = row
+        rows = list(grouped.values())
         score = max(0, 100 - sum(25 if r["priority"] == "P1" else 12 if r["priority"] == "P2" else 4 for r in rows if r["priority"] != "P4"))
         return {
             "title": "SOCX Autopilot Review Queue",
@@ -3828,20 +3887,24 @@ class SocxCollector:
             services = [str(x.get("name")) for x in (dev.get("services") or []) if isinstance(x, dict)]
             profile = str(dev.get("profile") or "device")
             trust_row = trust_by_asset.get(asset, {})
-            owner = self.owner_for_profile(profile, apps + services)
+            override = self.owner_override_for(asset)
+            owner = str(override.get("owner") or self.owner_for_profile(profile, apps + services))
+            friendly = str(override.get("friendly") or override.get("name") or dev.get("friendly_name") or asset)
+            role = str(override.get("role") or profile)
             rows.append({
                 "asset": asset,
-                "friendly": dev.get("friendly_name") or asset,
+                "friendly": friendly,
                 "owner": owner,
-                "profile": profile,
+                "profile": role,
                 "apps": apps[:5],
                 "services": services[:5],
                 "confidence": dev.get("identity_confidence") or dev.get("confidence") or "unknown",
+                "label_source": "manual override" if override else dev.get("label_source") or "local passive",
                 "traffic": trust_row.get("bytes_h") or f"{flow_by_asset.get(asset, int(dev.get('flows', 0) or 0))} flows",
                 "trust": trust_row.get("score", "--"),
                 "state": "WATCH" if dev.get("unusual") or int(trust_row.get("score") or 100) < 70 else "NORMAL",
                 "next": "Confirm owner/name if this label is wrong." if str(dev.get("identity_confidence")) != "confirmed" else "No action needed.",
-                "question": f"Explain this SOCX device owner map row. Asset: {asset}. Friendly: {dev.get('friendly_name') or asset}. Owner: {owner}. Apps: {', '.join(apps[:5])}. Services: {', '.join(services[:5])}. Trust: {trust_row.get('score', '--')}.",
+                "question": f"Explain this SOCX device owner map row. Asset: {asset}. Friendly: {friendly}. Owner: {owner}. Apps: {', '.join(apps[:5])}. Services: {', '.join(services[:5])}. Trust: {trust_row.get('score', '--')}.",
             })
         unknown = sum(1 for row in rows if str(row.get("confidence")) == "unknown")
         return {
@@ -3851,6 +3914,7 @@ class SocxCollector:
             "summary": f"{len(rows)} visible assets; {unknown} still need better owner/name confidence",
             "rows": rows,
             "owners": sorted({row["owner"] for row in rows}),
+            "override_file": str(self.owner_overrides_path),
             "read_only": True,
             "updated_ms": now_ms(),
         }
@@ -4789,6 +4853,67 @@ class SocxCollector:
             "sensor_avg": round(avg("sensor_score", True)),
         }
 
+    def collect_since_yesterday(self) -> dict[str, Any]:
+        rows = self.collect_history(720)
+        if not rows:
+            return {"title": "SOCX What Changed Since Yesterday", "label": "LEARNING", "score": 100, "summary": "History is still warming up.", "rows": [], "read_only": True, "updated_ms": now_ms()}
+        now = time.time()
+        recent = rows[-1]
+        older = rows[0]
+        timestamped = []
+        for row in rows:
+            try:
+                ts = float(row.get("ts") or row.get("updated") or row.get("time") or 0)
+            except Exception:
+                ts = 0
+            if ts > 0 and ts < 200000000000:
+                if ts > 2000000000:
+                    ts = ts / 1000.0
+                timestamped.append((ts, row))
+        if timestamped:
+            older_candidates = [row for ts, row in timestamped if ts <= now - 86400]
+            older = older_candidates[-1] if older_candidates else timestamped[0][1]
+            recent = timestamped[-1][1]
+
+        def num(row: dict[str, Any], key: str) -> float:
+            try:
+                return float(row.get(key) or 0)
+            except Exception:
+                return 0.0
+
+        specs = [
+            ("SOCX Score", "score", "", 5),
+            ("Network Score", "network_score", "", 8),
+            ("Security Score", "security_score", "", 8),
+            ("AI Score", "ai_score", "", 8),
+            ("Sensor Score", "sensor_score", "", 8),
+            ("Direct Speed", "direct_down", "Mbps", 300),
+            ("VPN Speed", "vpn_down", "Mbps", 150),
+            ("Firewall Blocks", "fw_blocks", "events", 50),
+            ("DNSBL Hits", "dnsbl_hits", "hits", 100),
+            ("IDS High", "ids_high", "alerts", 1),
+        ]
+        changes = []
+        for label, key, unit, threshold in specs:
+            old = num(older, key)
+            new = num(recent, key)
+            delta = new - old
+            state = "stable" if abs(delta) < threshold else ("rising" if delta > 0 else "falling")
+            tone = "green" if state == "stable" else ("yellow" if key not in {"ids_high"} else "red")
+            detail = f"{old:.0f} -> {new:.0f} {unit}".strip()
+            changes.append({"signal": label, "state": state, "tone": tone, "delta": round(delta, 1), "detail": detail, "key": key})
+        important = [row for row in changes if row["state"] != "stable"]
+        return {
+            "title": "SOCX What Changed Since Yesterday",
+            "label": "CHANGED" if important else "STABLE",
+            "score": max(0, 100 - len(important) * 6),
+            "summary": f"{len(important)} notable baseline movement(s) across retained SOCX history",
+            "rows": changes,
+            "important": important[:8],
+            "read_only": True,
+            "updated_ms": now_ms(),
+        }
+
     def collect_history(self, limit: int = 120) -> list[dict[str, Any]]:
         history_path = Path(os.environ.get("SOCX_HISTORY_FILE", "/var/db/socx_history.jsonl"))
         rows: list[dict[str, Any]] = []
@@ -5408,6 +5533,52 @@ class SocxCollector:
             self.seen_log_lines.popitem(last=False)
         return True
 
+    def packet_story(self, action: str, direction: str, proto: str, src: str, dst: str, sport: str, dport: str, service: str, size: str) -> dict[str, str]:
+        act = str(action or "").upper()
+        direction_u = str(direction or "").upper()
+        proto_u = str(proto or "").upper()
+        src_h = self.pretty_host(src)
+        dst_h = self.pretty_host(dst)
+        if ":" in src or ":" in dst:
+            if dst.lower().startswith(("ff", "fe80")) or src.lower().startswith("fe80"):
+                category = "IPv6 multicast/local noise"
+                story = f"{proto_u} local IPv6 discovery blocked or ignored"
+                tone = "LOW"
+            else:
+                category = "IPv6 firewall event"
+                story = f"{proto_u} IPv6 {src_h} -> {dst_h} {service}"
+                tone = "MED" if act == "BLOCK" else "LOW"
+        elif direction_u == "IN" and act == "BLOCK" and not src.startswith("192.168.1."):
+            category = "WAN scan stopped"
+            story = f"WAN scan blocked from {src_h} to {dst_h}:{dport or service}"
+            tone = "HIGH" if dport in {"22", "3389", "23", "445", "1433"} else "MED"
+        elif direction_u == "OUT" and act == "BLOCK":
+            category = "LAN policy block"
+            story = f"LAN policy blocked {src_h} -> {dst_h}:{dport or service}"
+            tone = "MED"
+        elif dport in {"53", "853"} or service in {"dns", "dot"}:
+            category = "DNS traffic"
+            story = f"DNS request {src_h} -> {dst_h}"
+            tone = "LOW"
+        elif dport in {"500", "4500", "51820"} or service == "vpn":
+            category = "VPN tunnel packet"
+            story = f"VPN tunnel traffic {src_h} -> {dst_h}"
+            tone = "LOW" if act != "BLOCK" else "MED"
+        elif dport in {"443", "80"} or service in {"https", "http", "web"}:
+            category = "Web/cloud traffic"
+            story = f"Web traffic {src_h} -> {dst_h}"
+            tone = "LOW" if act != "BLOCK" else "MED"
+        else:
+            category = "Firewall packet"
+            story = f"{act} {proto_u} {src_h} -> {dst_h}:{dport or service}"
+            tone = "MED" if act == "BLOCK" else "LOW"
+        why = "Routine if repeated multicast/local IPv6; review only if it floods the wall." if "IPv6 multicast" in category else (
+            "Expected internet background noise when blocked on WAN." if category == "WAN scan stopped" else
+            "Review the matching LAN device and rule if this breaks an app." if category == "LAN policy block" else
+            "Normal if it matches a known app/device baseline."
+        )
+        return {"category": category, "story": story[:180], "why": why[:180], "severity": tone}
+
     def parse_filterlog(self, line: str) -> dict[str, Any] | None:
         if "filterlog" not in line or ": " not in line:
             return None
@@ -5440,9 +5611,8 @@ class SocxCollector:
         time_match = re.search(r"(\d\d:\d\d:\d\d)", prefix)
         service = service_name(dport)
         service = app_label(dst) or service
-        severity = "MED" if action == "block" else "LOW"
-        if dport in {"22", "500", "4500", "3389"} and action == "block":
-            severity = "HIGH"
+        story = self.packet_story(action, direction, proto, src, dst, sport, dport, service, size)
+        severity = story["severity"]
         return {
             "time": time_match.group(1) if time_match else time.strftime("%H:%M:%S"),
             "action": action.upper(),
@@ -5456,7 +5626,10 @@ class SocxCollector:
             "dport": dport,
             "service": service,
             "size": size,
-            "info": f"{service} {size}B",
+            "info": f"{story['category']} | {service} {size}B",
+            "story": story["story"],
+            "category": story["category"],
+            "why": story["why"],
             "severity": severity,
             "fingerprint": f"fw:{action}:{proto}:{src}:{dst}:{dport}",
         }
@@ -5793,6 +5966,9 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/baseline":
             self.send_json(self.collector.collect_baseline_learning())
             return
+        if parsed.path == "/api/since-yesterday":
+            self.send_json(self.collector.collect_since_yesterday())
+            return
         if parsed.path == "/api/threat-map":
             self.send_json(self.collector.collect_threat_map())
             return
@@ -5981,7 +6157,7 @@ class SocxHandler(BaseHTTPRequestHandler):
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/memory", "/twin", "/automation", "/timeline", "/movie", "/projects", "/glitches", "/wall-health", "/review-queue", "/owner-map", "/mission-console", "/config-sim", "/baseline", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
+        if path in {"/speedtest", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/memory", "/twin", "/automation", "/timeline", "/movie", "/projects", "/glitches", "/wall-health", "/review-queue", "/owner-map", "/mission-console", "/config-sim", "/baseline", "/since-yesterday", "/daily-brief", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"
