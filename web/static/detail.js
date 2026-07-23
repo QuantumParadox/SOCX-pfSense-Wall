@@ -15,6 +15,7 @@ const esc = (value) => String(value ?? "--").replace(/[&<>"']/g, (c) => ({
 
 const pageName = () => {
   const path = location.pathname.replace(/^\/+/, "").toLowerCase();
+  if (path.includes("flow")) return "flows";
   if (path.includes("device")) return "devices";
   if (path.includes("incident")) return "incidents";
   if (path.includes("why")) return "why";
@@ -522,6 +523,71 @@ function renderDevices(state) {
   ].join("");
 }
 
+function renderFlowsPage(state, data) {
+  title.textContent = "SOCX NETFLOW STORY";
+  subtitle.textContent = `${state.hostname || "pfSense"} / NetFlow, top talkers, device trust / ${new Date().toLocaleTimeString()}`;
+  const nf = data.netflow_intel || state.netflow_intel || {};
+  const trust = data.device_trust || state.device_trust || {};
+  const assurance = data.mission_assurance || state.mission_assurance || {};
+  const weakestNames = new Set((assurance.weakest || []).map((item) => item.name));
+  const assuranceRows = Object.entries(assurance.scores || {}).map(([name, score]) => [
+    name.toUpperCase(),
+    score,
+    weakestNames.has(name) ? "weakest watch item" : "supporting signal",
+  ]);
+  const flowRows = (nf.rows || []).slice(0, 12).map((r) => [
+    r.asset || "--",
+    r.peer || "--",
+    r.app || r.service || "--",
+    r.bytes_h || "--",
+    r.direction || "--",
+  ]);
+  const trustRows = (trust.rows || []).slice(0, 12).map((r) => [
+    r.asset || "--",
+    `${r.score ?? "--"}/100`,
+    r.profile || "--",
+    r.bytes_h || "--",
+    r.reason || "--",
+  ]);
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    card("Mission Assurance", [
+      `<div class="detail-score ${assurance.tone || "cyan"}">${esc(assurance.label || "WATCH")} ${esc(assurance.score ?? "--")}/100</div>`,
+      `<div class="detail-reason">${esc(assurance.summary || "waiting for assurance score")}</div>`,
+      table(["Function", "Score", "Why"], assuranceRows),
+    ].join("")),
+    card("NetFlow Story", [
+      kv("Status", nf.status || "--", nf.status === "OK" ? "green" : "yellow"),
+      kv("Window", nf.window || "--", "cyan"),
+      kv("Total", nf.total_bytes_h || "--", "cyan"),
+      `<div class="detail-reason">${esc(nf.summary || "waiting for Pi4 Influx netflow data")}</div>`,
+      table(["#", "Story"], (nf.stories || []).map((line, idx) => [idx + 1, line])),
+    ].join("")),
+    card("Top Flow Groups", table(["Asset", "Peer", "App", "Bytes", "Direction"], flowRows)),
+    card("Device Trust", [
+      `<div class="detail-score ${trust.tone || "cyan"}">${esc(trust.label || "WATCH")} ${esc(trust.score ?? "--")}/100</div>`,
+      `<div class="detail-reason">${esc(trust.summary || "waiting for device trust score")}</div>`,
+      table(["Device", "Trust", "Profile", "Bytes", "Reason"], trustRows),
+    ].join("")),
+    card("Top Apps", table(["App", "Bytes", "Groups"], (nf.top_apps || []).slice(0, 10).map((x) => [
+      x.name || "--",
+      x.bytes_h || "--",
+      x.count ?? "--",
+    ]))),
+    card("Top Peers", table(["Peer", "Bytes", "Groups"], (nf.top_peers || []).slice(0, 10).map((x) => [
+      x.name || "--",
+      x.bytes_h || "--",
+      x.count ?? "--",
+    ]))),
+    card("Top Assets", table(["Asset", "Bytes", "Groups"], (nf.top_assets || []).slice(0, 10).map((x) => [
+      x.name || "--",
+      x.bytes_h || "--",
+      x.count ?? "--",
+    ]))),
+    card("Safe Next Steps", table(["#", "Action"], (assurance.next || []).map((line, idx) => [idx + 1, line]))),
+  ].join("");
+}
+
 function renderIncidents(state) {
   title.textContent = "SOCX INCIDENTS";
   const incident = state.incident || {};
@@ -625,8 +691,12 @@ async function refresh() {
   const mission = page === "mission"
     ? await fetch("/api/mission", { cache: "no-store" }).then((r) => r.json())
     : null;
+  const flowsData = page === "flows"
+    ? await fetch("/api/flows", { cache: "no-store" }).then((r) => r.json())
+    : null;
   subtitle.textContent = `${state.hostname || "pfSense"} / ${state.mode || "live"} / ${new Date().toLocaleTimeString()}`;
-  if (page === "devices") renderDevices(state);
+  if (page === "flows") renderFlowsPage(state, flowsData || {});
+  else if (page === "devices") renderDevices(state);
   else if (page === "incidents") renderIncidents(state);
   else if (page === "ai") renderAi(state);
   else if (page === "health") renderHealth(state, health || {});

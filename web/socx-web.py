@@ -28,7 +28,7 @@ from collections import OrderedDict, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -378,8 +378,10 @@ class SocxCollector:
         pi_nodes = self.collect_pi_nodes()
         threat_pulse = self.collect_threat_pulse(incident)
         flows = self.collect_flows()
+        netflow_intel = self.collect_netflow_intel()
         label_brain = self.collect_label_brain(flows, incident)
         flows = self.enrich_flows_with_labels(flows, label_brain)
+        device_trust = self.collect_device_trust(flows, label_brain, netflow_intel, incident, pi_nodes)
         asset_watch = self.collect_asset_watch(flows, pi_nodes, label_brain)
         ai_timeline = self.collect_ai_timeline(pi_nodes, command_center)
         incident_timeline = self.collect_incident_timeline(incident, label_brain, ai_timeline)
@@ -392,6 +394,7 @@ class SocxCollector:
         what_changed = self.collect_what_changed(command_center, incident, label_brain, pi_nodes, net, ups, data_truth, flows)
         intel = self.collect_intel_layer(incident, label_brain, flows, hardware)
         mission = self.collect_mission(command_center, incident, label_brain, pi_nodes, ai_timeline, hardware, data_truth, what_changed, flows, intel)
+        mission_assurance = self.collect_mission_assurance(command_center, data_truth, incident, power_mods, netflow_intel, device_trust, pi_nodes, hardware)
 
         packets: list[dict[str, Any]] = []
         if time.time() - self.last_event_read > 0.8:
@@ -441,8 +444,10 @@ class SocxCollector:
             "incident": incident,
             "pi_nodes": pi_nodes,
             "threat_pulse": threat_pulse,
+            "mission_assurance": mission_assurance,
             "asset_watch": asset_watch,
             "label_brain": label_brain,
+            "device_trust": device_trust,
             "ai_timeline": ai_timeline,
             "incident_timeline": incident_timeline,
             "daily_brief": daily_brief,
@@ -453,6 +458,7 @@ class SocxCollector:
             "what_changed": what_changed,
             "intel": intel,
             "mission": mission,
+            "netflow_intel": netflow_intel,
             "flows": flows,
             "packets": packets,
             "events": list(self.events.values())[-self.event_max :],
@@ -2143,6 +2149,264 @@ class SocxCollector:
             "headline": headline,
         }
 
+    def collect_netflow_intel(self) -> dict[str, Any]:
+        cfg = parse_env_file(Path(os.environ.get("SOCX_OBSERVABILITY_CONF", "/usr/local/etc/socx_observability.conf")))
+        influx_url = (cfg.get("SOCX_INFLUX_URL") or os.environ.get("SOCX_INFLUX_URL", "http://192.168.1.180:8086")).rstrip("/")
+        influx_db = cfg.get("SOCX_INFLUX_DB") or os.environ.get("SOCX_INFLUX_DB", "pfsense")
+        window = os.environ.get("SOCX_NETFLOW_WINDOW", "10m")
+        query = (
+            "SELECT src,dst,dst_port,protocol,in_bytes,in_packets "
+            f"FROM netflow WHERE time > now() - {window} "
+            "ORDER BY time DESC LIMIT 1200"
+        )
+        url = f"{influx_url}/query?{urlencode({'db': influx_db, 'q': query})}"
+        rows: list[dict[str, Any]] = []
+        error = ""
+        try:
+            req = Request(url, headers={"User-Agent": "SOCX/netflow-intel"})
+            with urlopen(req, timeout=float(os.environ.get("SOCX_NETFLOW_TIMEOUT", "3.0"))) as resp:
+                data = json.loads(resp.read(900000).decode("utf-8", "replace") or "{}")
+            grouped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+            for series in data.get("results", [{}])[0].get("series", []) or []:
+                columns = [str(col) for col in series.get("columns", [])]
+                for values in series.get("values") or []:
+                    row = dict(zip(columns, values))
+                    byte_count = int(float(row.get("in_bytes") or 0))
+                    packet_count = int(float(row.get("in_packets") or 0))
+                    if byte_count <= 0 and packet_count <= 0:
+                        continue
+                    src = str(row.get("src") or "")
+                    dst = str(row.get("dst") or "")
+                    port = str(row.get("dst_port") or "")
+                    proto = str(row.get("protocol") or "").lower()
+                    key = (src, dst, port, proto)
+                    item = grouped.setdefault(key, {
+                        "src": src,
+                        "dst": dst,
+                        "port": port,
+                        "proto": proto,
+                        "bytes": 0,
+                        "packets": 0,
+                    })
+                    item["bytes"] += byte_count
+                    item["packets"] += packet_count
+            for item in grouped.values():
+                src = str(item.get("src") or "")
+                dst = str(item.get("dst") or "")
+                port = str(item.get("port") or "")
+                proto = str(item.get("proto") or "").lower()
+                direction = self.flow_direction(src, dst)
+                asset_ip = src if src.startswith("192.168.1.") else dst if dst.startswith("192.168.1.") else src
+                peer_ip = dst if asset_ip == src else src
+                service = app_label(peer_ip) or service_name(port)
+                app = app_label(peer_ip) or app_label(service) or service
+                rows.append({
+                    "src": src,
+                    "dst": dst,
+                    "asset": self.pretty_host(asset_ip),
+                    "peer": self.pretty_host(peer_ip),
+                    "direction": direction,
+                    "port": port,
+                    "proto": proto.upper() if proto else "--",
+                    "service": service,
+                    "app": app,
+                    "bytes": int(item.get("bytes", 0) or 0),
+                    "bytes_h": human_bytes(item.get("bytes", 0)),
+                    "packets": int(item.get("packets", 0) or 0),
+                })
+        except Exception as exc:
+            error = str(exc)[:180]
+        rows.sort(key=lambda row: int(row.get("bytes", 0) or 0), reverse=True)
+
+        def rank(key: str, label_key: str = "") -> list[dict[str, Any]]:
+            totals: dict[str, dict[str, Any]] = {}
+            for row in rows:
+                name = str(row.get(key) or "--")
+                if not name or name == "--":
+                    continue
+                item = totals.setdefault(name, {"name": name, "bytes": 0, "packets": 0, "count": 0})
+                item["bytes"] += int(row.get("bytes", 0) or 0)
+                item["packets"] += int(row.get("packets", 0) or 0)
+                item["count"] += 1
+                if label_key and row.get(label_key):
+                    item[label_key] = row.get(label_key)
+            ranked = sorted(totals.values(), key=lambda item: int(item.get("bytes", 0) or 0), reverse=True)[:8]
+            for item in ranked:
+                item["bytes_h"] = human_bytes(item.get("bytes", 0))
+            return ranked
+
+        total_bytes = sum(int(row.get("bytes", 0) or 0) for row in rows)
+        top_flow = rows[0] if rows else {}
+        status = "OK" if rows else ("WAITING" if not error else "WARN")
+        summary = f"{len(rows)} flow groups, {human_bytes(total_bytes)} in {window}"
+        if top_flow:
+            summary = f"top {top_flow.get('asset')} -> {top_flow.get('peer')} {top_flow.get('bytes_h')} via {top_flow.get('app')}"
+        elif error:
+            summary = f"netflow waiting: {error}"
+        stories = []
+        for row in rows[:5]:
+            stories.append(f"{row.get('asset')} -> {row.get('peer')} | {row.get('app')} | {row.get('bytes_h')} | {row.get('direction')}")
+        return {
+            "status": status,
+            "summary": summary,
+            "window": window,
+            "influx_url": influx_url,
+            "rows": rows[:30],
+            "top_assets": rank("asset"),
+            "top_peers": rank("peer"),
+            "top_apps": rank("app"),
+            "total_bytes": total_bytes,
+            "total_bytes_h": human_bytes(total_bytes),
+            "stories": stories,
+            "error": error,
+            "updated_ms": now_ms(),
+        }
+
+    def flow_direction(self, src: str, dst: str) -> str:
+        src_lan = src.startswith("192.168.1.")
+        dst_lan = dst.startswith("192.168.1.")
+        if src_lan and dst_lan:
+            return "LAN-LAN"
+        if src_lan:
+            return "LAN-WAN"
+        if dst_lan:
+            return "WAN-LAN"
+        return "WAN"
+
+    def collect_device_trust(
+        self,
+        flows: list[dict[str, Any]],
+        label_brain: dict[str, Any],
+        netflow: dict[str, Any],
+        incident: dict[str, Any],
+        pi_nodes: dict[str, Any],
+    ) -> dict[str, Any]:
+        devices: dict[str, dict[str, Any]] = {}
+        for dev in label_brain.get("devices", []) if isinstance(label_brain.get("devices"), list) else []:
+            asset = str(dev.get("asset") or dev.get("friendly_name") or "device")
+            confidence = str(dev.get("identity_confidence") or dev.get("confidence") or "unknown")
+            score = 86
+            if confidence == "confirmed":
+                score += 8
+            elif confidence == "unknown":
+                score -= 18
+            unusual = dev.get("unusual") if isinstance(dev.get("unusual"), list) else []
+            score -= min(24, len(unusual) * 8)
+            devices[asset] = {
+                "asset": asset,
+                "score": int(clamp(score, 0, 100)),
+                "confidence": confidence,
+                "profile": dev.get("profile", "device"),
+                "apps": dev.get("apps", [])[:4],
+                "unusual": unusual[:4],
+                "bytes": 0,
+                "bytes_h": "--",
+                "reason": dev.get("summary", "local passive identity"),
+            }
+        for row in netflow.get("top_assets", []) if isinstance(netflow.get("top_assets"), list) else []:
+            asset = str(row.get("name") or "device")
+            item = devices.setdefault(asset, {
+                "asset": asset,
+                "score": 74 if asset.startswith("LAN.") else 84,
+                "confidence": "likely" if not asset.startswith("LAN.") else "unknown",
+                "profile": "network-active",
+                "apps": [],
+                "unusual": [],
+                "bytes": 0,
+                "bytes_h": "--",
+                "reason": "active in NetFlow",
+            })
+            item["bytes"] = int(row.get("bytes", 0) or 0)
+            item["bytes_h"] = row.get("bytes_h") or human_bytes(item["bytes"])
+            if item["bytes"] > 2_000_000_000:
+                item["score"] = int(item["score"]) - 8
+                item["reason"] = f"heavy NetFlow usage {item['bytes_h']}"
+        blocked_lan = {str(x.get("name")) for x in incident.get("lan_hosts", [])} if isinstance(incident.get("lan_hosts"), list) else set()
+        for asset, item in devices.items():
+            if any(host and host in asset for host in blocked_lan):
+                item["score"] = int(item["score"]) - 12
+                item["reason"] = "recent LAN policy block plus " + str(item.get("reason", "activity"))
+        for node in pi_nodes.get("nodes", []) if isinstance(pi_nodes.get("nodes"), list) else []:
+            name = str(node.get("name") or node.get("ip") or "")
+            if not name:
+                continue
+            item = devices.setdefault(name, {
+                "asset": name,
+                "score": 92 if node.get("status") == "online" else 58,
+                "confidence": "confirmed",
+                "profile": node.get("role_h") or "Pi node",
+                "apps": [],
+                "unusual": [],
+                "bytes": 0,
+                "bytes_h": "--",
+                "reason": f"Pi fleet node {node.get('status', 'unknown')}",
+            })
+            if node.get("status") != "online":
+                item["score"] = min(int(item["score"]), 58)
+        rows = sorted(devices.values(), key=lambda item: int(item.get("score", 0)), reverse=False)[:12]
+        avg = round(sum(int(item.get("score", 0) or 0) for item in devices.values()) / max(1, len(devices)))
+        label = "TRUSTED" if avg >= 85 else "WATCH" if avg >= 70 else "INVESTIGATE"
+        tone = "green" if label == "TRUSTED" else "yellow" if label == "WATCH" else "red"
+        return {
+            "label": label,
+            "tone": tone,
+            "score": avg,
+            "summary": f"{len(devices)} devices scored; lowest {rows[0].get('asset', '--') if rows else '--'} {rows[0].get('score', '--') if rows else '--'}",
+            "rows": rows,
+            "updated_ms": now_ms(),
+        }
+
+    def collect_mission_assurance(
+        self,
+        center: dict[str, Any],
+        data_truth: dict[str, Any],
+        incident: dict[str, Any],
+        power_mods: dict[str, Any],
+        netflow: dict[str, Any],
+        device_trust: dict[str, Any],
+        pi_nodes: dict[str, Any],
+        hardware: dict[str, Any],
+    ) -> dict[str, Any]:
+        items = power_mods.get("items") if isinstance(power_mods.get("items"), dict) else {}
+        ids = incident.get("ids") if isinstance(incident.get("ids"), dict) else {}
+        scores = {
+            "govern": 92 if (items.get("config_drift", {}).get("status") == "OK" and items.get("evidence_vault", {}).get("status") == "OK") else 72,
+            "identify": int(device_trust.get("score", 70) or 70),
+            "protect": int(center.get("scores", {}).get("network") or 82) if isinstance(center.get("scores"), dict) else 82,
+            "detect": 94 if items.get("flow_export", {}).get("status") == "OK" and netflow.get("status") == "OK" else 74,
+            "respond": 88 if items.get("quarantine_draft", {}).get("status") in {"PLAN", "OK"} else 70,
+            "recover": 90 if items.get("config_drift", {}).get("status") == "OK" else 70,
+        }
+        if int(ids.get("high_signal", 0) or 0) > 0:
+            scores["detect"] = min(100, scores["detect"] + 3)
+            scores["respond"] = max(60, scores["respond"] - 8)
+        if str(data_truth.get("label", "")).upper() != "LIVE":
+            scores["detect"] = max(55, scores["detect"] - 10)
+        if int(pi_nodes.get("online", 0) or 0) < int(pi_nodes.get("count", 0) or 0):
+            scores["respond"] = max(55, scores["respond"] - 8)
+        ht = hardware.get("trend") if isinstance(hardware.get("trend"), dict) else {}
+        if ht.get("headroom_c") is not None and float(ht.get("headroom_c") or 0) < 5:
+            scores["recover"] = max(55, scores["recover"] - 8)
+        overall = round(sum(scores.values()) / len(scores))
+        label = "READY" if overall >= 88 else "WATCH" if overall >= 72 else "GAP"
+        tone = "green" if label == "READY" else "yellow" if label == "WATCH" else "red"
+        weakest = sorted(scores.items(), key=lambda kv: kv[1])[:2]
+        return {
+            "framework": "NIST CSF 2.0 + CISA Zero Trust + SOCX local evidence",
+            "label": label,
+            "tone": tone,
+            "score": overall,
+            "scores": scores,
+            "weakest": [{"name": k, "score": v} for k, v in weakest],
+            "summary": f"Mission {label} {overall}/100 | weakest {weakest[0][0]} {weakest[0][1]}",
+            "next": [
+                "Keep NetFlow receiver green and review /flows for top talkers",
+                "Enable LLDP on switch/AP side for topology truth" if items.get("lldp", {}).get("status") != "OK" else "Review topology changes after switch/AP updates",
+                "Use Evidence before Drift/Rules/Quarantine changes",
+            ],
+            "updated_ms": now_ms(),
+        }
+
     def collect_label_brain(self, flows: list[dict[str, Any]], incident: dict[str, Any]) -> dict[str, Any]:
         """Build a local, passive label model from pf states and DNS/DNSBL evidence."""
         devices: dict[str, dict[str, Any]] = {}
@@ -2865,12 +3129,15 @@ class SocxCollector:
         phases = ["collected pfSense telemetry", f"classified request as {intent}"]
         local = self.local_chat_answer(text, intent, context)
         pi_answer: dict[str, Any] = {}
-        if intent in {"explain", "diagnose", "draft"}:
+        prefer_local_truth = bool(re.search(r"\b(bandwidth|top talker|top talkers|who is using|netflow|ipfix|flow|traffic)\b", text.lower()))
+        if intent in {"explain", "diagnose", "draft"} and not prefer_local_truth:
             pi_answer = self.ask_pi_operator_chat(text, intent, context)
             if pi_answer.get("ok"):
                 phases.extend(pi_answer.get("phases") or ["Pi LLM answered"])
             else:
                 phases.append("Pi LLM unavailable; using pfSense explanation")
+        elif prefer_local_truth:
+            phases.append("used local NetFlow truth before Pi narration")
         if intent == "blocked":
             answer = local
             mode = "DENIED"
@@ -2915,6 +3182,9 @@ class SocxCollector:
         metrics = snap.get("metrics_intel") or {}
         observability = snap.get("observability") or {}
         power_mods = snap.get("power_mods") or {}
+        netflow_intel = snap.get("netflow_intel") or {}
+        device_trust = snap.get("device_trust") or {}
+        mission_assurance = snap.get("mission_assurance") or {}
         return {
             "generated_at": snap.get("generated_at"),
             "health": snap.get("status", {}).get("health"),
@@ -2929,6 +3199,29 @@ class SocxCollector:
             "metrics_intel": {"severity": metrics.get("severity"), "summary": metrics.get("summary"), "alerts": (metrics.get("alerts") or [])[:8], "next_steps": (metrics.get("next_steps") or [])[:5]},
             "observability": {"label": observability.get("label"), "summary": observability.get("summary"), "core_measurements": observability.get("core_measurements"), "grafana_url": observability.get("grafana_url")},
             "power_mods": power_mods,
+            "netflow_intel": {
+                "status": netflow_intel.get("status"),
+                "summary": netflow_intel.get("summary"),
+                "window": netflow_intel.get("window"),
+                "total": netflow_intel.get("total_bytes_h"),
+                "top_assets": (netflow_intel.get("top_assets") or [])[:5],
+                "top_apps": (netflow_intel.get("top_apps") or [])[:5],
+                "stories": (netflow_intel.get("stories") or [])[:5],
+                "rows": (netflow_intel.get("rows") or [])[:8],
+            },
+            "device_trust": {
+                "label": device_trust.get("label"),
+                "score": device_trust.get("score"),
+                "summary": device_trust.get("summary"),
+                "rows": (device_trust.get("rows") or [])[:8],
+            },
+            "mission_assurance": {
+                "label": mission_assurance.get("label"),
+                "score": mission_assurance.get("score"),
+                "summary": mission_assurance.get("summary"),
+                "weakest": mission_assurance.get("weakest"),
+                "next": (mission_assurance.get("next") or [])[:5],
+            },
             "flows": (snap.get("flows") or [])[:6],
             "packets": (snap.get("packets") or [])[:6],
             "pi": {"summary": pi_nodes.get("summary"), "nodes": (pi_nodes.get("nodes") or [])[:3]},
@@ -2965,6 +3258,9 @@ class SocxCollector:
         brief = context.get("brief") or {}
         metrics = context.get("metrics_intel") or {}
         power = context.get("power_mods") or {}
+        netflow = context.get("netflow_intel") or {}
+        trust = context.get("device_trust") or {}
+        assurance = context.get("mission_assurance") or {}
         lines = []
         if intent == "blocked":
             return "I cannot help with destructive, bypass, or stealth requests. I can explain the alert, preserve evidence, or draft a safe approval-only pfSense change plan."
@@ -2992,6 +3288,21 @@ class SocxCollector:
             if watch:
                 lines.append("Power-user watch items: " + "; ".join(watch[:4]))
             lines.append("Safe buttons: Evidence preserves a hashed vault, Drift checks config.xml, IDS EVE summarizes Suricata, Flow checks softflowd, Topology checks LLDP, and Quarantine only drafts a plan.")
+        if any(word in q for word in ["bandwidth", "top talker", "top talkers", "who is using", "netflow", "ipfix", "flow", "app", "traffic"]):
+            lines.append(f"NetFlow story is {netflow.get('status', 'UNKNOWN')}: {netflow.get('summary', 'waiting for Pi4 Influx flow data')}")
+            stories = netflow.get("stories") or []
+            if stories:
+                lines.append("Top flow story: " + " | ".join(str(story) for story in stories[:3]))
+            top_assets = netflow.get("top_assets") or []
+            if top_assets:
+                lines.append("Top assets: " + ", ".join(f"{x.get('name')} {x.get('bytes_h')}" for x in top_assets[:4]))
+            top_apps = netflow.get("top_apps") or []
+            if top_apps:
+                lines.append("Top apps: " + ", ".join(f"{x.get('name')} {x.get('bytes_h')}" for x in top_apps[:4]))
+            if trust.get("summary"):
+                lines.append(f"Device trust is {trust.get('label', 'UNKNOWN')} {trust.get('score', '--')}/100: {trust.get('summary')}")
+            if assurance.get("summary"):
+                lines.append(f"Mission assurance is {assurance.get('label', 'UNKNOWN')} {assurance.get('score', '--')}/100: {assurance.get('summary')}")
         if "dnsbl" in q:
             lines.append("DNSBL means DNS Block List. pfBlockerNG blocked or redirected a domain lookup because the domain matched a reputation/category list.")
         if "ids" in q or "suricata" in q:
@@ -3023,6 +3334,7 @@ class SocxCollector:
             commands.append("socx-doctor dnsbl-review")
         if "power" in lower or "flow" in lower or "netflow" in lower or "ipfix" in lower:
             commands.append("socx flow-export status")
+            commands.append("open /flows")
         if "lldp" in lower or "topology" in lower:
             commands.append("socx topology")
         if "drift" in lower or "config" in lower:
@@ -3497,6 +3809,17 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/power-mods":
             self.send_json(self.collector.collect_power_mods())
             return
+        if parsed.path == "/api/flows":
+            snap = self.collector.snapshot()
+            self.send_json({
+                "netflow_intel": snap.get("netflow_intel", {}),
+                "device_trust": snap.get("device_trust", {}),
+                "mission_assurance": snap.get("mission_assurance", {}),
+                "flows": snap.get("flows", []),
+                "asset_watch": snap.get("asset_watch", {}),
+                "updated_ms": now_ms(),
+            })
+            return
         if parsed.path == "/api/autonomy-loop":
             self.send_json(self.collector.collect_autonomy_loop())
             return
@@ -3616,7 +3939,7 @@ class SocxHandler(BaseHTTPRequestHandler):
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health", "/why", "/story", "/mission", "/observability", "/metrics", "/guide", "/chat"}:
+        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health", "/why", "/story", "/mission", "/flows", "/observability", "/metrics", "/guide", "/chat"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"

@@ -109,6 +109,7 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds `/api/power-mods`, a compact browser/API summary of the power-user pack state so SOCX can show which advanced pfSense integrations are healthy, waiting, or need attention.
 - Adds browser Power Mods chips and safe Commander buttons for Evidence, Drift, IDS EVE, Flow, Topology, and Quarantine. Buttons run fixed allowlisted SOCX commands only; quarantine remains draft-only.
 - Supports pfSense `softflowd` IPFIX export into the Pi 4 observability stack. `socx flow-export status` verifies both the pfSense exporter and whether the Pi receiver has `netflow` data in InfluxDB.
+- Adds `/flows` and `/api/flows`, a NetFlow AI Story drilldown that turns Pi 4 InfluxDB/IPFIX data into top talkers, top apps, peer summaries, per-device trust scores, and a NIST-style SOCX Mission Assurance score without changing pfSense policy.
 - Adds hourly config-drift cron support so intentional and unexpected pfSense config changes can be detected against a SOCX backup baseline.
 - Adds `socx autonomy-loop` and `socx autonomy-cron`, a read-only brainstem loop that refreshes Autopilot, Metrics Intelligence, Pi discovery, Pi 3-LLM analysis, and the Morning Brief with lock/timeout protection.
 - Adds Pi 3-LLM role watchdogs so slow or stuck model roles show timeout/error status instead of hanging the SOCX refresh path indefinitely.
