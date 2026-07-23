@@ -314,6 +314,58 @@ body.incident-focus .mark {
   border-color: rgba(118, 242, 125, .58);
 }
 
+.source-badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 86px;
+  margin-left: 4px;
+  padding: 1px 5px;
+  border: 1px solid currentColor;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, .045);
+  font-size: clamp(8px, .56vw, 10px);
+  font-style: normal;
+  font-weight: 950;
+  line-height: 1.25;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.source-badge.green { color: var(--green); }
+.source-badge.cyan { color: var(--cyan); }
+.source-badge.yellow { color: var(--yellow); }
+.source-badge.red { color: var(--red); }
+.source-badge.purple { color: var(--purple); }
+
+.decision-assistant {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+  align-items: center;
+  margin: 6px 0 8px;
+  padding: 7px 8px;
+  border: 1px solid rgba(183, 140, 255, .28);
+  border-radius: 7px;
+  background: rgba(31, 14, 47, .22);
+}
+
+.decision-status,
+.decision-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+}
+
+.decision-status {
+  flex-wrap: wrap;
+}
+
+.decision-actions {
+  justify-content: flex-end;
+}
+
 .chat-output {
   max-height: 74px;
   overflow: auto;
@@ -573,6 +625,18 @@ body.incident-focus .mark {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.head-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.head-actions span {
+  min-width: 0;
 }
 
 .pulse-grid,
@@ -1881,7 +1945,7 @@ body.incident-focus .mark {
 }
 
 .flows-table .row {
-  grid-template-columns: 32px minmax(90px, 1.3fr) minmax(90px, 1.3fr) 62px 88px 70px;
+  grid-template-columns: 32px minmax(90px, 1.2fr) minmax(90px, 1.2fr) 56px 82px minmax(124px, 1fr);
 }
 
 .packet-table .row {

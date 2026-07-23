@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added a browser-wall Decision Assistant strip with trust score, raw/AI/approval-gated source badges, and one-tap Explain Wall, First Action, and Preserve prompts.
+- Added Ask buttons to the Network, Firewall, UPS, CPU, Memory, Live Flows, and Packet Story cards so each major wall section can be explained in plain English from the wall.
+- Added compact source/confidence badges to Live Flow and Packet Story rows for raw pfSense evidence, learned labels, blocked packets, reputation/DNSBL-style classification, and approval-gated AI context.
 - Added SOCX Trust & Control pages: `/owner-editor`, `/packet-noise`, `/confidence`, `/incident-focus`, and `/maintenance`.
 - Added `/api/owner-overrides`, a SOCX-only friendly-name/profile/owner editor that writes label metadata without changing pfSense rules.
 - Added `/api/packet-noise`, a wall-only Packet Story noise reducer that can hide routine categories while preserving the full evidence stream in `packets_all`.

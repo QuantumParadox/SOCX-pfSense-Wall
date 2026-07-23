@@ -108,6 +108,20 @@ function whyButton(question, label = "Why?") {
   return `<button class="why-mini" data-question="${escapeHtml(question)}" title="${escapeHtml(question)}">${escapeHtml(label)}</button>`;
 }
 
+function sourceBadge(text, tone = "cyan", title = "") {
+  return `<em class="source-badge ${escapeHtml(tone)}" title="${escapeHtml(title || text)}">${escapeHtml(text)}</em>`;
+}
+
+function confidenceBadge(value, fallback = "likely") {
+  const label = String(value || fallback || "likely").toLowerCase();
+  const tone = label.includes("high") || label.includes("confirmed") || label.includes("raw") ? "green"
+    : label.includes("low") || label.includes("unknown") || label.includes("ai") ? "yellow"
+    : label.includes("blocked") || label.includes("bad") ? "red"
+    : label.includes("dnsbl") || label.includes("ids") || label.includes("reputation") ? "purple"
+    : "cyan";
+  return sourceBadge(label, tone, `SOCX source confidence: ${label}`);
+}
+
 function explainRow(question) {
   const input = $("chat-input");
   if (input) input.value = question;
@@ -168,6 +182,31 @@ function renderCommandCenter(center = {}) {
   });
   root.innerHTML = rows.join("");
   drawSparkline($("cmd-spark"), (center.history || []).map((p) => p.score || 0), { stroke: "#34d7f2", fill: "rgba(52, 215, 242, .16)" });
+}
+
+function renderDecisionAssistant(state = {}) {
+  const root = $("decision-assistant");
+  if (!root) return;
+  const confidence = state.confidence_meter || {};
+  const truth = state.data_truth || {};
+  const actions = (state.safe_action_queue || state.command_center?.actions || []).slice(0, 3);
+  const firstAction = typeof actions[0] === "string" ? actions[0] : (actions[0]?.action || "Review current mission");
+  const score = confidence.score ?? state.command_center?.score ?? "--";
+  const label = String(confidence.label || truth.label || "WATCH").toUpperCase();
+  const tone = label.includes("HIGH") || label.includes("LIVE") ? "green" : label.includes("LOW") || label.includes("STALE") ? "red" : "yellow";
+  root.innerHTML = `
+    <div class="decision-status">
+      ${sourceBadge(`trust ${score}/100`, tone, confidence.summary || truth.reason || "SOCX confidence")}
+      ${sourceBadge("raw pfSense", "green", "Local pfSense counters and logs")}
+      ${sourceBadge("AI advisory", "yellow", "LLM output is advisory until evidence confirms it")}
+      ${sourceBadge("approval gated", "purple", "SOCX will not silently change pfSense policy")}
+    </div>
+    <div class="decision-actions">
+      ${whyButton("Explain the whole SOCX wall. Tell me what matters, what is probably noise, what evidence is raw, what is AI opinion, and the safest next action.", "Explain Wall")}
+      ${whyButton(`What should I do first right now? Suggested action: ${firstAction}. Keep it read-only unless I approve a change.`, "First Action")}
+      ${whyButton("Preserve evidence for the current SOCX state. Tell me what bundle or snapshot command to use and what it will capture before any firewall or IDS change.", "Preserve")}
+    </div>
+  `;
 }
 
 function renderIncident(incident = {}) {
@@ -625,16 +664,17 @@ function renderFlows(flows = []) {
   const lines = [row(["#", "asset", "peer", "proto", "app/service", "tag"], "header")];
   flows.slice(0, 13).forEach((f, idx) => {
     const service = f.app_hint ? `${f.app_hint}*` : f.service;
+    const appBadge = f.app_hint ? sourceBadge("learned", "cyan", "Friendly app label inferred from local SOCX evidence") : confidenceBadge(f.confidence || "raw", "raw");
+    const stateBadge = f.baseline_state ? confidenceBadge(f.baseline_state, "normal") : sourceBadge("state", "green", "pf state table flow");
     const cells = [
       String(idx + 1).padStart(2, "0"),
       f.asset,
       f.peer,
       f.proto,
       service,
-      `${f.tag || "state"} x${f.count || 1}`,
     ];
     const question = `Explain this network flow: asset ${safe(f.asset)} peer ${safe(f.peer)} protocol ${safe(f.proto)} service ${safe(service)} tag ${safe(f.tag)} count ${safe(f.count, 1)}. Is it normal and what should I check?`;
-    lines.push(`<div class="row explainable" data-question="${escapeHtml(question)}" title="Click to explain this flow">${cells.map((cell) => `<span title="${escapeHtml(cell)}">${escapeHtml(cell)}</span>`).join("")}</div>`);
+    lines.push(`<div class="row explainable" data-question="${escapeHtml(question)}" title="Click to explain this flow">${cells.map((cell) => `<span title="${escapeHtml(cell)}">${escapeHtml(cell)}</span>`).join("")}<span title="SOCX source badges">${escapeHtml(`${f.tag || "state"} x${f.count || 1}`)} ${appBadge} ${stateBadge}</span></div>`);
   });
   root.innerHTML = lines.join("");
 }
@@ -647,6 +687,8 @@ function renderPackets(packets = []) {
     const severity = p.severity === "HIGH" ? "red" : p.action === "BLOCK" ? "yellow" : "green";
     const story = p.story || `${p.proto || ""} ${p.src_label || ""} -> ${p.dst_label || ""}`;
     const why = p.why || p.info || "";
+    const actionBadge = p.action === "BLOCK" ? sourceBadge("blocked", "red", "pfSense blocked this packet by policy") : sourceBadge("raw", "green", "Observed in pfSense packet logs");
+    const categoryBadge = p.category ? confidenceBadge(p.category.includes("DNS") ? "dnsbl" : p.category.includes("WAN") ? "reputation" : "classified", "classified") : sourceBadge("packet", "cyan");
     const question = `Explain this packet story: time ${safe(p.time)} action ${safe(p.action)} category ${safe(p.category)} story ${safe(story)} source ${safe(p.src_label)} destination ${safe(p.dst_label)} service ${safe(p.service)} why ${safe(why)}. Is it expected, blocked, or suspicious?`;
     lines.push(`
       <div class="row explainable" data-question="${escapeHtml(question)}" title="Click to explain this packet">
@@ -656,7 +698,7 @@ function renderPackets(packets = []) {
         <span title="${escapeHtml(p.src || p.src_label)}">${escapeHtml(p.src_label)}</span>
         <span title="${escapeHtml(p.dst || p.dst_label)}">${escapeHtml(p.dst_label)}</span>
         <span>${escapeHtml(p.service)}</span>
-        <span title="${escapeHtml(why)}">${escapeHtml(why)}</span>
+        <span title="${escapeHtml(why)}">${escapeHtml(why)} ${actionBadge} ${categoryBadge}</span>
       </div>
     `);
   });
@@ -763,6 +805,7 @@ function render(state) {
 
   setText("cmd-note", `${safe(state.command_center?.mode, "autopilot")} ${safe(state.command_center?.score, "--")}`);
   renderCommandCenter(state.command_center || {});
+  renderDecisionAssistant(state);
   renderPiNodes(state.pi_nodes || {});
   renderThreatPulse(state.threat_pulse || {});
   renderDataTruth(state.data_truth || {});

@@ -78,7 +78,7 @@
       <section class="card network-card" title="Live WAN/LAN receive and transmit rates from pfSense interface counters">
         <div class="card-head">
           <h2>Network</h2>
-          <span id="net-ifaces">WAN / LAN</span>
+          <div class="head-actions"><span id="net-ifaces">WAN / LAN</span><button class="why-mini" data-question="Explain the Network card. What are WAN/LAN download and upload speeds showing, who is talking most, and is the traffic normal?">Ask</button></div>
         </div>
         <div class="net-grid">
           <div>
@@ -105,7 +105,7 @@
       <section class="card pf-card" title="pf firewall state table size, search rate, and pass/block counters">
         <div class="card-head">
           <h2>Firewall</h2>
-          <span>pf</span>
+          <div class="head-actions"><span>pf</span><button class="why-mini" data-question="Explain the Firewall card. What do states, search rate, passed, and blocked mean right now, and should I investigate?">Ask</button></div>
         </div>
         <div class="stat-line"><span>states</span><strong id="pf-states">--</strong></div>
         <div class="stat-line"><span>search</span><strong id="pf-search">--</strong></div>
@@ -119,7 +119,7 @@
       <section class="card ups-card" title="APC UPS load, battery, runtime, voltage, wattage, and trend">
         <div class="card-head">
           <h2>UPS</h2>
-          <span id="ups-status">--</span>
+          <div class="head-actions"><span id="ups-status">--</span><button class="why-mini" data-question="Explain the UPS card. Is load, runtime, line voltage, battery, and power usage healthy for this APC Smart UPS?">Ask</button></div>
         </div>
         <div class="watts" id="ups-watts">-- W</div>
         <div class="ups-meta">
@@ -134,7 +134,7 @@
       <section class="card cpu-card" title="pfSense CPU load, per-core load, frequency, and temperature">
         <div class="card-head">
           <h2>CPU</h2>
-          <span id="cpu-extra">--</span>
+          <div class="head-actions"><span id="cpu-extra">--</span><button class="why-mini" data-question="Explain the CPU card. Is CPU load, per-core usage, frequency, temperature, and load average healthy for pfSense?">Ask</button></div>
         </div>
         <div class="meter-row large">
           <span>total</span>
@@ -148,7 +148,7 @@
       <section class="card mem-card" title="RAM, free memory, ZFS ARC, and memory pressure">
         <div class="card-head">
           <h2>Memory</h2>
-          <span id="mem-total">--</span>
+          <div class="head-actions"><span id="mem-total">--</span><button class="why-mini" data-question="Explain the Memory card. What is RAM, free memory, ZFS ARC, and memory pressure telling me?">Ask</button></div>
         </div>
         <div class="meter-row large">
           <span>used</span>
@@ -255,6 +255,7 @@
           <button data-action="voice" id="voice-command" title="Browser voice command if supported">Voice</button>
         </div>
         <canvas class="spark mini" id="cmd-spark"></canvas>
+        <div class="decision-assistant" id="decision-assistant"></div>
         <div class="table command-table" id="command-center"></div>
         <div class="power-mods" id="power-mods"></div>
         <div class="observability-strip" id="observability"></div>
@@ -284,7 +285,7 @@
       <section class="card table-card flows-card" title="Top live state-table flows with friendly app labels">
         <div class="card-head">
           <h2>Live Flows</h2>
-          <span>state table</span>
+          <div class="head-actions"><span>state table</span><button class="why-mini" data-question="Explain Live Flows. Who is using bandwidth, what apps are visible, which labels are learned, and what is unusual?">Ask</button></div>
         </div>
         <div class="table flows-table" id="flows"></div>
       </section>
@@ -292,7 +293,7 @@
       <section class="card table-card packets-card" title="Human-readable filterlog packet story rows">
         <div class="card-head">
           <h2>Packet Story</h2>
-          <span>filterlog</span>
+          <div class="head-actions"><span>filterlog</span><button class="why-mini" data-question="Explain Packet Story. Which rows are raw firewall evidence, which are classified, what was blocked, and what can I ignore?">Ask</button></div>
         </div>
         <div class="table packet-table" id="packets"></div>
       </section>

@@ -84,6 +84,8 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds four-part Autopilot scoring for network, security, AI, and sensor health.
 - Adds SOCX Trust & Control pages: `/owner-editor` for SOCX-only friendly names, `/packet-noise` for wall-only noise reduction, `/confidence` for evidence confidence, `/incident-focus` for temporary review highlighting, and `/maintenance` for service/file freshness checks.
 - Keeps Trust & Control safe by default: owner labels and display filters write only SOCX metadata, Incident Focus changes only the display, and pfSense firewall/DNS/IDS policy remains approval-gated.
+- Adds a wall-level Decision Assistant with source badges, trust score, and one-tap prompts for Explain Wall, First Action, and Preserve Evidence.
+- Adds visible Ask buttons and row badges across Network, Firewall, UPS, CPU, Memory, Live Flows, and Packet Story so raw pfSense evidence, learned labels, AI advisory context, and blocked/reputation events are easier to tell apart.
 - Adds `socx mode` presets for normal, incident, speedtest, AI, UPS, and quiet-night viewing.
 - Adds `socx hosts suggest/apply` to reduce `LAN.x` and unknown labels using DHCP, ARP, and Pi discovery hints.
 - Adds friendly app/domain labels across the browser wall and terminal wall when SOCX has DNS/log evidence, including streaming, Apple/iCloud, Hugging Face, Civitai, IBM Quantum, OpenAI/Claude/Grok, NVIDIA AI, Ollama, vLLM, and common cloud/CDN services.
