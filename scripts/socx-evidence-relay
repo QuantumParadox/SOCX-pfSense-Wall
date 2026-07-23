@@ -1,0 +1,61 @@
+#!/bin/sh
+# Read-only helper for the optional Pi 4 SOCX evidence relay. It does not edit
+# pfSense remote logging, firewall rules, or routes.
+set -u
+
+CONF="${SOCX_EVIDENCE_RELAY_CONF:-/usr/local/etc/socx_evidence_relay.conf}"
+HOST="192.168.1.180"
+PORT="5514"
+HEALTH="http://192.168.1.180:8097/health"
+
+if [ -f "$CONF" ]; then
+    # shellcheck disable=SC1090
+    . "$CONF"
+fi
+HOST="${SOCX_EVIDENCE_RELAY_HOST:-$HOST}"
+PORT="${SOCX_EVIDENCE_RELAY_PORT:-$PORT}"
+HEALTH="${SOCX_EVIDENCE_RELAY_HEALTH_URL:-$HEALTH}"
+
+fetch_health() {
+    if command -v fetch >/dev/null 2>&1; then
+        fetch -T 3 -qo - "$HEALTH" 2>/dev/null
+    elif command -v curl >/dev/null 2>&1; then
+        curl -fsS --max-time 3 "$HEALTH" 2>/dev/null
+    fi
+}
+
+case "${1:-status}" in
+    status)
+        echo "SOCX Pi 4 evidence relay"
+        echo "target: $HOST:$PORT/tcp"
+        echo "health: $HEALTH"
+        body="$(fetch_health || true)"
+        if [ -n "$body" ]; then
+            echo "OK    relay health reachable"
+            printf '%s\n' "$body"
+        else
+            echo "PLAN  relay is not reachable yet; this does not affect current SOCX telemetry."
+            echo "      Install pi/install_socx_evidence_relay.sh on ColumbiaPi4, then configure pfSense remote syslog after review."
+        fi
+        ;;
+    plan)
+        cat <<EOF
+SOCX REMOTE EVIDENCE RELAY PLAN
+
+Target: $HOST:$PORT/tcp
+
+1. Install the LAN-restricted relay on Pi 4 with pi/install_socx_evidence_relay.sh.
+2. Verify with: socx evidence-relay status
+3. In pfSense Status > System Logs > Settings, add the target as remote syslog.
+4. Select only the useful facilities first: system, gateway, firewall, DNS resolver, and IDS.
+5. Keep the target on the trusted LAN or a VPN. Do not expose TCP/$PORT on WAN.
+6. Confirm the relay health and daily SHA-256 manifests before relying on it for incidents.
+
+SOCX intentionally does not auto-edit remote logging or firewall policy.
+EOF
+        ;;
+    *)
+        echo "Usage: socx evidence-relay [status|plan]" >&2
+        exit 2
+        ;;
+esac

@@ -18,6 +18,7 @@ const esc = (value) => String(value ?? "--").replace(/[&<>"']/g, (c) => ({
 const pageName = () => {
   const path = location.pathname.replace(/^\/+/, "").toLowerCase();
   if (path.includes("flow")) return "flows";
+  if (path.includes("gateway-truth")) return "gateway-truth";
   if (path === "device") return "device";
   if (path.includes("device")) return "devices";
   if (path.includes("incident-report")) return "incident-report";
@@ -700,6 +701,37 @@ function renderFlightRecorder(state, recorder) {
     card("How To Use It", table(["#", "Operator Guidance"], (recorder.next || []).map((item, index) => [index + 1, item]))),
     card("Recorder Links", `<div class="story-actions"><a href="/replay?window=21600">Open 6h Replay</a><a href="/replay?window=259200">Open 72h Replay</a><a href="/evidence">Open Evidence</a><a href="/timeline">Open Timeline</a></div>`),
     card("Ask SOCX", `<div class="ask-list"><div><span>Ask whether the retained data is strong enough for an investigation.</span>${askButton("Is SOCX Flight Recorder continuity good enough to investigate the last 72 hours? Explain any gaps, uncertainty, and the safest evidence-preservation step.")}</div></div>`),
+  ].join("");
+  wireAskButtons();
+}
+
+function renderGatewayTruth(state, truth) {
+  title.textContent = "SOCX GATEWAY TRUTH LAB";
+  subtitle.textContent = `${state.hostname || "pfSense"} / dpinger + path evidence / read-only`;
+  const rows = (truth.rows || []).map((row) => [
+    row.name || "--",
+    row.state || row.status || "--",
+    row.monitor || "--",
+    row.monitor_scope || "--",
+    row.latency_ms === null || row.latency_ms === undefined ? "--" : `${Number(row.latency_ms).toFixed(2)} ms`,
+    row.loss_pct === null || row.loss_pct === undefined ? "--" : `${Number(row.loss_pct).toFixed(1)}%`,
+    row.source || "--",
+  ]);
+  const evidence = (truth.evidence || []).map((item) => [item.signal || "--", item.state || "--", item.detail || "--"]);
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Route Verdict", [
+      `<div class="detail-score ${esc(truth.tone || "cyan")}">${esc(truth.label || "UNKNOWN")} ${esc(truth.score ?? "--")}/100</div>`,
+      `<div class="detail-reason">${esc(truth.summary || "Gateway telemetry is warming up.")}</div>`,
+      kv("Freshness", `${truth.age_sec ?? "--"}s`, Number(truth.age_sec || 0) <= 10 ? "green" : "yellow"),
+      kv("Mode", truth.read_only ? "read-only" : "--", "cyan"),
+    ].join("")),
+    card("Live Gateway Monitors", table(["Gateway", "State", "Monitor", "Scope", "Latency", "Loss", "Source"], rows)),
+    card("Evidence Agreement", table(["Signal", "State", "What It Says"], evidence)),
+    card("How To Read It", table(["#", "Guidance"], (truth.guidance || []).map((item, index) => [index + 1, item]))),
+    card("Safe Drilldowns", `<div class="story-actions"><a href="/speedtest">Open Speedtest</a><a href="/observability">Open Pi 4 Metrics</a><a href="/doctor">Open Doctor</a><a href="/flight-recorder">Open Recorder</a></div>`),
+    card("Ask SOCX", `<div class="ask-list"><div><span>Ask why live gateway and Speedtest evidence agree or differ.</span>${askButton("Explain the current Gateway Truth Lab results in plain English. Tell me what dpinger, direct Speedtest, VPN Speedtest, and retained metrics agree on, what they do not prove, and the safest next step. Do not propose an automatic configuration change.")}</div></div>`),
   ].join("");
   wireAskButtons();
 }
@@ -2081,6 +2113,7 @@ function renderObservability(state) {
   const obs = state.observability || {};
   const intel = state.metrics_intel || {};
   const latest = obs.latest || {};
+  const relay = obs.evidence_relay || {};
   const measurementRows = (obs.measurements || []).slice(0, 24).map((m) => [m, (obs.core_measurements || []).includes(m) ? "core" : "extra"]);
   const sampleRows = [
     ["CPU", latest.cpu ? `${Number(latest.cpu.last || 0).toFixed(1)} user / ${Number(latest.cpu.last_1 || 0).toFixed(1)} system` : "--"],
@@ -2120,6 +2153,15 @@ function renderObservability(state) {
       kv("Summary", obs.summary || "--", obs.tone || "cyan"),
       ...(obs.errors || []).map((err) => kv("Error", err, "red")),
     ].join("")),
+    card("Remote Evidence Relay", [
+      kv("State", relay.label || "STAGED", relay.ok ? "green" : "cyan"),
+      kv("Target", relay.url || "--", "cyan"),
+      kv("Retained Files", relay.files ?? 0, relay.ok ? "green" : "cyan"),
+      kv("SHA-256 Manifests", relay.manifest_count ?? 0, relay.ok ? "green" : "cyan"),
+      kv("Detail", relay.detail || "--", relay.ok ? "green" : "cyan"),
+      relay.error ? kv("Relay Note", relay.error, "yellow") : "",
+      `<div class="detail-reason">The relay is optional and LAN-restricted. SOCX never enables pfSense remote syslog or opens firewall access automatically.</div>`,
+    ].join("")),
   ].join("");
 }
 
@@ -2149,6 +2191,9 @@ async function refresh() {
     : null;
   const flightRecorder = page === "flight-recorder"
     ? await fetch("/api/flight-recorder", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const gatewayTruth = page === "gateway-truth"
+    ? await fetch("/api/gateway-truth", { cache: "no-store" }).then((r) => r.json())
     : null;
   const threatMap = page === "map"
     ? await fetch("/api/threat-map", { cache: "no-store" }).then((r) => r.json())
@@ -2289,6 +2334,7 @@ async function refresh() {
   else if (page === "flows") renderFlowsPage(state, flowsData || {});
   else if (page === "replay") renderReplay(state, replay || {});
   else if (page === "flight-recorder") renderFlightRecorder(state, flightRecorder || {});
+  else if (page === "gateway-truth") renderGatewayTruth(state, gatewayTruth || {});
   else if (page === "map") renderThreatMap(state, threatMap || {});
   else if (page === "devices") renderDevices(state);
   else if (page === "incidents") renderIncidents(state);

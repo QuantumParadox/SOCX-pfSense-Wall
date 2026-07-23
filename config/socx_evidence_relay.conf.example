@@ -1,0 +1,5 @@
+# SOCX Pi 4 evidence relay target. The relay accepts only the listed pfSense
+# source address and is designed for a trusted LAN or VPN, not Internet exposure.
+SOCX_EVIDENCE_RELAY_HOST="192.168.1.180"
+SOCX_EVIDENCE_RELAY_PORT="5514"
+SOCX_EVIDENCE_RELAY_HEALTH_URL="http://192.168.1.180:8097/health"

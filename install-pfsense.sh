@@ -54,6 +54,7 @@ install -m 0755 "$ROOT/scripts/socx-suricata-eve" /usr/local/bin/socx-suricata-e
 install -m 0755 "$ROOT/scripts/socx-lldp-map" /usr/local/bin/socx-lldp-map
 install -m 0755 "$ROOT/scripts/socx-config-drift" /usr/local/bin/socx-config-drift
 install -m 0755 "$ROOT/scripts/socx-evidence-vault" /usr/local/bin/socx-evidence-vault
+install -m 0755 "$ROOT/scripts/socx-evidence-relay" /usr/local/bin/socx-evidence-relay
 install -m 0755 "$ROOT/scripts/socx-quarantine-draft" /usr/local/bin/socx-quarantine-draft
 install -m 0755 "$ROOT/scripts/socx-autonomy-loop" /usr/local/bin/socx-autonomy-loop
 install -m 0755 "$ROOT/scripts/socx-autonomy-cron" /usr/local/bin/socx-autonomy-cron
@@ -105,6 +106,9 @@ if [ ! -f /usr/local/etc/socx_speedtest_paths.conf ]; then
 fi
 if [ ! -f /usr/local/etc/socx_observability.conf ]; then
     install -m 0644 "$ROOT/config/socx_observability.conf.example" /usr/local/etc/socx_observability.conf
+fi
+if [ ! -f /usr/local/etc/socx_evidence_relay.conf ]; then
+    install -m 0644 "$ROOT/config/socx_evidence_relay.conf.example" /usr/local/etc/socx_evidence_relay.conf
 fi
 
 echo "SOCX pfSense Wall installed."

@@ -355,6 +355,8 @@ class SocxCollector:
         self.release_health_cache: dict[str, Any] = {}
         self.observability_checked = 0.0
         self.observability_cache: dict[str, Any] = {}
+        self.gateway_truth_checked = 0.0
+        self.gateway_truth_cache: dict[str, Any] = {}
         self.metrics_intel_checked = 0.0
         self.metrics_intel_cache: dict[str, Any] = {}
         self.autonomy_loop_checked = 0.0
@@ -889,6 +891,7 @@ class SocxCollector:
             return cached
 
         cfg = parse_env_file(Path(os.environ.get("SOCX_OBSERVABILITY_CONF", "/usr/local/etc/socx_observability.conf")))
+        relay_cfg = parse_env_file(Path(os.environ.get("SOCX_EVIDENCE_RELAY_CONF", "/usr/local/etc/socx_evidence_relay.conf")))
         host = cfg.get("SOCX_OBSERVABILITY_HOST") or os.environ.get("SOCX_OBSERVABILITY_HOST", "ColumbiaPi4")
         grafana_url = (cfg.get("SOCX_GRAFANA_URL") or os.environ.get("SOCX_GRAFANA_URL", "http://192.168.1.180:3000")).rstrip("/")
         influx_url = (cfg.get("SOCX_INFLUX_URL") or os.environ.get("SOCX_INFLUX_URL", "http://192.168.1.180:8086")).rstrip("/")
@@ -914,6 +917,8 @@ class SocxCollector:
 
         grafana_ok, grafana_health, grafana_error = get_json(f"{grafana_url}/api/health")
         influx_ok, influx_error = http_ok(f"{influx_url}/ping", {204})
+        relay_url = (relay_cfg.get("SOCX_EVIDENCE_RELAY_HEALTH_URL") or os.environ.get("SOCX_EVIDENCE_RELAY_HEALTH_URL", "http://192.168.1.180:8097/health")).rstrip("/")
+        relay_ok, relay_health, relay_error = get_json(relay_url)
 
         measurements: list[str] = []
         latest: dict[str, Any] = {}
@@ -979,6 +984,16 @@ class SocxCollector:
             "influx_ok": influx_ok,
             "telegraf_ok": telegraf_ok,
             "telegraf_target": telegraf_target,
+            "evidence_relay": {
+                "label": "READY" if relay_ok else "STAGED",
+                "ok": relay_ok,
+                "url": relay_url,
+                "files": relay_health.get("files", 0),
+                "latest_age_seconds": relay_health.get("latest_age_seconds"),
+                "manifest_count": relay_health.get("manifest_count", 0),
+                "detail": "Pi 4 remote evidence relay healthy" if relay_ok else "optional Pi 4 relay is staged; current Grafana/Influx telemetry remains live",
+                "error": relay_error if not relay_ok else "",
+            },
             "measurements": measurements[:40],
             "core_measurements": core_present,
             "latest": latest,
@@ -987,6 +1002,113 @@ class SocxCollector:
         }
         self.observability_cache = result
         self.observability_checked = now
+        return result
+
+    def collect_gateway_truth_lab(self) -> dict[str, Any]:
+        """Compare current gateway telemetry with retained path evidence.
+
+        This is deliberately observational. It never changes a gateway monitor,
+        routing rule, VPN policy, or firewall rule.
+        """
+        now = time.time()
+        ttl = env_int("SOCX_GATEWAY_TRUTH_POLL_SECONDS", 5)
+        if self.gateway_truth_cache and now - self.gateway_truth_checked < ttl:
+            cached = dict(self.gateway_truth_cache)
+            cached["age_sec"] = int(max(0, now - float(cached.get("updated") or now)))
+            return cached
+
+        raw = run_cmd("/usr/local/sbin/configctl interface gatewaystatus 2>/dev/null || configctl interface gatewaystatus 2>/dev/null || /usr/local/sbin/pfSsh.php playback gatewaystatus 2>/dev/null", timeout=3.0)
+        rows: list[dict[str, Any]] = []
+        for line in raw.splitlines():
+            if not line.strip() or line.lower().startswith("name"):
+                continue
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+            latency_match = re.search(r"([0-9.]+)ms", line, re.I)
+            loss_match = re.search(r"([0-9.]+)%", line)
+            status_match = re.search(r"\b(online|offline|down|alarm|pending|unknown)\b", line, re.I)
+            name = parts[0]
+            monitor = parts[1] if len(parts) > 1 else "--"
+            source = parts[2] if len(parts) > 2 else "--"
+            latency = float(latency_match.group(1)) if latency_match else None
+            loss = float(loss_match.group(1)) if loss_match else None
+            status = (status_match.group(1).upper() if status_match else "UNKNOWN")
+            if status in {"OFFLINE", "DOWN", "ALARM"} or (loss is not None and loss >= 100):
+                state, tone = "DOWN", "red"
+            elif status in {"PENDING", "UNKNOWN"}:
+                state, tone = "UNKNOWN", "yellow"
+            elif (loss is not None and loss > 0) or (latency is not None and latency >= 50):
+                state, tone = "WATCH", "yellow"
+            else:
+                state, tone = "OK", "green"
+            private_monitor = bool(re.match(r"^(10\.|127\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)", monitor))
+            rows.append({
+                "name": name,
+                "monitor": monitor,
+                "source": source,
+                "latency_ms": latency,
+                "loss_pct": loss,
+                "status": status,
+                "state": state,
+                "tone": tone,
+                "monitor_scope": "local/CPE" if private_monitor else "upstream/Internet",
+                "raw": line.strip(),
+            })
+
+        snap = self.snapshot()
+        center = snap.get("command_center", {}) if isinstance(snap.get("command_center"), dict) else {}
+        speed_truth = center.get("speed_truth", {}) if isinstance(center.get("speed_truth"), dict) else {}
+        direct = center.get("direct", {}) if isinstance(center.get("direct"), dict) else {}
+        vpn = center.get("vpn", {}) if isinstance(center.get("vpn"), dict) else {}
+        observability = self.collect_observability()
+        ping = observability.get("latest", {}).get("ping", {}) if isinstance(observability.get("latest"), dict) else {}
+        ping_value = ping.get("last") if isinstance(ping, dict) else None
+
+        bad = sum(1 for row in rows if row["state"] == "DOWN")
+        watch = sum(1 for row in rows if row["state"] in {"WATCH", "UNKNOWN"})
+        if not rows:
+            label, tone, score = "UNKNOWN", "yellow", 45
+            summary = "No gateway-status rows were returned; SOCX will not assume WAN or VPN health."
+        elif bad:
+            label, tone, score = "DEGRADED", "red", max(0, 70 - bad * 35 - watch * 8)
+            summary = f"{bad}/{len(rows)} monitored gateway(s) are down or at 100% loss."
+        elif watch:
+            label, tone, score = "WATCH", "yellow", max(55, 92 - watch * 12)
+            summary = f"{watch}/{len(rows)} monitored gateway(s) show latency, loss, or an uncertain state."
+        else:
+            label, tone, score = "TRUSTED", "green", 96
+            summary = f"{len(rows)}/{len(rows)} monitored gateway(s) are online with no current loss alarm."
+
+        speed_state = str(speed_truth.get("label") or "WAIT").upper()
+        speed_tone = "green" if speed_state in {"MATCH", "READY", "DIRECT"} else "yellow"
+        evidence = [
+            {"signal": "dpinger gateway", "state": label, "detail": summary, "tone": tone},
+            {"signal": "Direct Speedtest", "state": direct.get("path_state") or direct.get("status") or "WAIT", "detail": f"{direct.get('down') or '--'}/{direct.get('up') or '--'} Mbps {direct.get('ping') or '--'}ms", "tone": "green" if str(direct.get("status") or "").lower() == "ok" else "yellow"},
+            {"signal": "VPN Speedtest", "state": vpn.get("path_state") or vpn.get("status") or "OPTIONAL", "detail": f"{vpn.get('down') or '--'}/{vpn.get('up') or '--'} Mbps {vpn.get('ping') or '--'}ms", "tone": "green" if str(vpn.get("status") or "").lower() == "ok" else "cyan"},
+            {"signal": "Metrics ping", "state": "READY" if ping_value is not None else "WAIT", "detail": f"{float(ping_value):.2f} ms from Pi 4 InfluxDB" if ping_value is not None else "no retained ping series", "tone": "green" if ping_value is not None else "yellow"},
+            {"signal": "Speedtest truth", "state": speed_state, "detail": speed_truth.get("summary") or "path comparison waiting", "tone": speed_tone},
+        ]
+        result = {
+            "title": "SOCX Gateway Truth Lab",
+            "label": label,
+            "tone": tone,
+            "score": score,
+            "summary": summary,
+            "updated": now,
+            "age_sec": 0,
+            "rows": rows,
+            "evidence": evidence,
+            "read_only": True,
+            "guidance": [
+                "Gateway Truth compares live dpinger data with Speedtest and retained metrics; it never edits routes or firewall policy.",
+                "Use a unique upstream or Internet monitor IP for each gateway. A monitor that only reaches the local CPE is less useful for proving wider Internet health.",
+                "Treat a VPN Speedtest as optional unless that VPN path is deliberately enabled and selected for testing.",
+                "When signals disagree, preserve evidence first, then inspect the Gateway and Speedtest pages before changing monitor thresholds.",
+            ],
+        }
+        self.gateway_truth_cache = result
+        self.gateway_truth_checked = now
         return result
 
     def collect_metrics_intel(self) -> dict[str, Any]:
@@ -6341,6 +6463,9 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/observability":
             self.send_json(self.collector.collect_observability())
             return
+        if parsed.path == "/api/gateway-truth":
+            self.send_json(self.collector.collect_gateway_truth_lab())
+            return
         if parsed.path == "/api/metrics-intel":
             self.send_json(self.collector.collect_metrics_intel())
             return
@@ -6624,7 +6749,7 @@ class SocxHandler(BaseHTTPRequestHandler):
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/memory", "/twin", "/automation", "/timeline", "/movie", "/projects", "/glitches", "/wall-health", "/review-queue", "/owner-map", "/owner-editor", "/packet-noise", "/confidence", "/incident-focus", "/maintenance", "/mission-console", "/config-sim", "/baseline", "/since-yesterday", "/daily-brief", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/flight-recorder", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
+        if path in {"/speedtest", "/gateway-truth", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/memory", "/twin", "/automation", "/timeline", "/movie", "/projects", "/glitches", "/wall-health", "/review-queue", "/owner-map", "/owner-editor", "/packet-noise", "/confidence", "/incident-focus", "/maintenance", "/mission-console", "/config-sim", "/baseline", "/since-yesterday", "/daily-brief", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/flight-recorder", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"

@@ -1,0 +1,15 @@
+[Unit]
+Description=SOCX Pi 4 LAN evidence relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=SOCX_EVIDENCE_ALLOWED_SOURCES=192.168.1.1,127.0.0.1
+Environment=SOCX_EVIDENCE_RETENTION_DAYS=30
+ExecStart=/usr/bin/python3 /opt/socx-pi-evidence-relay/socx_pi4_evidence_relay.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

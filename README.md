@@ -141,6 +141,7 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Upgrades the Daily SOC Brief into a wall-safe SOCX Morning Brief with headline, What Changed, Security, Metrics, Speed, AI/Fleet, and safe next steps.
 - Adds `socx tmux`, a pfSense-safe tmux session hub with optional lazy-tmux detection. It can list/attach SOCX sessions, start the wall, and write a conservative lazy-tmux guardrail config without making lazy-tmux a required dependency.
 - Adds Pi 4 observability support with `pi/install_socx_observability.sh` for InfluxDB/Grafana, `socx-telegraf-target.php` for pointing pfSense Telegraf at the external metrics host, and `socx observability` for quick health checks.
+- Adds a staged Pi 4 Evidence Relay: `pi/install_socx_evidence_relay.sh` accepts LAN-restricted TCP syslog only from pfSense, writes raw JSONL records with per-message hashes, rotates them, and emits daily SHA-256 manifests. `socx evidence-relay [status|plan]` remains read-only and never enables pfSense remote logging by itself.
 - Adds SOCX Metrics Intelligence with `socx metrics-intel`, `/api/metrics-intel`, and browser Metrics/Observability cards that explain Grafana/Influx trends in plain English.
 - Adds `socx metrics-ai --pi`, a read-only Pi AI narration hook for asking the Pi 5 LLM operator endpoint to explain pfSense metric changes and safest next actions.
 - Adds a pfSense power-user pack: `socx flow-export`, `socx eve`, `socx topology`, `socx drift`, `socx vault`, and `socx quarantine`. These cover NetFlow/IPFIX planning, Suricata EVE summaries, LLDP topology, config drift, hashed evidence capture, and approval-only quarantine drafting.
@@ -228,6 +229,7 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - `scripts/socx-speedtest-history` - summarizes Speedtest JSONL history by DIRECT/VPN path.
 - `scripts/socx-telegraf-target.php` - pfSense helper that backs up config.xml, updates the Telegraf InfluxDB target, and regenerates/restarts Telegraf through the package hook.
 - `scripts/socx-observability` - quick pfSense-side status check for external Grafana, InfluxDB, Telegraf, and core measurements.
+- `scripts/socx-evidence-relay` - read-only Pi 4 evidence relay status and reviewed remote-syslog plan.
 - `scripts/socx-metrics-intel` - reads the Pi 4 InfluxDB/Grafana stack and explains metric health, watch items, and safe next steps.
 - `scripts/socx-flow-export` - read-only NetFlow/IPFIX/softflowd status and configuration plan for exporting flows to the Pi observability stack.
 - `scripts/socx-suricata-eve` - parses recent Suricata EVE JSON alerts and summarizes high/medium/low IDS signals, top signatures, services, sources, and destinations.
@@ -278,6 +280,7 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - `scripts/socx-ai-explain` - operator command that refreshes Pi/MIRANDA analysis and prints a plain-English summary.
 - `pi/socx_pi_llm_orchestrator.py` - optional Raspberry Pi FastAPI receiver that fans SOCX evidence to three local model roles.
 - `pi/socx_pi_sidecar.py` - lightweight standard-library Pi telemetry endpoint for Pi 4/Pi fleet health on port `8096`.
+- `pi/socx_pi4_evidence_relay.py` - LAN-restricted TCP syslog evidence relay for Pi 4 on port `5514`, with health on `8097` and daily integrity manifests.
 - `pi/install_socx_observability.sh` - Pi 4 Docker Compose installer for SOCX InfluxDB/Grafana with a starter pfSense dashboard.
 - Browser wall Command Center - includes safe click/voice actions, Speedtest truth comparison, and the compact Pi Fleet link visualizer.
 - Browser detail pages - `/speedtest`, `/devices`, `/incidents`, and `/ai` expand the wall's main signals into readable evidence views.
