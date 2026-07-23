@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added a Research-SOC layer with `/coverage`, `/hunts`, `/rules-lab`, `/soc-score`, `/model-tournament`, and matching JSON APIs.
+- Added ATT&CK/D3FEND coverage scoring for current firewall, DNSBL, IDS, flow, and device-drift visibility.
+- Added guided Threat Hunt Mode hypotheses for scan pressure, DNSBL false positives, internal device drift, IDS correlation, and collector freshness.
+- Added a draft-only Detection Rule Lab for Suricata, Sigma, YARA artifact seeds, pfBlockerNG review ideas, and device-profile review guardrails.
+- Added a NIST/CISA-inspired SOC maturity score across Govern, Identify, Protect, Detect, Respond, Recover, AI SOC, and Data Truth.
+- Added Pi AI Model Tournament view plus browser/voice Commander hooks for bounded Pi model compare/bench/explain tests.
 - Added `/device` and `/api/device-detail`, a focused per-asset readout with friendly identity, trust score, likely apps/services, unusual observations, current flows, packet evidence, and safe operator questions.
 - Added `/incident-report` and `/api/incident-report`, a read-only Markdown incident report generator built from the current threat story, evidence cards, timeline, and safe next steps.
 - Changed `socx-autonomy-cron` to a 15-minute default loop and exposed autonomy interval/next-run timing through the web state API.

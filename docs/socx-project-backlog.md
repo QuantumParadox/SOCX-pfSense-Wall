@@ -23,7 +23,7 @@ This is the standing roadmap for SOCX, pfSense, the Pi 5 AI node, the Pi 4 obser
 - Add Suricata alert clustering by signature, source, destination, and affected internal host.
 - Add DNSBL explainers that distinguish ads, telemetry, malware, phishing, CDN noise, and false-positive candidates.
 - Add local reputation memory so repeated blocked sources get a stable reputation score without external lookups.
-- Add MITRE ATT&CK/D3FEND drilldowns for each incident cluster with defensive next steps.
+- Add MITRE ATT&CK/D3FEND drilldowns for each incident cluster with defensive next steps. Coverage v1 now maps core SOCX visibility to ATT&CK/D3FEND and shows blind spots.
 - Add CISA KEV watch cards for exposed services, package versions, and high-interest ports.
 
 ## 4. Safe AI Operator Console
@@ -31,14 +31,14 @@ This is the standing roadmap for SOCX, pfSense, the Pi 5 AI node, the Pi 4 obser
 - Add evidence tabs to the full SOCX Chat page: Summary, Evidence, Why, Plan, Commands, Risks, and Cockpit context.
 - Stream LLM role reasoning as visible stages: triage, evidence, action, safety review, final answer.
 - Expand "explain this row" everywhere: packets, flows, devices, IDS, DNSBL, Speedtest, VPN, UPS, replay bookmarks, and Threat Story evidence cards. Device Detail v1 and Incident Report v1 are now live as first focused drilldowns.
-- Add approval cards for draft firewall aliases, DNSBL allowlist candidates, IDS threshold changes, and quarantine plans.
+- Add approval cards for draft firewall aliases, DNSBL allowlist candidates, IDS threshold changes, and quarantine plans. Rules Lab v1 now creates draft-only Suricata/Sigma/YARA/DNSBL/device-profile ideas with guardrails.
 - Add a safety ledger showing which requests were answered, denied, or converted into draft-only plans.
 
 ## 5. Pi 5 AI HAT Lab
 
 - Extend the Hailo role benchmark dashboard with exported history for latency, tokens/sec equivalent, thermal pressure, and model availability.
 - Add model routing tests for firewall triage, DNSBL evidence, rule drafting, complex investigation, voice, and fallback CPU Ollama. Initial `bench`, `explain`, and `compare` launchers are now wired through pfSense and the browser Commander.
-- Expand the current `COMPARE` lab into a full "model tournament" mode where the Pi compares small models on the same SOCX evidence bundle.
+- Expand the current `COMPARE` lab into a full "model tournament" mode where the Pi compares small models on the same SOCX evidence bundle. Model Tournament v1 now exposes model-route readiness and launches bounded Pi Compare/Bench/Explain tests.
 - Add a Pi thermal stress lab with fan/temperature/load timelines and safe abort limits.
 - Add replay/export controls for the current slow visual "thinking radar" so role timelines can be preserved with incident bundles.
 
@@ -76,7 +76,7 @@ This is the standing roadmap for SOCX, pfSense, the Pi 5 AI node, the Pi 4 obser
 
 ## 10. Research-Lab Features
 
-- Add mission-assurance scoring inspired by CISA, NIST CSF, MITRE ATT&CK, and D3FEND.
+- Add mission-assurance scoring inspired by CISA, NIST CSF, MITRE ATT&CK, and D3FEND. SOC Score v1 now maps SOCX into Govern, Identify, Protect, Detect, Respond, Recover, AI SOC, and Data Truth functions.
 - Add evidence-preserving incident bundles that produce a readable mini-report and machine-readable JSON. Incident Report v1 now generates a browser-readable Markdown report from current SOCX threat-story evidence.
 - Add Sigma/YARA/Suricata rule-draft assistants that generate draft rules from evidence, never live changes.
 - Add CAPEC/CWE/CVE/CVSS/EPSS/KEV enrichment for relevant IDS or exposed-service findings.

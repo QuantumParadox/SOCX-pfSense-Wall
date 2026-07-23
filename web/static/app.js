@@ -796,6 +796,8 @@ function commanderActionFromSpeech(text) {
   if (/(why metrics|metrics why|metric intelligence|metrics intel)/.test(value)) return "metrics-intel";
   if (/(grafana|influx|telegraf|metrics|observability)/.test(value)) return "observability";
   if (/(autonomy loop|brainstem|autonomous|autonomy)/.test(value)) return "autonomy";
+  if (/(model tournament|tournament|pi compare|model compare|compare models)/.test(value)) return "model-tournament";
+  if (/(pi bench|role benchmark|benchmark pi)/.test(value)) return "pi-bench";
   if (/(pi|raspberry|ai|llm)/.test(value)) return "pi";
   if (/(explain|why|summary|plain english)/.test(value)) return "explain";
   if (/(cockpit|operator cockpit|mobile view|tablet view)/.test(value)) {
@@ -813,8 +815,6 @@ function commanderActionFromSpeech(text) {
   if (/(speed history|bandwidth history|speed trend)/.test(value)) return "speed-history";
   if (/(memory|repeat|repeated|baseline)/.test(value)) return "memory";
   if (/(lab|experiment|pulse|benchmark)/.test(value)) return "lab";
-  if (/(pi bench|role benchmark|benchmark pi)/.test(value)) return "pi-bench";
-  if (/(pi compare|model compare|compare models|tournament)/.test(value)) return "pi-compare";
   if (/(status|health|doctor)/.test(value)) return "status";
   return "";
 }

@@ -21,6 +21,11 @@ const pageName = () => {
   if (path === "device") return "device";
   if (path.includes("device")) return "devices";
   if (path.includes("incident-report")) return "incident-report";
+  if (path.includes("coverage")) return "coverage";
+  if (path.includes("hunts")) return "hunts";
+  if (path.includes("rules-lab")) return "rules-lab";
+  if (path.includes("soc-score")) return "soc-score";
+  if (path.includes("model-tournament") || path.includes("research-soc")) return "model-tournament";
   if (path.includes("incident")) return "incidents";
   if (path.includes("why")) return "why";
   if (path.includes("story")) return "story";
@@ -187,6 +192,26 @@ async function runContextAsk(question) {
   } catch (err) {
     out.textContent = `SOCX chat error: ${err}`;
   }
+}
+
+function wireResearchCommands() {
+  const out = document.getElementById("research-command-output");
+  document.querySelectorAll("[data-command-action]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const action = button.getAttribute("data-command-action") || "";
+      if (out) out.textContent = `Running ${action} through read-only Commander...`;
+      try {
+        const result = await fetch("/api/commander", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action }),
+        }).then((r) => r.json());
+        if (out) out.textContent = `${result.title || action} ${result.ok ? "OK" : "WARN"}\n${result.output || "No output returned."}`;
+      } catch (err) {
+        if (out) out.textContent = `Command failed: ${err}`;
+      }
+    });
+  });
 }
 
 function wireAskButtons() {
@@ -1009,6 +1034,131 @@ function renderIncidentReport(state, report) {
   ].join("");
 }
 
+function renderCoverage(state, coverage) {
+  title.textContent = "SOCX ATT&CK COVERAGE";
+  subtitle.textContent = `${state.hostname || "pfSense"} / visibility map / read-only`;
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Coverage Score", [
+      `<div class="detail-score ${coverage.score >= 75 ? "green" : coverage.score >= 55 ? "yellow" : "red"}">${esc(coverage.label || "WATCH")} ${esc(coverage.score ?? "--")}/100</div>`,
+      `<div class="detail-reason">${esc(coverage.summary || "Coverage map waiting.")}</div>`,
+    ].join("")),
+    card("Technique Visibility", table(["ATT&CK", "Technique", "Tactic", "Visibility", "Score", "Signal"], (coverage.rows || []).map((r) => [
+      r.technique,
+      r.name,
+      r.tactic,
+      r.visibility,
+      r.score,
+      r.signal,
+    ]))),
+    card("D3FEND / Gaps", table(["Technique", "Defense", "Gap"], (coverage.rows || []).map((r) => [r.technique, r.defense, r.gap]))),
+    card("Blind Spots", table(["ATT&CK", "Name", "Gap"], (coverage.blind_spots || []).map((r) => [r.technique, r.name, r.gap]))),
+    card("Safe Next Steps", table(["#", "Action"], (coverage.next || []).map((x, idx) => [idx + 1, x]))),
+    card("Ask SOCX", `<div class="why-targets">${[
+      "Which ATT&CK blind spot matters most for my home lab?",
+      "How do I improve SOCX detection coverage without making pfSense unstable?",
+      "Explain the ATT&CK and D3FEND rows in plain English.",
+    ].map((q) => `<button class="why-target-button" data-ask="${esc(q)}">${esc(q)}</button>`).join("")}</div>`),
+  ].join("");
+  wireAskButtons();
+}
+
+function renderHunts(state, hunts) {
+  title.textContent = "SOCX THREAT HUNTS";
+  subtitle.textContent = `${state.hostname || "pfSense"} / guided hypotheses / read-only`;
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Hunt Mode", [
+      `<div class="detail-score ${hunts.mode === "HUNT" ? "yellow" : "green"}">${esc(hunts.mode || "OBSERVE")}</div>`,
+      `<div class="detail-reason">${esc(hunts.summary || "No hunt state yet.")}</div>`,
+    ].join("")),
+    card("Hypotheses", table(["Hunt", "Status", "Hypothesis", "Evidence", "Next"], (hunts.rows || []).map((h) => [
+      h.hunt,
+      h.status,
+      h.hypothesis,
+      h.evidence,
+      h.next,
+    ]))),
+    card("Ask SOCX", `<div class="why-targets">${(hunts.questions || []).map((q) => `<button class="why-target-button" data-ask="${esc(q)}">${esc(q)}</button>`).join("")}</div>`),
+  ].join("");
+  wireAskButtons();
+}
+
+function renderRulesLab(state, lab) {
+  title.textContent = "SOCX RULES LAB";
+  subtitle.textContent = `${state.hostname || "pfSense"} / draft-only detections / approval required`;
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Rules Lab", [
+      `<div class="detail-reason">${esc(lab.summary || "Draft lab waiting.")}</div>`,
+      table(["Guardrail", "Meaning"], (lab.guardrails || []).map((g, idx) => [`${idx + 1}`, g])),
+    ].join("")),
+    ...(lab.drafts || []).map((d) => card(`${d.type}: ${d.name}`, [
+      kv("Status", d.status || "draft-only", d.status === "approval-required" ? "yellow" : "cyan"),
+      kv("Confidence", d.confidence || "low", d.confidence === "medium" ? "yellow" : "cyan"),
+      `<pre class="why-output incident-report-md">${esc(d.rule || "--")}</pre>`,
+      `<div class="detail-reason">${esc(d.risk || "Review before use.")}</div>`,
+      askButton(`Review this draft-only ${d.type} SOCX rule. Explain what it does, false-positive risk, and what evidence I should preserve before using it. Rule: ${d.rule || ""}`, "Ask About Draft"),
+    ].join(""))),
+    card("ATT&CK Context", table(["Signal", "Priority", "ATT&CK", "D3FEND", "Evidence"], (lab.intel_rows || []).map((r) => [
+      r.signal,
+      r.priority,
+      `${r.attack?.id || "--"} ${r.attack?.name || ""}`,
+      r.d3fend?.name || "--",
+      r.evidence || "--",
+    ]))),
+  ].join("");
+  wireAskButtons();
+}
+
+function renderSocScore(state, score) {
+  title.textContent = "SOCX SOC SCORE";
+  subtitle.textContent = `${state.hostname || "pfSense"} / CISA and NIST inspired lab score / read-only`;
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Maturity Score", [
+      `<div class="detail-score ${score.score >= 80 ? "green" : score.score >= 65 ? "yellow" : "red"}">${esc(score.label || "WATCH")} ${esc(score.score ?? "--")}/100</div>`,
+      `<div class="detail-reason">${esc(score.summary || "SOC score waiting.")}</div>`,
+    ].join("")),
+    card("Functions", table(["Function", "Score", "Why"], (score.rows || []).map((r) => [r.function, r.score, r.why]))),
+    card("Top Gaps", table(["Function", "Score", "Why"], (score.top_gaps || []).map((r) => [r.function, r.score, r.why]))),
+    card("Safe Next Steps", table(["#", "Action"], (score.next || []).map((x, idx) => [idx + 1, x]))),
+  ].join("");
+  wireAskButtons();
+}
+
+function renderModelTournament(state, tournament) {
+  title.textContent = "SOCX MODEL TOURNAMENT";
+  subtitle.textContent = `${state.hostname || "pfSense"} / Pi 5 AI route tests / read-only`;
+  const exp = tournament.experiment || {};
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Tournament", [
+      `<div class="detail-reason">${esc(tournament.summary || "Model tournament waiting.")}</div>`,
+      table(["Experiment", "State", "Progress", "Result"], [[exp.kind || "--", exp.active ? "running" : (exp.status || "--"), exp.progress ?? "--", exp.result || "--"]]),
+      `<div class="story-actions"><button class="why-target-button" data-command-action="model-tournament">Run Compare</button><button class="why-target-button" data-command-action="pi-bench">Run Bench</button><button class="why-target-button" data-command-action="pi-explain">Explain Pulse</button></div>`,
+      `<pre id="research-command-output" class="why-output">No Pi lab command has run from this page yet.</pre>`,
+    ].join("")),
+    card("Model Routes", table(["Node", "Role", "Model", "Backend", "State", "Summary"], (tournament.rows || []).map((r) => [
+      r.node,
+      r.role,
+      r.model,
+      r.backend,
+      r.state,
+      r.summary,
+    ]))),
+    card("Recommended Tests", table(["Test", "Preferred", "Why"], (tournament.benchmarks || []).map((b) => [b.test, b.preferred, b.why]))),
+    card("Commands", table(["#", "Command"], (tournament.commands || []).map((cmd, idx) => [idx + 1, cmd]))),
+  ].join("");
+  wireAskButtons();
+  wireResearchCommands();
+}
+
 function renderFlowsPage(state, data) {
   title.textContent = "SOCX NETFLOW STORY";
   subtitle.textContent = `${state.hostname || "pfSense"} / NetFlow, top talkers, device trust / ${new Date().toLocaleTimeString()}`;
@@ -1236,11 +1386,31 @@ async function refresh() {
   const incidentReport = page === "incident-report"
     ? await fetch("/api/incident-report", { cache: "no-store" }).then((r) => r.json())
     : null;
+  const coverage = page === "coverage"
+    ? await fetch("/api/coverage", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const hunts = page === "hunts"
+    ? await fetch("/api/hunts", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const rulesLab = page === "rules-lab"
+    ? await fetch("/api/rules-lab", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const socScore = page === "soc-score"
+    ? await fetch("/api/soc-score", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const modelTournament = page === "model-tournament"
+    ? await fetch("/api/model-tournament", { cache: "no-store" }).then((r) => r.json())
+    : null;
   subtitle.textContent = `${state.hostname || "pfSense"} / ${state.mode || "live"} / ${new Date().toLocaleTimeString()}`;
   if (page === "cockpit") renderCockpit(state, cockpit || {});
   else if (page === "threat-story") renderThreatStory(state, threatStory || {});
   else if (page === "device") renderDeviceDetail(state, deviceDetail || {});
   else if (page === "incident-report") renderIncidentReport(state, incidentReport || {});
+  else if (page === "coverage") renderCoverage(state, coverage || {});
+  else if (page === "hunts") renderHunts(state, hunts || {});
+  else if (page === "rules-lab") renderRulesLab(state, rulesLab || {});
+  else if (page === "soc-score") renderSocScore(state, socScore || {});
+  else if (page === "model-tournament") renderModelTournament(state, modelTournament || {});
   else if (page === "flows") renderFlowsPage(state, flowsData || {});
   else if (page === "replay") renderReplay(state, replay || {});
   else if (page === "map") renderThreatMap(state, threatMap || {});

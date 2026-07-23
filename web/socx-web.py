@@ -2149,6 +2149,173 @@ class SocxCollector:
             "updated_ms": now_ms(),
         }
 
+    def collect_research_soc(self) -> dict[str, Any]:
+        snap = self.snapshot()
+        incident = snap.get("incident", {}) if isinstance(snap.get("incident"), dict) else {}
+        intel = snap.get("intel", {}) if isinstance(snap.get("intel"), dict) else {}
+        label_brain = snap.get("label_brain", {}) if isinstance(snap.get("label_brain"), dict) else {}
+        flows = snap.get("flows", []) if isinstance(snap.get("flows"), list) else []
+        data_truth = snap.get("data_truth", {}) if isinstance(snap.get("data_truth"), dict) else {}
+        pi_nodes = snap.get("pi_nodes", {}) if isinstance(snap.get("pi_nodes"), dict) else {}
+        coverage = self.collect_attack_coverage(incident, intel, label_brain, flows)
+        hunts = self.collect_threat_hunts(incident, label_brain, flows, data_truth)
+        rules_lab = self.collect_rules_lab(incident, intel, label_brain, flows)
+        soc_score = self.collect_soc_score(snap, coverage, hunts)
+        tournament = self.collect_model_tournament(pi_nodes)
+        return {
+            "coverage": coverage,
+            "hunts": hunts,
+            "rules_lab": rules_lab,
+            "soc_score": soc_score,
+            "model_tournament": tournament,
+            "updated_ms": now_ms(),
+            "sources": [
+                {"name": "MITRE ATT&CK", "url": "https://attack.mitre.org/"},
+                {"name": "MITRE D3FEND", "url": "https://d3fend.mitre.org/"},
+                {"name": "CISA CPG", "url": "https://www.cisa.gov/cybersecurity-performance-goals-cpgs"},
+                {"name": "NIST CSF 2.0", "url": "https://www.nist.gov/cyberframework"},
+            ],
+            "read_only": True,
+        }
+
+    def collect_attack_coverage(self, incident: dict[str, Any], intel: dict[str, Any], label_brain: dict[str, Any], flows: list[dict[str, Any]]) -> dict[str, Any]:
+        rows = [
+            ["T1595", "Active Scanning", "Reconnaissance", "strong", "Firewall block aggregation, top WAN sources, top scanned ports", "Network Traffic Analysis", "No packet payload context unless IDS/pcap is enabled"],
+            ["T1046", "Network Service Discovery", "Discovery", "medium", "LAN flows, learned-normal app/service drift, unusual host changes", "Behavioral Analytics", "Internal east/west scans need better Zeek or full LAN tap coverage"],
+            ["T1071", "Application Layer Protocol", "Command and Control", "medium", "DNS labels, TLS/web flow labels, DNSBL hits, external peers", "DNS Analysis", "Encrypted payloads require metadata and reputation correlation"],
+            ["T1090", "Proxy", "Command and Control", "partial", "VPN path truth, proxy-like long-lived outbound flows, Tor/reputation hints", "Network Traffic Filtering", "Needs stronger known-proxy/exit-node feeds for confidence"],
+            ["T1568", "Dynamic Resolution", "Command and Control", "strong", "DNSBL domains, resolver logs, reputation or known-bad labels", "DNS Denylisting", "False positives still require app/user context before allowlisting"],
+            ["T1190", "Exploit Public-Facing Application", "Initial Access", "partial", "IDS high-signal alerts, blocked inbound services, exposed-port watch", "Intrusion Prevention", "Needs package/version exposure mapping for better CVE confidence"],
+        ]
+        mapped = {str((row.get("attack") or {}).get("id") or "") for row in intel.get("rows", []) if isinstance(row, dict)}
+        counts = incident.get("counts") if isinstance(incident.get("counts"), dict) else {}
+        dnsbl = incident.get("dnsbl_domains") if isinstance(incident.get("dnsbl_domains"), list) else []
+        anomalies = label_brain.get("anomalies") if isinstance(label_brain.get("anomalies"), list) else []
+        out = []
+        for tid, name, tactic, visibility, signal, defense, gap in rows:
+            score = {"strong": 85, "medium": 68, "partial": 45}.get(visibility, 30)
+            if tid in mapped:
+                score = min(100, score + 8)
+            if tid == "T1595" and int(counts.get("sources", 0) or 0):
+                score = min(100, score + 5)
+            if tid == "T1568" and dnsbl:
+                score = min(100, score + 7)
+            if tid == "T1046" and anomalies:
+                score = min(100, score + 7)
+            out.append({"technique": tid, "name": name, "tactic": tactic, "visibility": visibility, "signal": signal, "defense": defense, "gap": gap, "score": score, "tone": "green" if score >= 75 else "yellow" if score >= 50 else "red"})
+        average = round(sum(int(r["score"]) for r in out) / max(1, len(out)))
+        blind = [r for r in out if int(r["score"]) < 50]
+        return {
+            "title": "ATT&CK Coverage Map",
+            "score": average,
+            "label": "STRONG" if average >= 75 else "WATCH" if average >= 55 else "GAPS",
+            "summary": f"{len(out) - len(blind)}/{len(out)} mapped techniques have usable SOCX visibility",
+            "rows": out,
+            "blind_spots": blind[:4],
+            "next": [
+                "Add Zeek/LAN tap evidence for stronger east/west visibility.",
+                "Map exposed pfSense packages/services to CVE/KEV only when version evidence is available.",
+                "Keep DNSBL allowlist changes review-only until a human confirms business impact.",
+            ],
+            "read_only": True,
+        }
+
+    def collect_threat_hunts(self, incident: dict[str, Any], label_brain: dict[str, Any], flows: list[dict[str, Any]], data_truth: dict[str, Any]) -> dict[str, Any]:
+        counts = incident.get("counts") if isinstance(incident.get("counts"), dict) else {}
+        ids = incident.get("ids") if isinstance(incident.get("ids"), dict) else {}
+        dns = incident.get("dnsbl_domains") if isinstance(incident.get("dnsbl_domains"), list) else []
+        sources = incident.get("blocked_sources") if isinstance(incident.get("blocked_sources"), list) else []
+        anomalies = label_brain.get("anomalies") if isinstance(label_brain.get("anomalies"), list) else []
+        watch_flows = [f for f in flows if str(f.get("baseline_state") or "").lower() in {"new", "watch"}]
+        top_source = sources[0] if sources else {}
+        top_dns = dns[0] if dns else {}
+        rows = [
+            {"hunt": "External Scan Pressure", "hypothesis": "Internet scanners are touching common exposed ports, but pfSense is blocking them.", "status": "active" if int(counts.get("sources", 0) or 0) else "quiet", "evidence": f"{int(counts.get('sources', 0) or 0)} source groups; top {top_source.get('name', '--')}", "next": "Preserve bundle if the same source targets unusual ports or aligns with IDS."},
+            {"hunt": "DNSBL False Positive Watch", "hypothesis": "A trusted app may be hitting blocked ad/telemetry/reputation domains.", "status": "active" if dns else "quiet", "evidence": f"top domain {top_dns.get('name', '--')} x{top_dns.get('count', 0)}", "next": "Use /why and app context before allowlisting."},
+            {"hunt": "Internal Device Drift", "hypothesis": "A LAN device is using a new app/service compared with learned normal behavior.", "status": "active" if anomalies or watch_flows else "quiet", "evidence": f"{len(anomalies)} learned anomalies; {len(watch_flows)} new/watch flows", "next": "Open /devices or /device for the affected host and confirm owner/app."},
+            {"hunt": "IDS Correlation", "hypothesis": "High IDS signal should correlate with firewall, DNS, or flow evidence before action.", "status": "active" if int(ids.get("high_signal", 0) or 0) else "routine", "evidence": f"{ids.get('high_signal', 0)} high-signal IDS rows; {ids.get('watch', 0)} watch rows", "next": "Build an incident bundle before tuning IDS or suppressing signatures."},
+            {"hunt": "Data Freshness Integrity", "hypothesis": "SOCX automation should only trust current collectors.", "status": "pass" if str(data_truth.get("label") or "").upper() == "LIVE" else "watch", "evidence": f"{data_truth.get('label', 'UNKNOWN')} score {data_truth.get('score', '--')}: {data_truth.get('reason', '--')}", "next": "Open /health if stale or unknown before trusting AI conclusions."},
+        ]
+        active = sum(1 for h in rows if h["status"] in {"active", "watch"})
+        return {"title": "Threat Hunt Mode", "mode": "HUNT" if active else "OBSERVE", "summary": f"{active} hunt hypotheses need attention; all actions remain read-only", "rows": rows, "questions": ["Which hunt should I run first and why?", "What evidence would prove this is routine noise?", "Which device or domain should I investigate next?", "What should I preserve before changing pfSense policy?"], "read_only": True}
+
+    def collect_rules_lab(self, incident: dict[str, Any], intel: dict[str, Any], label_brain: dict[str, Any], flows: list[dict[str, Any]]) -> dict[str, Any]:
+        sources = incident.get("blocked_sources") if isinstance(incident.get("blocked_sources"), list) else []
+        ports = incident.get("blocked_ports") if isinstance(incident.get("blocked_ports"), list) else []
+        dns = incident.get("dnsbl_domains") if isinstance(incident.get("dnsbl_domains"), list) else []
+        anomalies = label_brain.get("anomalies") if isinstance(label_brain.get("anomalies"), list) else []
+        top_src = (sources[0] if sources else {}).get("name", "EXT.example")
+        top_port = (ports[0] if ports else {}).get("name", "443")
+        top_dns = (dns[0] if dns else {}).get("name", "example.invalid")
+        top_flow = flows[0] if flows else {}
+        drafts = [
+            {"type": "Suricata", "name": "WAN scan cluster watch", "status": "draft-only", "confidence": "medium" if sources else "low", "rule": f'alert tcp any any -> $HOME_NET {top_port} (msg:"SOCX watch WAN scan cluster {top_src}"; flow:stateless; threshold:type both, track by_src, count 20, seconds 60; classtype:attempted-recon; sid:9001001; rev:1;)', "risk": "Can be noisy on common ports. Do not enable without reviewing existing Suricata rules."},
+            {"type": "Sigma", "name": "Repeated pfSense firewall block source", "status": "draft-only", "confidence": "medium" if sources else "low", "rule": "title: SOCX Repeated pfSense Firewall Block\nlogsource:\n  product: pfsense\n  service: filterlog\ndetection:\n  selection:\n    action: block\n  timeframe: 1m\n  condition: selection\nfields:\n  - src_ip\n  - dst_port\nlevel: medium", "risk": "Requires your SIEM field names to match pfSense filterlog parsing."},
+            {"type": "YARA idea", "name": "DNS artifact seed", "status": "idea-only", "confidence": "low", "rule": f'rule SOCX_DNS_Artifact_Seed {{ strings: $d1 = "{top_dns}" nocase condition: $d1 }}', "risk": "YARA is for files/memory, not live DNS filtering. Use only as an artifact search seed."},
+            {"type": "pfBlockerNG", "name": "Review DNSBL domain", "status": "approval-required", "confidence": "medium" if dns else "low", "rule": f"Review domain {top_dns}; classify as ads/telemetry/malware/false-positive before allowlist or denylist changes.", "risk": "Wrong allowlists can weaken DNS filtering; wrong blocks can break trusted apps."},
+            {"type": "Device Profile", "name": "Learned-normal review", "status": "approval-required", "confidence": "medium" if anomalies or top_flow else "low", "rule": f"Review {top_flow.get('asset', 'top LAN asset')} using {top_flow.get('app', top_flow.get('service', 'unknown'))}; accept as normal only if owner/app context matches.", "risk": "Accepting drift too quickly hides future anomalies."},
+        ]
+        return {"title": "Detection Rule Lab", "summary": "Drafts Suricata, Sigma, YARA, DNSBL, and device-profile ideas from current SOCX evidence.", "drafts": drafts, "guardrails": ["Drafts are not installed automatically.", "Preserve evidence before tuning IDS, DNSBL, or firewall policy.", "Rules need local field names, sid ranges, and false-positive review."], "intel_rows": (intel.get("rows") if isinstance(intel.get("rows"), list) else [])[:5], "read_only": True}
+
+    def collect_soc_score(self, snap: dict[str, Any], coverage: dict[str, Any], hunts: dict[str, Any]) -> dict[str, Any]:
+        data_truth = snap.get("data_truth", {}) if isinstance(snap.get("data_truth"), dict) else {}
+        device_trust = snap.get("device_trust", {}) if isinstance(snap.get("device_trust"), dict) else {}
+        mission_assurance = snap.get("mission_assurance", {}) if isinstance(snap.get("mission_assurance"), dict) else {}
+        pi_nodes = snap.get("pi_nodes", {}) if isinstance(snap.get("pi_nodes"), dict) else {}
+        power_mods = snap.get("power_mods", {}) if isinstance(snap.get("power_mods"), dict) else {}
+        scores = [
+            {"function": "Govern", "score": 82, "why": "Read-only guardrails, approval-only policy changes, project backlog"},
+            {"function": "Identify", "score": int(device_trust.get("score") or 65), "why": device_trust.get("summary", "device identity still learning")},
+            {"function": "Protect", "score": 78, "why": "pfSense, DNSBL, VPN truth, UPS, and safe quarantine drafts are visible"},
+            {"function": "Detect", "score": int(coverage.get("score") or 60), "why": coverage.get("summary", "coverage map waiting")},
+            {"function": "Respond", "score": int(mission_assurance.get("score") or 70), "why": mission_assurance.get("summary", "incident bundle and chat workflows are available")},
+            {"function": "Recover", "score": 66 if power_mods else 55, "why": "snapshots, config drift, evidence vault, and docs exist; full restore drills still need testing"},
+            {"function": "AI SOC", "score": int(pi_nodes.get("score") or 50), "why": pi_nodes.get("summary", "Pi AI health waiting")},
+            {"function": "Data Truth", "score": int(data_truth.get("score") or 50), "why": data_truth.get("reason", "collector freshness unknown")},
+        ]
+        score = round(sum(int(s["score"]) for s in scores) / max(1, len(scores)))
+        return {"title": "SOC Maturity Score", "score": score, "label": "LAB STRONG" if score >= 80 else "SECURITY WATCH" if score >= 65 else "NEEDS WORK", "summary": f"SOCX lab score {score}/100 across NIST/CISA-style functions", "rows": scores, "top_gaps": sorted(scores, key=lambda r: int(r["score"]))[:3], "next": ["Run one restore/config-drift drill and record the result.", "Finish rule-lab false-positive review before enabling any draft detection.", "Improve Detect by adding stronger Zeek/Suricata correlation and package-version evidence."], "read_only": True}
+
+    def collect_model_tournament(self, pi_nodes: dict[str, Any]) -> dict[str, Any]:
+        nodes = pi_nodes.get("nodes") if isinstance(pi_nodes.get("nodes"), list) else []
+        rows: list[dict[str, Any]] = []
+        experiment: dict[str, Any] = {}
+        for node in nodes:
+            ip = str(node.get("ip") or "")
+            if ip and not experiment:
+                raw = run_cmd(f"curl -fsS --max-time 1.5 http://{ip}:8095/api/socx/autonomy 2>/dev/null", timeout=2.0)
+                if raw:
+                    try:
+                        data = json.loads(raw)
+                        exp = data.get("experiment") if isinstance(data.get("experiment"), dict) else {}
+                        if exp:
+                            experiment = {
+                                "node": node.get("name") or ip,
+                                "kind": exp.get("kind"),
+                                "active": bool(exp.get("active")),
+                                "status": exp.get("status"),
+                                "progress": exp.get("progress"),
+                                "result": exp.get("result"),
+                                "started_iso": exp.get("started_iso"),
+                                "finished_iso": exp.get("finished_iso"),
+                            }
+                    except Exception:
+                        pass
+            roles = node.get("roles") if isinstance(node.get("roles"), list) else []
+            for role in roles:
+                rows.append({"node": node.get("name") or node.get("ip") or "Pi", "role": role.get("role") or role.get("name") or "--", "model": role.get("model") or role.get("route") or node.get("model") or "--", "backend": role.get("backend") or role.get("engine") or node.get("accelerator") or "hailo/cpu", "state": role.get("state") or role.get("status") or node.get("service_h") or "unknown", "summary": role.get("summary") or role.get("detail") or node.get("autonomy_summary") or "--"})
+        if not rows:
+            rows = [
+                {"node": "Pi 5 AI", "role": "triage", "model": "llama3.2:1b", "backend": "hailo/cpu", "state": "waiting", "summary": "Run Pi Bench or Pi Compare to populate live model results."},
+                {"node": "Pi 5 AI", "role": "evidence", "model": "qwen2.5-instruct:1.5b", "backend": "hailo/cpu", "state": "waiting", "summary": "Evidence model route pending."},
+                {"node": "Pi 5 AI", "role": "action", "model": "qwen2.5-coder:1.5b", "backend": "hailo/cpu", "state": "waiting", "summary": "Rule/action model route pending."},
+            ]
+        good = sum(1 for r in rows if str(r.get("state", "")).lower() in {"good", "ok", "online", "ready"})
+        exp_label = ""
+        if experiment:
+            exp_label = f" | experiment {experiment.get('kind') or '--'} {experiment.get('status') or '--'}"
+        return {"title": "Pi AI Model Tournament", "summary": f"{good}/{len(rows)} model routes look ready; run Pi Compare for a fresh bounded test{exp_label}", "experiment": experiment, "rows": rows[:12], "benchmarks": [{"test": "Firewall triage", "preferred": "Llama 3.2 1B", "why": "fast first-pass classification"}, {"test": "DNSBL/IDS evidence", "preferred": "Qwen2.5 Instruct 1.5B", "why": "better structured explanation"}, {"test": "Rule draft", "preferred": "Qwen2.5-Coder 1.5B", "why": "draft-only rule syntax help"}, {"test": "Complex investigation", "preferred": "DeepSeek-R1-Distill 1.5B", "why": "slower reasoning path when available"}], "commands": ["socx pi-lab bench 30", "socx pi-lab compare 30", "socx pi-lab explain 20"], "read_only": True}
+
     def remember_change(self, key: str, value: str, title: str, detail: str, severity: str = "LOW") -> None:
         old = self.change_last.get(key)
         if old == value:
@@ -4642,6 +4809,24 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/intel":
             self.send_json(self.collector.snapshot().get("intel", {}))
             return
+        if parsed.path == "/api/research-soc":
+            self.send_json(self.collector.collect_research_soc())
+            return
+        if parsed.path == "/api/coverage":
+            self.send_json(self.collector.collect_research_soc().get("coverage", {}))
+            return
+        if parsed.path == "/api/hunts":
+            self.send_json(self.collector.collect_research_soc().get("hunts", {}))
+            return
+        if parsed.path == "/api/rules-lab":
+            self.send_json(self.collector.collect_research_soc().get("rules_lab", {}))
+            return
+        if parsed.path == "/api/soc-score":
+            self.send_json(self.collector.collect_research_soc().get("soc_score", {}))
+            return
+        if parsed.path == "/api/model-tournament":
+            self.send_json(self.collector.collect_research_soc().get("model_tournament", {}))
+            return
         if parsed.path == "/api/history":
             rows = self.collector.collect_history(240)
             self.send_json({"count": len(rows), "trend": self.collector.history_trend(rows), "rows": rows})
@@ -4747,6 +4932,7 @@ class SocxHandler(BaseHTTPRequestHandler):
             "pi-bench": (["/usr/local/bin/socx", "pi-lab", "bench", "30"], 25.0, "Pi role benchmark"),
             "pi-explain": (["/usr/local/bin/socx", "pi-lab", "explain", "20"], 25.0, "Pi SOCX explain pulse"),
             "pi-compare": (["/usr/local/bin/socx", "pi-lab", "compare", "30"], 25.0, "Pi model comparison"),
+            "model-tournament": (["/usr/local/bin/socx", "pi-lab", "compare", "45"], 25.0, "Pi model tournament"),
             "observability": (["/usr/local/bin/socx", "observability"], 25.0, "SOCX observability"),
             "metrics-intel": (["/usr/local/bin/socx", "metrics-intel"], 35.0, "Metrics intelligence"),
             "metrics-ai": (["/usr/local/bin/socx", "metrics-ai", "--pi"], 220.0, "Pi metrics narrator"),
@@ -4754,13 +4940,13 @@ class SocxHandler(BaseHTTPRequestHandler):
             "autonomy-cron": (["/usr/local/bin/socx", "autonomy-cron", "status"], 20.0, "SOCX autonomy schedule"),
         }
         if action not in commands:
-            return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, bundle, vault, drift, eve, flow-export, topology, quarantine-draft, incident, zeek, speedtest, pi, status, explain, brief, story, timeline, rules, doctor, speed-history, memory, lab, pi-bench, pi-explain, pi-compare, observability, metrics-intel, metrics-ai, autonomy, autonomy-cron"}
+            return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, bundle, vault, drift, eve, flow-export, topology, quarantine-draft, incident, zeek, speedtest, pi, status, explain, brief, story, timeline, rules, doctor, speed-history, memory, lab, pi-bench, pi-explain, pi-compare, model-tournament, observability, metrics-intel, metrics-ai, autonomy, autonomy-cron"}
         args, timeout, title = commands[action]
         result = run_cmd_capture(args, timeout=timeout)
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/device", "/incidents", "/incident-report", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
+        if path in {"/speedtest", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"
