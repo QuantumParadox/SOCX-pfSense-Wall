@@ -1760,6 +1760,65 @@ body.night-wall .ticker-shell {
 .movie-dot.red { border-color: rgba(255, 92, 122, .74); box-shadow: 0 0 24px rgba(255, 92, 122, .25); }
 .movie-dot.purple { border-color: rgba(183, 140, 255, .74); box-shadow: 0 0 24px rgba(183, 140, 255, .24); }
 
+.movie-stage-lanes {
+  background:
+    linear-gradient(90deg, rgba(52, 215, 242, .1) 0 1px, transparent 1px 20%),
+    radial-gradient(circle at center, rgba(52, 215, 242, .12), transparent 34%),
+    linear-gradient(135deg, rgba(8, 20, 24, .96), rgba(18, 22, 32, .96));
+}
+
+.movie-lane {
+  position: absolute;
+  z-index: 3;
+  transform: translate(-50%, -50%);
+  width: clamp(120px, 14vw, 210px);
+  min-height: 78px;
+  padding: 10px;
+  border: 1px solid rgba(52, 215, 242, .4);
+  border-radius: 7px;
+  background: rgba(6, 12, 18, .82);
+  box-shadow: 0 0 26px rgba(52, 215, 242, .12);
+}
+
+.movie-lane b,
+.movie-lane span,
+.movie-lane i {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.movie-lane b {
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: clamp(13px, .95vw, 18px);
+  letter-spacing: 0;
+}
+
+.movie-lane span {
+  color: var(--muted);
+  font-size: clamp(10px, .72vw, 13px);
+  margin: 3px 0 6px;
+}
+
+.movie-lane i {
+  color: var(--green);
+  font-style: normal;
+  font-size: clamp(10px, .68vw, 12px);
+}
+
+.movie-lane i.med,
+.movie-lane i.warn,
+.movie-lane i.medium {
+  color: var(--yellow);
+}
+
+.movie-lane i.high,
+.movie-lane i.critical {
+  color: var(--red);
+}
+
 @keyframes movieBreathe {
   0%, 100% { transform: scale(.985); opacity: .7; }
   50% { transform: scale(1.015); opacity: 1; }

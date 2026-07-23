@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added `/review-queue` and `/api/review-queue`, a read-only Autopilot Review Queue for human-approved SOCX next steps with browser-local acknowledge and Ask SOCX prompts.
+- Added `/owner-map` and `/api/owner-map`, a Device Owner Map that turns Label Brain and Device Trust data into friendly owner/profile/app/trust rows.
+- Added `/mission-console`, `/config-sim`, `/baseline`, and matching APIs for an AI SOC mission console, draft-only pfSense config blast-radius simulator, and learned-normal baseline view.
+- Upgraded `/movie` with a slower lane-based Network Movie 2.0 view across WAN, Firewall, DNSBL, IDS, Pi AI, and Operator action.
 - Added `socx glitch-watch`, a read-only tmux/frame sampler that records wall markers, renderer error bytes, pane size, renderer count, and timing hints to help diagnose brief weird-screen flashes.
 - Added `/glitches`, `/api/glitches`, `/wall-health`, and `/api/wall-health` for wall frame history, renderer/tmux/API/log checks, and readable glitch diagnostics.
 - Expanded Operator Chat with Wall Health and glitch evidence so it can answer weird-screen/flicker questions with current checks and safe next commands.

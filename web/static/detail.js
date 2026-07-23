@@ -38,6 +38,11 @@ const pageName = () => {
   if (path.includes("project")) return "projects";
   if (path.includes("glitch")) return "glitches";
   if (path.includes("wall-health")) return "wall-health";
+  if (path.includes("review-queue")) return "review-queue";
+  if (path.includes("owner-map")) return "owner-map";
+  if (path.includes("mission-console")) return "mission-console";
+  if (path.includes("config-sim")) return "config-sim";
+  if (path.includes("baseline")) return "baseline";
   if (path.includes("incident")) return "incidents";
   if (path.includes("why")) return "why";
   if (path.includes("story")) return "story";
@@ -1385,11 +1390,196 @@ function renderTimeline(state, timeline) {
   wireAskButtons();
 }
 
+function acknowledgedReviews() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem("socx_review_ack") || "[]"));
+  } catch {
+    return new Set();
+  }
+}
+
+function setReviewAcknowledged(key) {
+  const ack = acknowledgedReviews();
+  ack.add(key);
+  localStorage.setItem("socx_review_ack", JSON.stringify([...ack].slice(-80)));
+  refresh();
+}
+
+function reviewKey(row) {
+  return `${row.priority || ""}|${row.item || ""}|${row.observation || ""}`;
+}
+
+function wireReviewQueue() {
+  document.querySelectorAll("[data-review-ack]").forEach((button) => {
+    button.addEventListener("click", () => setReviewAcknowledged(button.getAttribute("data-review-ack") || ""));
+  });
+  wireAskButtons();
+}
+
+function renderReviewQueue(state, review) {
+  title.textContent = "SOCX AUTOPILOT REVIEW";
+  subtitle.textContent = `${state.hostname || "pfSense"} / human approval queue / draft-only`;
+  const ack = acknowledgedReviews();
+  const rows = (review.rows || []).map((r) => ({ ...r, ack: ack.has(reviewKey(r)) }));
+  const pending = rows.filter((r) => !r.ack);
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Review State", [
+      `<div class="detail-score ${review.label === "CLEAR" ? "green" : "yellow"}">${esc(review.label || "REVIEW")} ${esc(review.score ?? "--")}/100</div>`,
+      `<div class="detail-reason">${esc(review.summary || "SOCX review queue is warming up.")}</div>`,
+      kv("Pending", pending.length, pending.length ? "yellow" : "green"),
+      kv("Safety", review.read_only ? "no pfSense change applied" : "unknown", review.read_only ? "green" : "yellow"),
+    ].join("")),
+    card("Autopilot Items", table(["Pri", "Item", "Observation", "Recommendation", "Risk", "Approval"], rows.map((r) => [
+      r.ack ? "ACK" : r.priority || "--",
+      r.item || "--",
+      r.observation || "--",
+      r.recommendation || "--",
+      r.risk || "--",
+      r.approval || "--",
+    ]))),
+    card("Operator Controls", `<div class="ask-list">${rows.map((r) => {
+      const key = reviewKey(r);
+      return `<div class="${r.ack ? "muted" : ""}"><span title="${esc(r.recommendation)}">${esc(r.priority)} ${esc(r.item)}: ${esc(r.command || "--")}</span><button data-review-ack="${esc(key)}">${r.ack ? "Acknowledged" : "Acknowledge"}</button>${askButton(r.question || `Explain review item ${r.item || ""}`)}</div>`;
+    }).join("") || "<span class=\"muted\">No review rows ready.</span>"}</div>`),
+    card("Queue Actions", table(["Action", "Meaning"], (review.actions || []).map((a) => [a, a === "Acknowledge is browser-local" ? "hide it for this browser only" : "opens or drafts evidence; no automatic firewall changes"]))),
+  ].join("");
+  wireReviewQueue();
+}
+
+function renderOwnerMap(state, owner) {
+  title.textContent = "SOCX DEVICE OWNER MAP";
+  subtitle.textContent = `${state.hostname || "pfSense"} / friendly names, roles, apps / read-only`;
+  const rows = owner.rows || [];
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Owner Map State", [
+      `<div class="detail-score ${owner.label === "MAPPED" ? "green" : "yellow"}">${esc(owner.label || "LEARNING")} ${esc(owner.score ?? "--")}/100</div>`,
+      `<div class="detail-reason">${esc(owner.summary || "Device owner map is learning.")}</div>`,
+      kv("Owners", (owner.owners || []).join(", ") || "--", "cyan"),
+      kv("Safety", owner.read_only ? "passive labels only" : "unknown", owner.read_only ? "green" : "yellow"),
+    ].join("")),
+    card("Assets", table(["Asset", "Friendly", "Owner", "Profile", "Apps", "Traffic", "Trust", "State"], rows.map((r) => [
+      r.asset || "--",
+      r.friendly || "--",
+      r.owner || "--",
+      r.profile || "--",
+      (r.apps || []).join(", ") || (r.services || []).join(", ") || "--",
+      r.traffic || "--",
+      r.trust ?? "--",
+      r.state || "--",
+    ]))),
+    card("What To Confirm", table(["Device", "Current Guess", "Next"], rows.filter((r) => r.confidence !== "confirmed" || r.state === "WATCH").slice(0, 10).map((r) => [
+      r.friendly || r.asset || "--",
+      `${r.owner || "--"} / ${r.profile || "--"} / ${r.confidence || "--"}`,
+      r.next || "--",
+    ]))),
+    card("Ask About Devices", `<div class="ask-list">${rows.slice(0, 10).map((r) => `<div><span title="${esc(r.next)}">${esc(r.friendly || r.asset)}: ${esc(r.owner)} ${esc(r.state)}</span>${askButton(r.question || `Explain device ${r.asset || ""}`)}</div>`).join("") || "<span class=\"muted\">No device rows ready.</span>"}</div>`),
+  ].join("");
+  wireAskButtons();
+}
+
+function renderMissionConsole(state, consoleData) {
+  title.textContent = "SOCX AI SOC CONSOLE";
+  subtitle.textContent = `${state.hostname || "pfSense"} / mission assurance / read-only`;
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Mission Console", [
+      `<div class="story-title"><span>${esc(consoleData.headline || "SOCX mission console warming up")}</span><b class="${Number(consoleData.score || 0) >= 80 ? "green" : "yellow"}">${esc(consoleData.label || "WATCH")} ${esc(consoleData.score ?? "--")}</b></div>`,
+      `<div class="detail-reason">This page is the slow-thinking operator view: what matters, what is uncertain, and what evidence would make the next decision better.</div>`,
+    ].join("")),
+    card("What Matters Now", table(["#", "Signal"], (consoleData.what_matters || []).map((x, idx) => [idx + 1, x]))),
+    card("What Changed", table(["Time", "Severity", "Change", "Detail"], (consoleData.what_changed || []).slice(0, 8).map((r) => [r.time || "--", r.severity || "--", r.title || "--", r.detail || r.to || "--"]))),
+    card("Probably Noise", table(["#", "Reason"], (consoleData.probably_noise || []).map((x, idx) => [idx + 1, x]))),
+    card("Uncertainty", table(["#", "Unknown / Stale Signal"], (consoleData.uncertainty || []).map((x, idx) => [idx + 1, x]))),
+    card("Better Evidence", table(["#", "How To Improve Confidence"], (consoleData.better_evidence || []).map((x, idx) => [idx + 1, x]))),
+    card("ATT&CK Context", table(["Signal", "Priority", "Disposition", "ATT&CK", "D3FEND"], (consoleData.attack || []).map((r) => [
+      r.signal || "--",
+      r.priority || "--",
+      r.disposition || "--",
+      r.attack?.id || "--",
+      r.d3fend?.name || "--",
+    ]))),
+    card("Next Actions", table(["#", "Command"], (consoleData.next_actions || []).map((x, idx) => [idx + 1, x]))),
+  ].join("");
+}
+
+function renderConfigSim(state, sim) {
+  title.textContent = "SOCX CONFIG SIMULATOR";
+  subtitle.textContent = `${state.hostname || "pfSense"} / blast radius checks / no changes applied`;
+  const plans = sim.plans || [];
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Simulator State", [
+      `<div class="detail-score yellow">${esc(sim.label || "DRAFT ONLY")} ${esc(sim.score ?? "--")}/100</div>`,
+      `<div class="detail-reason">${esc(sim.summary || "Config simulator is warming up.")}</div>`,
+      kv("Safety", sim.read_only ? "read-only; approval required" : "unknown", sim.read_only ? "green" : "yellow"),
+    ].join("")),
+    card("Draft Plans", table(["Plan", "DNS", "VPN", "Streaming", "Security", "Evidence", "Rollback"], plans.map((p) => [
+      p.plan || "--",
+      p.risk_dns || "--",
+      p.risk_vpn || "--",
+      p.risk_streaming || "--",
+      p.risk_security || "--",
+      p.evidence_needed || "--",
+      p.rollback || "--",
+    ]))),
+    card("Commands", table(["Plan", "Command", "Approval"], plans.map((p) => [p.plan || "--", p.command || "--", p.approval_required ? "required" : "read-only"]))),
+    card("Guardrails", table(["#", "Rule"], (sim.guardrails || []).map((x, idx) => [idx + 1, x]))),
+    card("Ask About Plans", `<div class="ask-list">${plans.map((p) => `<div><span title="${esc(p.evidence_needed)}">${esc(p.plan)}: ${esc(p.command)}</span>${askButton(`Explain this SOCX config simulator plan in plain English. Plan: ${p.plan || "--"}. DNS risk: ${p.risk_dns || "--"}. VPN risk: ${p.risk_vpn || "--"}. Streaming risk: ${p.risk_streaming || "--"}. Security risk: ${p.risk_security || "--"}. Evidence needed: ${p.evidence_needed || "--"}. Rollback: ${p.rollback || "--"}.`)}</div>`).join("")}</div>`),
+  ].join("");
+  wireAskButtons();
+}
+
+function renderBaseline(state, baseline) {
+  title.textContent = "SOCX BASELINE LEARNING";
+  subtitle.textContent = `${state.hostname || "pfSense"} / learned normal / read-only`;
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Baseline State", [
+      `<div class="detail-score ${baseline.label === "WATCH" ? "yellow" : "green"}">${esc(baseline.label || "LEARNING")} ${esc(baseline.score ?? "--")}/100</div>`,
+      `<div class="detail-reason">${esc(baseline.summary || "Baseline learning is warming up.")}</div>`,
+      kv("Safety", baseline.read_only ? "passive learning only" : "unknown", baseline.read_only ? "green" : "yellow"),
+    ].join("")),
+    card("Baseline Groups", table(["Category", "Normal", "Current", "State", "Confidence", "Next"], (baseline.rows || []).map((r) => [
+      r.category || "--",
+      r.normal || "--",
+      r.current || "--",
+      r.state || "--",
+      r.confidence || "--",
+      r.next || "--",
+    ]))),
+    card("Top Apps", table(["App", "Count"], (baseline.top_apps || []).map((r) => [r.name || "--", r.count || 0]))),
+    card("Watch Flows", table(["Path", "App", "Bytes", "State", "Why"], (baseline.watch_rows || []).slice(0, 10).map((r) => [
+      flowPath(r),
+      r.app || r.service || "--",
+      r.bytes_h || "--",
+      r.baseline_state || "--",
+      r.why || "--",
+    ]))),
+  ].join("");
+}
+
 function renderMovie(state, movie) {
   title.textContent = "SOCX NETWORK MOVIE";
   subtitle.textContent = `${state.hostname || "pfSense"} / slow readable replay / ${movie.hero?.window || "6h"} window`;
   const scenes = movie.scenes || [];
   const pulses = movie.pulses || [];
+  const laneStory = movie.lane_story || [];
+  const laneEvents = movie.lane_events || [];
+  const laneHtml = laneStory.map((lane, idx) => {
+    const events = laneEvents.filter((e) => e.target === lane.name || e.source === lane.name).slice(0, 4);
+    return `<div class="movie-lane" style="left:${Number(lane.x || 10)}%;top:${Number(lane.y || 10)}%">
+      <b>${esc(lane.name)}</b>
+      <span>${esc(lane.summary || "")}</span>
+      ${events.map((e) => `<i class="${String(e.severity || "LOW").toLowerCase()}" title="${esc(e.detail)}">${esc(e.label).slice(0, 24)}</i>`).join("")}
+    </div>`;
+  }).join("");
   const sceneDots = scenes.slice(0, 14).map((r, idx) => {
     const sev = String(r.severity || "LOW").toUpperCase();
     const tone = sev === "HIGH" || sev === "CRITICAL" ? "red" : sev === "MED" || sev === "WARN" ? "yellow" : r.lane === "AI" || r.lane === "DNSBL" ? "purple" : "green";
@@ -1425,7 +1615,7 @@ function renderMovie(state, movie) {
       kv("Twin", `${movie.hero?.nodes || 0} nodes / ${movie.hero?.links || 0} links`, "cyan"),
       kv("Threat", movie.hero?.threat || "--", String(movie.hero?.threat || "").toUpperCase() === "QUIET" ? "green" : "yellow"),
     ].join("")),
-    card("Live Scene", `<div class="movie-stage"><div class="movie-rings"></div><div class="movie-core">SOCX<br>LIVE</div>${sceneDots || "<span class=\"muted\">No scenes yet.</span>"}</div>`),
+    card("Live Scene", `<div class="movie-stage movie-stage-lanes"><div class="movie-rings"></div><div class="movie-core">SOCX<br>LIVE</div>${laneHtml || sceneDots || "<span class=\"muted\">No scenes yet.</span>"}</div>`),
     card("Scene Timeline", table(["Time", "Lane", "Severity", "Scene", "Detail"], sceneRows)),
     card("Live Pulses", table(["Kind", "Path", "App", "Traffic", "Why"], pulseRows)),
     card("Open Related Views", table(["Action", "Open", "Why"], (movie.commands || []).map((cmd) => [cmd.label || "--", cmd.href || "--", cmd.why || "--"]))),
@@ -1808,6 +1998,21 @@ async function refresh() {
   const wallHealth = page === "wall-health"
     ? await fetch("/api/wall-health", { cache: "no-store" }).then((r) => r.json())
     : null;
+  const reviewQueue = page === "review-queue"
+    ? await fetch("/api/review-queue", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const ownerMap = page === "owner-map"
+    ? await fetch("/api/owner-map", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const missionConsole = page === "mission-console"
+    ? await fetch("/api/mission-console", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const configSim = page === "config-sim"
+    ? await fetch("/api/config-sim", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const baseline = page === "baseline"
+    ? await fetch("/api/baseline", { cache: "no-store" }).then((r) => r.json())
+    : null;
   subtitle.textContent = `${state.hostname || "pfSense"} / ${state.mode || "live"} / ${new Date().toLocaleTimeString()}`;
   if (page === "cockpit") renderCockpit(state, cockpit || {});
   else if (page === "threat-story") renderThreatStory(state, threatStory || {});
@@ -1830,6 +2035,11 @@ async function refresh() {
   else if (page === "projects") renderProjects(state, projects || {});
   else if (page === "glitches") renderGlitches(state, glitches || {});
   else if (page === "wall-health") renderWallHealth(state, wallHealth || {});
+  else if (page === "review-queue") renderReviewQueue(state, reviewQueue || {});
+  else if (page === "owner-map") renderOwnerMap(state, ownerMap || {});
+  else if (page === "mission-console") renderMissionConsole(state, missionConsole || {});
+  else if (page === "config-sim") renderConfigSim(state, configSim || {});
+  else if (page === "baseline") renderBaseline(state, baseline || {});
   else if (page === "flows") renderFlowsPage(state, flowsData || {});
   else if (page === "replay") renderReplay(state, replay || {});
   else if (page === "map") renderThreatMap(state, threatMap || {});

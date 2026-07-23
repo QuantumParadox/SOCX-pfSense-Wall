@@ -101,7 +101,9 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds SOCX Threat Story through `/threat-story` and `/api/threat-story`, turning firewall, DNSBL, IDS, ATT&CK/D3FEND context, repeated memory, and Flow Truth into a readable incident narrative.
 - Adds SOCX Replay through `/replay` and `/api/replay`, a read-only flight recorder that turns retained history into score buckets, security playback, Speedtest playback, Flow Truth context, thermal/UPS spikes, and safe drilldown links.
 - Adds SOCX Network Movie through `/movie` and `/api/movie`, a slower readable scene view of timeline events, live flow pulses, packet story, replay context, and network-twin links.
+- Upgrades SOCX Network Movie to a lane-based 2.0 view so WAN, Firewall, DNSBL, IDS, Pi AI, and Operator action read like a calm incident path instead of a fast spinner.
 - Adds SOCX Project Lab through `/projects` and `/api/projects`, a read-only roadmap/status page for Glitch Watcher, AI Firewall Copilot Chat, Network Movie, Device Identity, What Changed Alarm, Pi AI Lab, Config Drift, Voice Mode, Incident Bundles, and LCARS/cyberpunk themes.
+- Adds `/review-queue`, `/owner-map`, `/mission-console`, `/config-sim`, and `/baseline` for the autonomous-SOC layer: human approval queue, friendly device owner map, mission uncertainty, draft-only config safety simulation, and learned-normal baseline review.
 - Adds `socx glitch-watch`, a read-only diagnostic sampler for brief wall glitches. It captures tmux wall markers, pane size, renderer count, timing hints, and `/tmp/socx-wall.err` size into `/tmp/socx-glitch-watch.json`.
 - Adds `/glitches` and `/wall-health`, readable browser views for glitch samples, renderer/tmux/API/log checks, likely causes, and safe follow-up commands.
 - Upgrades Operator Chat so weird-screen, wall health, and glitch questions cite current wall checks, confidence, evidence used, and safe commands.

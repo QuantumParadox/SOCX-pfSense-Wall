@@ -3744,6 +3744,215 @@ class SocxCollector:
             ],
         }
 
+    def collect_autopilot_review_queue(self) -> dict[str, Any]:
+        """Read-only autonomy queue: what SOCX wants a human to review next."""
+        snap = self.snapshot()
+        safe = self.collect_safe_action_queue(snap, "review")
+        mission = snap.get("mission", {}) if isinstance(snap.get("mission"), dict) else {}
+        truth = snap.get("data_truth", {}) if isinstance(snap.get("data_truth"), dict) else {}
+        wall = self.collect_wall_health()
+        rule = snap.get("rule_assistant", {}) if isinstance(snap.get("rule_assistant"), dict) else {}
+        brain = snap.get("label_brain", {}) if isinstance(snap.get("label_brain"), dict) else {}
+        incident = snap.get("incident", {}) if isinstance(snap.get("incident"), dict) else {}
+        rows: list[dict[str, Any]] = []
+
+        def add(priority: str, item: str, observation: str, recommendation: str, risk: str, page: str, command: str, approval: str = "read-only") -> None:
+            rows.append({
+                "priority": priority,
+                "item": item[:80],
+                "observation": observation[:180],
+                "recommendation": recommendation[:180],
+                "risk": risk[:100],
+                "page": page,
+                "command": command,
+                "approval": approval,
+                "question": f"Explain this SOCX review queue item. Item: {item}. Observation: {observation}. Recommendation: {recommendation}. Risk: {risk}. Command: {command}. Keep it plain English and read-only.",
+            })
+
+        if str(truth.get("label") or "").upper() != "LIVE":
+            add("P1", "Data Truth", truth.get("reason") or "collector freshness is not fully live", "Open Health and verify stale collectors before trusting the wall.", "stale evidence can cause wrong decisions", "/health", "socx v1-check")
+        if str(wall.get("label") or "").upper() != "OK":
+            add("P1", "Wall Health", wall.get("summary") or "wall renderer has a watch item", "Run glitch-watch once after the next visual flash, then review wall health.", "display glitches can hide operator signals", "/wall-health", "socx glitch-watch once")
+        for draft in (rule.get("drafts") if isinstance(rule.get("drafts"), list) else [])[:4]:
+            add("P2", draft.get("kind") or "Rule review", draft.get("evidence") or "--", draft.get("recommendation") or "--", "policy changes require human approval", "/rules-lab", draft.get("safe_command") or "socx rules", "approval required")
+        for item in safe[:5]:
+            add("P2" if str(item.get("approval") or "").lower() != "read-only" else "P3", item.get("action") or item.get("title") or "Safe action", item.get("why") or item.get("detail") or "--", item.get("next") or "Review evidence and use the safe command only if it matches your intent.", item.get("risk") or item.get("approval") or "low", "/actions", item.get("command") or "socx status", item.get("approval") or "read-only")
+        for anomaly in (brain.get("anomalies") if isinstance(brain.get("anomalies"), list) else [])[:3]:
+            add("P3", "Device baseline change", f"{anomaly.get('asset', 'device')} changed: {', '.join(str(x) for x in (anomaly.get('items') or [])[:3])}", "Open Owner Map or Device Detail and confirm whether this is normal.", "could be a new app, update, or unwanted activity", "/owner-map", "socx label-brain")
+        ids = incident.get("ids") if isinstance(incident.get("ids"), dict) else {}
+        if int(ids.get("high_signal", 0) or 0) > 0:
+            add("P1", "High IDS Signal", f"{ids.get('high_signal')} high-signal IDS rows in the current sample", "Preserve evidence before tuning or suppressing signatures.", "possible true positive", "/incidents", "socx snapshot", "approval required")
+        if not rows:
+            add("P4", "No urgent review", mission.get("headline") or "No high-confidence review item right now.", "Keep watching Mission and Timeline.", "low", "/mission", "socx mission")
+        score = max(0, 100 - sum(25 if r["priority"] == "P1" else 12 if r["priority"] == "P2" else 4 for r in rows if r["priority"] != "P4"))
+        return {
+            "title": "SOCX Autopilot Review Queue",
+            "label": "REVIEW" if any(r["priority"] in {"P1", "P2"} for r in rows) else "CLEAR",
+            "score": score,
+            "summary": f"{len(rows)} human-review item(s); no automatic pfSense changes are applied",
+            "rows": rows[:12],
+            "actions": ["Acknowledge is browser-local", "Preserve Evidence", "Draft Rule", "Ask SOCX"],
+            "read_only": True,
+            "updated_ms": now_ms(),
+        }
+
+    def owner_for_profile(self, profile: str, apps: list[str]) -> str:
+        text = (profile + " " + " ".join(apps)).lower()
+        if any(token in text for token in ["ai", "ollama", "miranda", "quantum", "hugging face"]):
+            return "Lab / AI"
+        if any(token in text for token in ["stream", "youtube", "netflix", "apple", "prime", "tv"]):
+            return "Media"
+        if any(token in text for token in ["storage", "nas", "synology", "backup"]):
+            return "Infrastructure"
+        if any(token in text for token in ["ups", "sensor", "nut", "apc"]):
+            return "Power / Sensor"
+        if any(token in text for token in ["router", "switch", "dns", "ntp", "pfsense"]):
+            return "Network Core"
+        return "Home / Lab"
+
+    def collect_device_owner_map(self) -> dict[str, Any]:
+        """Map learned assets to friendly owner/profile labels without editing pfSense."""
+        snap = self.snapshot()
+        brain = snap.get("label_brain", {}) if isinstance(snap.get("label_brain"), dict) else {}
+        trust = snap.get("device_trust", {}) if isinstance(snap.get("device_trust"), dict) else {}
+        netflow = snap.get("netflow_intel", {}) if isinstance(snap.get("netflow_intel"), dict) else {}
+        trust_by_asset = {str(row.get("asset") or ""): row for row in (trust.get("rows") if isinstance(trust.get("rows"), list) else [])}
+        flow_by_asset: dict[str, int] = {}
+        for row in (netflow.get("rows") if isinstance(netflow.get("rows"), list) else []):
+            asset = str(row.get("asset") or "")
+            flow_by_asset[asset] = flow_by_asset.get(asset, 0) + 1
+        rows = []
+        for dev in (brain.get("devices") if isinstance(brain.get("devices"), list) else [])[:18]:
+            asset = str(dev.get("asset") or "--")
+            apps = [str(x.get("name")) for x in (dev.get("apps") or []) if isinstance(x, dict)]
+            services = [str(x.get("name")) for x in (dev.get("services") or []) if isinstance(x, dict)]
+            profile = str(dev.get("profile") or "device")
+            trust_row = trust_by_asset.get(asset, {})
+            owner = self.owner_for_profile(profile, apps + services)
+            rows.append({
+                "asset": asset,
+                "friendly": dev.get("friendly_name") or asset,
+                "owner": owner,
+                "profile": profile,
+                "apps": apps[:5],
+                "services": services[:5],
+                "confidence": dev.get("identity_confidence") or dev.get("confidence") or "unknown",
+                "traffic": trust_row.get("bytes_h") or f"{flow_by_asset.get(asset, int(dev.get('flows', 0) or 0))} flows",
+                "trust": trust_row.get("score", "--"),
+                "state": "WATCH" if dev.get("unusual") or int(trust_row.get("score") or 100) < 70 else "NORMAL",
+                "next": "Confirm owner/name if this label is wrong." if str(dev.get("identity_confidence")) != "confirmed" else "No action needed.",
+                "question": f"Explain this SOCX device owner map row. Asset: {asset}. Friendly: {dev.get('friendly_name') or asset}. Owner: {owner}. Apps: {', '.join(apps[:5])}. Services: {', '.join(services[:5])}. Trust: {trust_row.get('score', '--')}.",
+            })
+        unknown = sum(1 for row in rows if str(row.get("confidence")) == "unknown")
+        return {
+            "title": "SOCX Device Owner Map",
+            "label": "WATCH" if unknown else "MAPPED",
+            "score": max(0, 100 - unknown * 6),
+            "summary": f"{len(rows)} visible assets; {unknown} still need better owner/name confidence",
+            "rows": rows,
+            "owners": sorted({row["owner"] for row in rows}),
+            "read_only": True,
+            "updated_ms": now_ms(),
+        }
+
+    def collect_mission_console(self) -> dict[str, Any]:
+        """One-page AI SOC mission board for what matters, uncertainty, and next evidence."""
+        snap = self.snapshot()
+        mission = snap.get("mission", {}) if isinstance(snap.get("mission"), dict) else {}
+        truth = snap.get("data_truth", {}) if isinstance(snap.get("data_truth"), dict) else {}
+        health = self.collect_wall_health()
+        pi = snap.get("pi_nodes", {}) if isinstance(snap.get("pi_nodes"), dict) else {}
+        intel = snap.get("intel", {}) if isinstance(snap.get("intel"), dict) else {}
+        changed = snap.get("what_changed", {}) if isinstance(snap.get("what_changed"), dict) else {}
+        uncertainty = []
+        if str(truth.get("label") or "").upper() != "LIVE":
+            uncertainty.append(f"Data Truth is {truth.get('label', 'UNKNOWN')}: {truth.get('reason', 'freshness unknown')}")
+        if int(pi.get("online", 0) or 0) < int(pi.get("count", 0) or 0):
+            uncertainty.append(f"Pi fleet is {pi.get('online', 0)}/{pi.get('count', 0)} online")
+        if str(health.get("label") or "").upper() != "OK":
+            uncertainty.append(health.get("summary") or "wall health is in watch mode")
+        if not uncertainty:
+            uncertainty.append("Primary SOCX evidence sources are fresh enough for a normal operator readout.")
+        better = [
+            "Open /review-queue before approving a pfSense change.",
+            "Open /owner-map when a device name, app, or owner looks wrong.",
+            "Use /config-sim for draft-only blast-radius checks.",
+            "Preserve evidence before IDS/DNSBL/firewall tuning.",
+        ]
+        return {
+            "title": "SOCX AI SOC Mission Console",
+            "label": mission.get("mode") or truth.get("label") or "WATCH",
+            "score": mission.get("score") or truth.get("score") or 0,
+            "headline": mission.get("headline") or "SOCX mission console warming up",
+            "what_matters": mission.get("what_matters") or [],
+            "what_changed": changed.get("rows") or [],
+            "probably_noise": mission.get("probably_noise") or [],
+            "uncertainty": uncertainty,
+            "better_evidence": better,
+            "next_actions": mission.get("next_actions") or ["socx status", "socx mission"],
+            "attack": (intel.get("rows") or [])[:6] if isinstance(intel.get("rows"), list) else [],
+            "read_only": True,
+            "updated_ms": now_ms(),
+        }
+
+    def collect_config_safety_simulator(self) -> dict[str, Any]:
+        """Draft-only blast-radius simulator for likely pfSense operator changes."""
+        snap = self.snapshot()
+        incident = snap.get("incident", {}) if isinstance(snap.get("incident"), dict) else {}
+        brain = snap.get("label_brain", {}) if isinstance(snap.get("label_brain"), dict) else {}
+        target = "192.168.1.121"
+        devices = brain.get("devices") if isinstance(brain.get("devices"), list) else []
+        if devices:
+            target = str(devices[0].get("asset") or target).split("/", 1)[0].replace("LAN.", "192.168.1.")
+        dns = (incident.get("dnsbl_domains") or [{}])[0] if isinstance(incident.get("dnsbl_domains"), list) else {}
+        source = (incident.get("blocked_sources") or [{}])[0] if isinstance(incident.get("blocked_sources"), list) else {}
+        plans = [
+            {"plan": "Quarantine LAN host", "status": "DRAFT ONLY", "risk_dns": "low", "risk_vpn": "low", "risk_streaming": "medium", "risk_security": "medium", "rollback": "remove alias/rule and flush states for that host", "evidence_needed": f"confirm {target} is the right device", "approval_required": True, "command": f"socx quarantine {target}"},
+            {"plan": "DNSBL allowlist candidate", "status": "DRAFT ONLY", "risk_dns": "high", "risk_vpn": "low", "risk_streaming": "medium", "risk_security": "medium", "rollback": "remove allowlist entry and reload DNSBL", "evidence_needed": f"prove {dns.get('name', 'domain')} is a false positive", "approval_required": True, "command": "socx-doctor dnsbl-review"},
+            {"plan": "IDS tune candidate", "status": "DRAFT ONLY", "risk_dns": "low", "risk_vpn": "low", "risk_streaming": "low", "risk_security": "high", "rollback": "restore original Suricata rule action", "evidence_needed": "signature id, affected host, packet sample, and false-positive reason", "approval_required": True, "command": "socx snapshot"},
+            {"plan": "WAN source review", "status": "DRAFT ONLY", "risk_dns": "low", "risk_vpn": "low", "risk_streaming": "low", "risk_security": "medium", "rollback": "remove temporary block/alias if created manually", "evidence_needed": f"review repeated source {source.get('name', 'unknown')}", "approval_required": True, "command": "socx incident quick"},
+            {"plan": "Service restart", "status": "DRAFT ONLY", "risk_dns": "medium", "risk_vpn": "medium", "risk_streaming": "low", "risk_security": "low", "rollback": "start service and inspect logs", "evidence_needed": "confirm service is actually failed, not simply disabled", "approval_required": True, "command": "socx status"},
+        ]
+        return {
+            "title": "SOCX Config Safety Simulator",
+            "label": "DRAFT ONLY",
+            "score": 100,
+            "summary": "Simulates likely pfSense change impact; SOCX does not apply these changes.",
+            "plans": plans,
+            "guardrails": ["No automatic firewall/DNSBL/IDS policy changes", "Preserve evidence first", "Rollback must be known before approval", "WAN, VPN, DNS, and streaming impact are checked separately"],
+            "read_only": True,
+            "updated_ms": now_ms(),
+        }
+
+    def collect_baseline_learning(self) -> dict[str, Any]:
+        """Explain learned-normal network baselines from Label Brain, NetFlow, speed, and incidents."""
+        snap = self.snapshot()
+        brain = snap.get("label_brain", {}) if isinstance(snap.get("label_brain"), dict) else {}
+        netflow = snap.get("netflow_intel", {}) if isinstance(snap.get("netflow_intel"), dict) else {}
+        speed = snap.get("speedtest_history", {}) if isinstance(snap.get("speedtest_history"), dict) else {}
+        incident = snap.get("incident_memory", {}) if isinstance(snap.get("incident_memory"), dict) else {}
+        threat = snap.get("threat_pulse", {}) if isinstance(snap.get("threat_pulse"), dict) else {}
+        counts = netflow.get("baseline_counts") if isinstance(netflow.get("baseline_counts"), dict) else {}
+        rows = [
+            {"category": "Devices", "normal": f"{len(brain.get('devices') or [])} active labels", "current": f"{len(brain.get('anomalies') or [])} unusual", "state": "WATCH" if brain.get("anomalies") else "NORMAL", "confidence": "medium", "next": "Confirm owners/names for unknown devices."},
+            {"category": "Flows", "normal": f"{counts.get('normal', 0)} normal", "current": f"{counts.get('new', 0)} new / {counts.get('watch', 0)} watch", "state": "WATCH" if int(counts.get("watch", 0) or 0) else "NORMAL", "confidence": "medium", "next": "Open /flows for top talkers."},
+            {"category": "Speed", "normal": f"{len(speed.get('paths') or [])} path profiles", "current": f"{speed.get('count', 0)} retained tests", "state": "LEARNING", "confidence": "medium", "next": "Compare direct and VPN after each scheduled test."},
+            {"category": "Firewall", "normal": f"{incident.get('count', incident.get('samples', 0))} samples", "current": f"{threat.get('fw_blocks', 0)} blocks now", "state": "WATCH" if int(threat.get('fw_blocks', 0) or 0) else "NORMAL", "confidence": "medium", "next": "Use /timeline when top source changes."},
+            {"category": "DNSBL / IDS", "normal": "routine blocks expected", "current": f"DNSBL {threat.get('dnsbl_hits', 0)} / IDS {threat.get('ids_watch', 0)}", "state": "WATCH" if int(threat.get('ids_high', 0) or 0) else "NORMAL", "confidence": "medium", "next": "Preserve evidence before allowlisting or tuning."},
+        ]
+        watch = sum(1 for row in rows if row["state"] == "WATCH")
+        return {
+            "title": "SOCX Network Baseline Learning",
+            "label": "WATCH" if watch else "LEARNING",
+            "score": max(0, 100 - watch * 10),
+            "summary": f"{len(rows)} baseline groups; {watch} currently in watch state",
+            "rows": rows,
+            "top_apps": brain.get("top_apps") or [],
+            "watch_rows": netflow.get("watch_rows") or [],
+            "read_only": True,
+            "updated_ms": now_ms(),
+        }
+
     def collect_network_movie(self) -> dict[str, Any]:
         """Turn live SOCX evidence into a readable network movie storyboard."""
         snap = self.snapshot()
@@ -3754,6 +3963,14 @@ class SocxCollector:
         packets = snap.get("packets", []) if isinstance(snap.get("packets"), list) else []
         network = snap.get("net", {}) if isinstance(snap.get("net"), dict) else {}
         threat = snap.get("threat_pulse", {}) if isinstance(snap.get("threat_pulse"), dict) else {}
+        lane_story = [
+            {"name": "WAN", "x": 10, "y": 18, "summary": "internet edge and ISP path"},
+            {"name": "FIREWALL", "x": 30, "y": 50, "summary": "pf rules, blocks, states"},
+            {"name": "DNSBL", "x": 50, "y": 34, "summary": "blocked domains and reputation"},
+            {"name": "IDS", "x": 62, "y": 68, "summary": "Suricata/IDS signal"},
+            {"name": "PI AI", "x": 78, "y": 24, "summary": "Pi LLM triage/evidence/action"},
+            {"name": "OPERATOR", "x": 88, "y": 76, "summary": "review queue and safe actions"},
+        ]
         lane_xy = {
             "WAN": (12, 18), "LAN": (78, 28), "FIREWALL": (42, 42), "FW": (42, 42),
             "DNSBL": (58, 68), "IDS": (35, 70), "AI": (68, 18), "SPEED": (25, 28),
@@ -3791,6 +4008,28 @@ class SocxCollector:
                 "traffic": row.get("count") or row.get("port") or "--",
                 "why": row.get("context") or row.get("reputation") or "packet story",
             })
+        lane_events = []
+        for idx, row in enumerate(scenes[:12]):
+            lane = str(row.get("lane") or "INCIDENT").upper()
+            source = "WAN" if lane in {"FW", "FIREWALL", "INCIDENT"} else lane
+            if lane == "DNSBL":
+                target = "DNSBL"
+            elif lane == "IDS":
+                target = "IDS"
+            elif lane == "AI":
+                target = "PI AI"
+            elif lane == "ACTION":
+                target = "OPERATOR"
+            else:
+                target = "FIREWALL"
+            lane_events.append({
+                "source": source,
+                "target": target,
+                "severity": row.get("severity") or "LOW",
+                "label": row.get("scene") or row.get("lane") or "event",
+                "detail": row.get("detail") or "--",
+                "position": (idx % 5) + 1,
+            })
         summary = (
             f"{len(scenes)} scenes, {len(pulses)} live pulses, "
             f"WAN {(network.get('wan') or {}).get('rx_h') or '--'} down / "
@@ -3810,6 +4049,8 @@ class SocxCollector:
             "scenes": scenes,
             "pulses": pulses[:16],
             "lanes": timeline.get("lanes") or [],
+            "lane_story": lane_story,
+            "lane_events": lane_events,
             "commands": [
                 {"label": "Open Replay", "href": "/replay", "why": "see the calm flight recorder"},
                 {"label": "Open Twin", "href": "/twin", "why": "inspect live assets and links"},
@@ -5537,6 +5778,21 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/wall-health":
             self.send_json(self.collector.collect_wall_health())
             return
+        if parsed.path == "/api/review-queue":
+            self.send_json(self.collector.collect_autopilot_review_queue())
+            return
+        if parsed.path == "/api/owner-map":
+            self.send_json(self.collector.collect_device_owner_map())
+            return
+        if parsed.path == "/api/mission-console":
+            self.send_json(self.collector.collect_mission_console())
+            return
+        if parsed.path == "/api/config-sim":
+            self.send_json(self.collector.collect_config_safety_simulator())
+            return
+        if parsed.path == "/api/baseline":
+            self.send_json(self.collector.collect_baseline_learning())
+            return
         if parsed.path == "/api/threat-map":
             self.send_json(self.collector.collect_threat_map())
             return
@@ -5713,6 +5969,10 @@ class SocxHandler(BaseHTTPRequestHandler):
             "autonomy-cron": (["/usr/local/bin/socx", "autonomy-cron", "status"], 20.0, "SOCX autonomy schedule"),
             "glitch-watch": (["/usr/local/bin/socx", "glitch-watch", "once"], 12.0, "Wall glitch watcher"),
             "wall-health": (["/usr/local/bin/socx", "v1-check"], 30.0, "Wall health guard"),
+            "review-queue": (["/usr/local/bin/socx", "mission"], 35.0, "Autopilot review queue"),
+            "owner-map": (["/usr/local/bin/socx", "label-brain"], 35.0, "Device owner map"),
+            "config-sim": (["/usr/local/bin/socx", "rules"], 35.0, "Config safety simulator"),
+            "baseline": (["/usr/local/bin/socx", "label-brain"], 35.0, "Baseline learning"),
         }
         if action not in commands:
             return {"ok": False, "action": action, "title": "Unknown action", "output": "Allowed: snapshot, bundle, vault, drift, eve, flow-export, topology, quarantine-draft, incident, zeek, speedtest, pi, status, explain, brief, story, timeline, rules, doctor, speed-history, memory, lab, pi-bench, pi-explain, pi-compare, model-tournament, observability, metrics-intel, metrics-ai, autonomy, autonomy-cron, glitch-watch"}
@@ -5721,7 +5981,7 @@ class SocxHandler(BaseHTTPRequestHandler):
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/memory", "/twin", "/automation", "/timeline", "/movie", "/projects", "/glitches", "/wall-health", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
+        if path in {"/speedtest", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/memory", "/twin", "/automation", "/timeline", "/movie", "/projects", "/glitches", "/wall-health", "/review-queue", "/owner-map", "/mission-console", "/config-sim", "/baseline", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"
