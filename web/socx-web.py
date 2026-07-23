@@ -170,6 +170,18 @@ def human_duration(seconds: Any) -> str:
     return f"{minutes}m"
 
 
+def human_age(ts: Any) -> str:
+    try:
+        stamp = float(ts)
+    except (TypeError, ValueError):
+        return "--"
+    if stamp > 100000000000:
+        stamp /= 1000.0
+    if stamp <= 0:
+        return "--"
+    return human_duration(max(1, time.time() - stamp)) + " ago"
+
+
 def service_name(port: str) -> str:
     services = {
         "22": "ssh",
@@ -3687,6 +3699,187 @@ class SocxCollector:
             ],
         }
 
+    def automation_file_fact(self, path: str) -> dict[str, Any]:
+        item = {"path": path, "exists": False, "age_sec": None, "age_h": "--", "mtime": 0.0}
+        try:
+            stat = Path(path).stat()
+            age = int(max(0, time.time() - stat.st_mtime))
+            item.update({"exists": True, "age_sec": age, "age_h": human_duration(age) + " ago", "mtime": stat.st_mtime})
+        except OSError:
+            pass
+        return item
+
+    def cron_schedule_label(self, cron_path: str, fallback: str) -> str:
+        try:
+            text = Path(cron_path).read_text(errors="ignore")
+        except Exception:
+            return fallback
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) < 6:
+                continue
+            minute, hour = parts[0], parts[1]
+            if minute.startswith("*/"):
+                return f"every {minute[2:]}m"
+            if minute == "0" and hour.startswith("*/"):
+                return f"every {hour[2:]}h"
+            if minute == "0" and hour != "*":
+                return f"daily {hour}:00"
+            return "cron " + " ".join(parts[:5])
+        return fallback
+
+    def automation_tone(self, state: str) -> str:
+        state_u = str(state or "").upper()
+        if state_u in {"READY", "OK", "RUNNING", "LIVE"}:
+            return "green"
+        if state_u in {"WAITING", "SCHEDULED", "STALE", "WATCH", "APPROVAL"}:
+            return "yellow"
+        if state_u in {"MISSING", "ERROR", "FAIL", "FAILED"}:
+            return "red"
+        return "cyan"
+
+    def collect_automation_center(self) -> dict[str, Any]:
+        """Summarize SOCX scheduled jobs and read-only operator automation."""
+        snap = self.snapshot()
+        now = time.time()
+        speed = snap.get("speedtest_history", {}) if isinstance(snap.get("speedtest_history"), dict) else {}
+        pi = snap.get("pi_nodes", {}) if isinstance(snap.get("pi_nodes"), dict) else {}
+        memory = snap.get("label_brain", {}) if isinstance(snap.get("label_brain"), dict) else {}
+        autonomy = snap.get("autonomy_loop", {}) if isinstance(snap.get("autonomy_loop"), dict) else {}
+        doctor = snap.get("doctor", {}) if isinstance(snap.get("doctor"), dict) else {}
+        data_truth = snap.get("data_truth", {}) if isinstance(snap.get("data_truth"), dict) else {}
+        hardware = snap.get("hardware", {}) if isinstance(snap.get("hardware"), dict) else {}
+        ups = snap.get("ups", {}) if isinstance(snap.get("ups"), dict) else {}
+
+        jobs_spec = [
+            ("Autonomy Loop", "/etc/cron.d/socx-autonomy", "/tmp/socx-autonomy-loop.env", "every 15m", "socx autonomy-cron status", autonomy.get("summary") or "refreshes Autopilot, metrics, Pi AI, and brief caches"),
+            ("Speedtest Direct/VPN", "", "/var/db/socx_speedtest_history.jsonl", "background loop / every 6h", "socx-doctor speedtest-profiles", f"{len(speed.get('paths') or [])} path summaries, {speed.get('count', 0)} retained tests"),
+            ("Memory Learning", "", str(self.label_history_path), "continuous", "open /memory", f"{len(memory.get('devices') or [])} active learned devices"),
+            ("Pi Model Tournament", "/etc/cron.d/socx-pi-llm", "/tmp/socx-pi-llm-analysis.env", "operator/cron", "socx pi-lab compare 45", f"{pi.get('online', 0)}/{pi.get('count', 0)} Pi nodes online"),
+            ("pfSense Doctor", "", "/tmp/socx-status.txt", "on demand", "socx status", doctor.get("summary") or data_truth.get("reason") or "read-only service and collector check"),
+            ("Config Drift", "/etc/cron.d/socx-config-drift", "/tmp/socx-config-drift.env", "hourly", "socx drift status", "checks pfSense config against the SOCX baseline"),
+            ("Evidence Snapshot", "/etc/cron.d/socx-snapshot", "/root/socx-snapshots", "nightly", "socx snapshot", "preserves read-only state, history, timeline, speed, topology, and APIs"),
+            ("Morning/Evening Brief", "/etc/cron.d/socx-report", "/root/socx-briefs", "daily", "socx brief", "operator summary with safe next steps"),
+            ("Weekly SOC Report", "/etc/cron.d/socx-report", "/root/socx-reports", "weekly", "socx-report weekly", "executive rollup and trend summary"),
+            ("UPS/Thermal Watch", "", str(self.ups_cache), "1s wall / cache", "open /health", f"UPS {ups.get('watts', '--')}W, CPU {hardware.get('max_temp_h') or '--'}"),
+            ("Unknown Device Reducer", "", "/tmp/socx-hosts-audit.txt", "on demand", "socx-hosts-audit", "reduces unknown devices/apps with passive host labels"),
+            ("Pi 4 Observability", "", "/tmp/socx-observability.env", "continuous", "socx observability", "Grafana/Influx/Telegraf evidence pipeline"),
+        ]
+
+        rows: list[dict[str, Any]] = []
+        for name, cron_path, evidence_path, fallback_schedule, command, summary in jobs_spec:
+            cron = self.automation_file_fact(cron_path) if cron_path else {"exists": True, "age_sec": None, "age_h": "--", "mtime": 0.0}
+            evidence = self.automation_file_fact(evidence_path) if evidence_path else {"exists": False, "age_sec": None, "age_h": "--", "mtime": 0.0}
+            schedule = self.cron_schedule_label(cron_path, fallback_schedule) if cron_path else fallback_schedule
+            age = evidence.get("age_sec")
+            if not cron.get("exists") and cron_path:
+                state = "MISSING"
+            elif evidence.get("exists") and (age is None or int(age) <= 86400):
+                state = "READY"
+            elif evidence.get("exists"):
+                state = "STALE"
+            else:
+                state = "WAITING"
+            if name == "UPS/Thermal Watch" and not ups.get("stale"):
+                state = "LIVE"
+            if name == "Memory Learning" and memory.get("devices"):
+                state = "READY"
+            rows.append({
+                "name": name,
+                "state": state,
+                "tone": self.automation_tone(state),
+                "schedule": schedule,
+                "last_run": evidence.get("age_h") or "--",
+                "next_run": schedule if schedule in {"continuous", "on demand"} else f"next {schedule}",
+                "duration": autonomy.get("duration_h") if name == "Autonomy Loop" else "--",
+                "result": str(summary or "--")[:160],
+                "command": command,
+                "safety": "read-only" if "quarantine" not in command else "approval required",
+                "cron": cron_path or "--",
+                "evidence": evidence_path or "--",
+            })
+
+        ready = sum(1 for row in rows if row["state"] in {"READY", "LIVE"})
+        missing = sum(1 for row in rows if row["state"] == "MISSING")
+        stale = sum(1 for row in rows if row["state"] == "STALE")
+        score = max(0, min(100, round((ready / max(1, len(rows))) * 100) - missing * 8 - stale * 4))
+        label = "READY" if score >= 80 and not missing else ("WATCH" if score >= 55 else "NEEDS REVIEW")
+        return {
+            "title": "SOCX Automation Center",
+            "label": label,
+            "score": score,
+            "summary": f"{ready}/{len(rows)} automations have current evidence; {missing} cron markers missing; {stale} stale caches",
+            "rows": rows,
+            "next_focus": [
+                "Open /timeline before changing anything so the recent sequence is visible.",
+                "Use safe commands from this page; firewall policy changes stay approval-gated.",
+                "Keep heavy jobs scheduled, not inside the 500 ms wall render loop.",
+            ],
+            "read_only": True,
+            "updated_ms": int(now * 1000),
+        }
+
+    def collect_unified_timeline(self) -> dict[str, Any]:
+        """Stitch SOCX changes, security events, speed truth, AI notes, and safe actions."""
+        snap = self.snapshot()
+        rows: list[dict[str, Any]] = []
+
+        def add(time_label: str, lane: str, severity: str, title: str, detail: str, source: str, page: str = "/mission", ts: Any = 0) -> None:
+            rows.append({
+                "time": time_label or "--",
+                "lane": lane,
+                "severity": str(severity or "LOW").upper(),
+                "title": str(title or "--")[:90],
+                "detail": str(detail or "--")[:220],
+                "source": source,
+                "page": page,
+                "ts": self.replay_row_ts({"ts": ts}) if ts else 0.0,
+            })
+
+        for row in (snap.get("what_changed", {}).get("rows", []) if isinstance(snap.get("what_changed"), dict) else [])[:12]:
+            add(row.get("time"), "CHANGE", row.get("severity"), row.get("title"), row.get("detail") or row.get("to"), "what-changed", "/mission", row.get("ts"))
+        for row in (snap.get("incident_timeline", {}).get("rows", []) if isinstance(snap.get("incident_timeline"), dict) else [])[:14]:
+            add(row.get("time"), row.get("kind") or "INCIDENT", row.get("severity"), row.get("title"), row.get("evidence") or row.get("detail"), "incident", "/incidents", row.get("ts"))
+        for row in (snap.get("ai_timeline", {}).get("rows", []) if isinstance(snap.get("ai_timeline"), dict) else [])[:8]:
+            add(row.get("age_h") or "live", "AI", row.get("severity"), row.get("source") or "AI verdict", row.get("reason"), "pi/miranda", "/ai", row.get("ts"))
+        speed = snap.get("speedtest_history", {}) if isinstance(snap.get("speedtest_history"), dict) else {}
+        for row in (speed.get("rows") or [])[-10:]:
+            ts = self.replay_row_ts(row)
+            path = str(row.get("path_slug") or row.get("profile") or "speed").upper()
+            status = str(row.get("status") or "UNKNOWN").upper()
+            sev = "LOW" if status == "OK" else "MED"
+            add(self.replay_time_label(ts), "SPEED", sev, f"{path} Speedtest {status}", f"{round(self.safe_float(row.get('download_mbps')))} down / {round(self.safe_float(row.get('upload_mbps')))} up / {round(self.safe_float(row.get('ping_ms')), 1)}ms", "speedtest-history", "/speedtest", ts)
+        for row in (self.collect_analyst_notebook().get("rows") or [])[:8]:
+            add(row.get("time"), "NOTE", row.get("severity"), row.get("title"), row.get("detail"), "notebook", row.get("page") or "/notebook", row.get("ts"))
+        for row in self.collect_safe_action_queue(snap, "timeline")[:8]:
+            add("queued", "ACTION", "MED" if str(row.get("approval", "")).lower() != "read-only" else "LOW", row.get("action"), row.get("why"), "safe-action-queue", "/actions")
+
+        with_ts = [row for row in rows if row.get("ts")]
+        without_ts = [row for row in rows if not row.get("ts")]
+        rows = sorted(with_ts, key=lambda item: float(item.get("ts") or 0), reverse=True) + without_ts
+        lane_counts: dict[str, int] = {}
+        severity_counts: dict[str, int] = {}
+        for row in rows:
+            lane_counts[row["lane"]] = lane_counts.get(row["lane"], 0) + 1
+            severity_counts[row["severity"]] = severity_counts.get(row["severity"], 0) + 1
+        return {
+            "title": "SOCX Unified Timeline",
+            "summary": f"{len(rows)} stitched events across {len(lane_counts)} lanes",
+            "rows": rows[:48],
+            "lanes": [{"name": k, "count": v} for k, v in sorted(lane_counts.items(), key=lambda item: (-item[1], item[0]))],
+            "severities": [{"name": k, "count": v} for k, v in sorted(severity_counts.items(), key=lambda item: (-item[1], item[0]))],
+            "next": [
+                "If a row looks important, open its page and ask SOCX about that exact evidence.",
+                "Use this sequence before approving firewall, DNSBL, or IDS tuning changes.",
+                "Archive a story or snapshot when the timeline shows a meaningful state change.",
+            ],
+            "read_only": True,
+            "updated_ms": now_ms(),
+        }
+
     def replay_bookmarks(
         self,
         rows: list[dict[str, Any]],
@@ -5104,6 +5297,12 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/twin":
             self.send_json(self.collector.collect_network_twin())
             return
+        if parsed.path == "/api/automation":
+            self.send_json(self.collector.collect_automation_center())
+            return
+        if parsed.path == "/api/timeline":
+            self.send_json(self.collector.collect_unified_timeline())
+            return
         if parsed.path == "/api/history":
             rows = self.collector.collect_history(240)
             self.send_json({"count": len(rows), "trend": self.collector.history_trend(rows), "rows": rows})
@@ -5223,7 +5422,7 @@ class SocxHandler(BaseHTTPRequestHandler):
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/memory", "/twin", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
+        if path in {"/speedtest", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/memory", "/twin", "/automation", "/timeline", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"

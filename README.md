@@ -110,6 +110,8 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Upgrades ChatOps with confidence scoring, explicit evidence used, "what would make this more certain" prompts, and a safe action queue.
 - Adds `/evidence`, `/notebook`, `/actions`, and `/mission-mode` so operator chat, threat hunts, reports, and model tests connect into a single read-only analyst workflow.
 - Adds `/memory` and `/twin`: SOCX Memory shows learned-normal device/app/service baselines, while AI Network Twin visualizes pfSense, WAN/LAN, Pi nodes, assets, flows, top apps, and memory context.
+- Adds `/automation` and `/api/automation`, a read-only Automation Center for SOCX schedules, cache freshness, next-run hints, and safe commands.
+- Adds `/timeline` and `/api/timeline`, a Unified Timeline that stitches speed changes, VPN/DNSBL/IDS/firewall events, Pi AI verdicts, notebook notes, and safe queued actions.
 - Adds the full-size `/chat` Operator Chat page with suggested questions, current signal context, readable action cards, and safety mode descriptions. Live Flow and Packet Story rows on the wall can be clicked to ask SOCX to explain that exact row.
 - Adds wall-safe Why buttons for Threat Pulse, Data Truth, LAN Asset Watch, AI Verdict Timeline, Incident Cockpit, and Network top talkers. Each button sends a focused question into Operator Chat.
 - Adds `/doctor` and `/api/doctor`, a cached read-only pfSense Doctor view for SOCX status, service parsing, WAN quality, VPN gateways, DNSBL, IDS, vnStat, LLDP, Speedtest profiles, and Pi LLM health.

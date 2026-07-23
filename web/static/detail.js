@@ -32,6 +32,8 @@ const pageName = () => {
   if (path.includes("mission-mode")) return "mission-mode";
   if (path.includes("memory")) return "memory";
   if (path.includes("twin")) return "twin";
+  if (path.includes("automation")) return "automation";
+  if (path.includes("timeline")) return "timeline";
   if (path.includes("incident")) return "incidents";
   if (path.includes("why")) return "why";
   if (path.includes("story")) return "story";
@@ -1301,6 +1303,84 @@ function renderTwin(state, twin) {
   wireAskButtons();
 }
 
+function renderAutomation(state, automation) {
+  title.textContent = "SOCX AUTOMATION CENTER";
+  subtitle.textContent = `${state.hostname || "pfSense"} / schedules, caches, safe commands / read-only`;
+  const rows = automation.rows || [];
+  const ready = rows.filter((r) => ["READY", "LIVE", "OK"].includes(String(r.state || "").toUpperCase())).length;
+  const watch = rows.filter((r) => ["WAITING", "STALE", "WATCH"].includes(String(r.state || "").toUpperCase())).length;
+  const missing = rows.filter((r) => ["MISSING", "ERROR", "FAIL"].includes(String(r.state || "").toUpperCase())).length;
+  const jobRows = rows.map((r) => [
+    r.name || "--",
+    r.state || "--",
+    r.schedule || "--",
+    r.last_run || "--",
+    r.next_run || "--",
+    r.result || "--",
+  ]);
+  const commandRows = rows.map((r) => [
+    r.name || "--",
+    r.command || "--",
+    r.safety || "read-only",
+    r.evidence || "--",
+  ]);
+  const askRows = rows.slice(0, 8).map((r) => ({
+    label: r.name || "automation",
+    question: `Explain this SOCX automation in plain English. Job: ${r.name || "--"}. State: ${r.state || "--"}. Schedule: ${r.schedule || "--"}. Last run: ${r.last_run || "--"}. Result: ${r.result || "--"}. Command: ${r.command || "--"}. Tell me what it does, whether it is healthy, and what safe thing to check next.`,
+  }));
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Automation State", [
+      `<div class="detail-score ${automation.score >= 80 ? "green" : automation.score >= 55 ? "yellow" : "red"}">${esc(automation.label || "WATCH")} ${esc(automation.score ?? "--")}/100</div>`,
+      `<div class="detail-reason">${esc(automation.summary || "SOCX automation evidence is warming up.")}</div>`,
+      kv("Ready", ready, "green"),
+      kv("Watch", watch, watch ? "yellow" : "cyan"),
+      kv("Needs Review", missing, missing ? "red" : "green"),
+    ].join("")),
+    card("Scheduled Jobs", table(["Job", "State", "Schedule", "Last Run", "Next", "Result"], jobRows)),
+    card("Safe Commands", table(["Job", "Command", "Safety", "Evidence"], commandRows)),
+    card("Operating Notes", table(["#", "Note"], (automation.next_focus || []).map((line, idx) => [idx + 1, line]))),
+    card("Ask About Automation", `<div class="ask-list">${askRows.map((item) => `<div><span>${esc(item.label)}</span>${askButton(item.question)}</div>`).join("") || "<span class=\"muted\">No automation rows ready yet.</span>"}</div>`),
+  ].join("");
+  wireAskButtons();
+}
+
+function renderTimeline(state, timeline) {
+  title.textContent = "SOCX UNIFIED TIMELINE";
+  subtitle.textContent = `${state.hostname || "pfSense"} / changes, speed, IDS, AI, notes, actions / read-only`;
+  const rows = timeline.rows || [];
+  const rowTable = rows.map((r) => [
+    r.time || "--",
+    r.lane || "--",
+    r.severity || "--",
+    r.title || "--",
+    r.detail || "--",
+    r.source || "--",
+  ]);
+  const askRows = rows.slice(0, 10).map((r) => ({
+    label: `${r.lane || "row"} ${r.time || ""}`,
+    detail: `${r.title || "--"} ${r.detail || ""}`,
+    question: `Explain this SOCX timeline row in plain English. Time: ${r.time || "--"}. Lane: ${r.lane || "--"}. Severity: ${r.severity || "--"}. Title: ${r.title || "--"}. Detail: ${r.detail || "--"}. Source: ${r.source || "--"}. Tell me what probably happened before/after it and the safest next check.`,
+  }));
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Timeline State", [
+      `<div class="detail-score cyan">${esc(timeline.summary || "Timeline warming up")}</div>`,
+      kv("Rows", rows.length, "cyan"),
+      kv("Lanes", (timeline.lanes || []).length, "cyan"),
+      kv("Safety", timeline.read_only ? "read-only" : "unknown", timeline.read_only ? "green" : "yellow"),
+    ].join("")),
+    card("By Lane", table(["Lane", "Events"], (timeline.lanes || []).map((r) => [r.name, r.count]))),
+    card("By Severity", table(["Severity", "Events"], (timeline.severities || []).map((r) => [r.name, r.count]))),
+    card("What Happened", table(["Time", "Lane", "Severity", "Title", "Detail", "Source"], rowTable)),
+    card("Safe Next Steps", table(["#", "Action"], (timeline.next || []).map((line, idx) => [idx + 1, line]))),
+    card("Ask About Timeline", `<div class="ask-list">${askRows.map((item) => `<div><span title="${esc(item.detail)}">${esc(item.label)}: ${esc(item.detail)}</span>${askButton(item.question)}</div>`).join("") || "<span class=\"muted\">No timeline rows ready yet.</span>"}</div>`),
+  ].join("");
+  wireAskButtons();
+}
+
 function renderFlowsPage(state, data) {
   title.textContent = "SOCX NETFLOW STORY";
   subtitle.textContent = `${state.hostname || "pfSense"} / NetFlow, top talkers, device trust / ${new Date().toLocaleTimeString()}`;
@@ -1561,6 +1641,12 @@ async function refresh() {
   const twin = page === "twin"
     ? await fetch("/api/twin", { cache: "no-store" }).then((r) => r.json())
     : null;
+  const automation = page === "automation"
+    ? await fetch("/api/automation", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const timeline = page === "timeline"
+    ? await fetch("/api/timeline", { cache: "no-store" }).then((r) => r.json())
+    : null;
   subtitle.textContent = `${state.hostname || "pfSense"} / ${state.mode || "live"} / ${new Date().toLocaleTimeString()}`;
   if (page === "cockpit") renderCockpit(state, cockpit || {});
   else if (page === "threat-story") renderThreatStory(state, threatStory || {});
@@ -1577,6 +1663,8 @@ async function refresh() {
   else if (page === "mission-mode") renderMissionMode(state, missionMode || {});
   else if (page === "memory") renderMemorySystem(state, memorySystem || {});
   else if (page === "twin") renderTwin(state, twin || {});
+  else if (page === "automation") renderAutomation(state, automation || {});
+  else if (page === "timeline") renderTimeline(state, timeline || {});
   else if (page === "flows") renderFlowsPage(state, flowsData || {});
   else if (page === "replay") renderReplay(state, replay || {});
   else if (page === "map") renderThreatMap(state, threatMap || {});

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added `/automation` and `/api/automation`, a read-only SOCX Automation Center for scheduled jobs, cache evidence, next-run hints, safe commands, and approval state.
+- Added `/timeline` and `/api/timeline`, a Unified Timeline that stitches Speedtest path changes, VPN/DNSBL/IDS/firewall events, Pi AI verdicts, notebook notes, and safe queued actions.
 - Added `/memory` and `/api/memory-system`, a local passive SOCX Memory System that summarizes learned-normal device baselines, current apps/services, unusual drift, flow memory, and incident memory.
 - Added `/twin` and `/api/twin`, an AI Network Twin view with pfSense, WAN, LAN, Pi nodes, devices, live flow links, top apps, and memory context.
 - Added ChatOps v2 evidence scaffolding: chat answers now include confidence, evidence used, what would improve certainty, and a safe action queue.
