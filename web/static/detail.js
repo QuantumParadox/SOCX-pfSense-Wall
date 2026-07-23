@@ -536,12 +536,20 @@ function renderFlowsPage(state, data) {
     weakestNames.has(name) ? "weakest watch item" : "supporting signal",
   ]);
   const flowRows = (nf.rows || []).slice(0, 12).map((r) => [
-    r.asset || "--",
-    r.peer || "--",
+    r.display_path || `${r.asset || "--"} -> ${r.peer || "--"}`,
     r.app || r.service || "--",
     r.bytes_h || "--",
-    r.direction || "--",
+    r.baseline_state || "--",
+    r.why || r.direction || "--",
   ]);
+  const watchFlowRows = (nf.watch_rows || []).slice(0, 8).map((r) => [
+    r.display_path || `${r.asset || "--"} -> ${r.peer || "--"}`,
+    r.app || r.service || "--",
+    r.bytes_h || "--",
+    r.baseline_state || "--",
+    r.why || "--",
+  ]);
+  const baselineRows = Object.entries(nf.baseline_counts || {}).map(([state, count]) => [state.toUpperCase(), count]);
   const trustRows = (trust.rows || []).slice(0, 12).map((r) => [
     r.asset || "--",
     `${r.score ?? "--"}/100`,
@@ -560,10 +568,12 @@ function renderFlowsPage(state, data) {
       kv("Status", nf.status || "--", nf.status === "OK" ? "green" : "yellow"),
       kv("Window", nf.window || "--", "cyan"),
       kv("Total", nf.total_bytes_h || "--", "cyan"),
+      kv("Normal/New/Watch", `${nf.baseline_counts?.normal || 0}/${nf.baseline_counts?.new || 0}/${nf.baseline_counts?.watch || 0}`, Number(nf.baseline_counts?.watch || 0) ? "yellow" : "green"),
       `<div class="detail-reason">${esc(nf.summary || "waiting for Pi4 Influx netflow data")}</div>`,
       table(["#", "Story"], (nf.stories || []).map((line, idx) => [idx + 1, line])),
     ].join("")),
-    card("Top Flow Groups", table(["Asset", "Peer", "App", "Bytes", "Direction"], flowRows)),
+    card("Who / What / Why", table(["Path", "App", "Bytes", "State", "Why"], flowRows)),
+    card("New / Watch Flows", table(["Path", "App", "Bytes", "State", "Why"], watchFlowRows)),
     card("Device Trust", [
       `<div class="detail-score ${trust.tone || "cyan"}">${esc(trust.label || "WATCH")} ${esc(trust.score ?? "--")}/100</div>`,
       `<div class="detail-reason">${esc(trust.summary || "waiting for device trust score")}</div>`,
@@ -584,6 +594,7 @@ function renderFlowsPage(state, data) {
       x.bytes_h || "--",
       x.count ?? "--",
     ]))),
+    card("Baseline Mix", table(["State", "Flow Groups"], baselineRows)),
     card("Safe Next Steps", table(["#", "Action"], (assurance.next || []).map((line, idx) => [idx + 1, line]))),
   ].join("");
 }

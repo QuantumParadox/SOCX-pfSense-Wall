@@ -237,6 +237,7 @@ def app_label(text: str) -> str:
         (r"anthropic|claude", "Anthropic"),
         (r"x\.ai|grok", "xAI/Grok"),
         (r"nvidia|build\.nvidia", "NVIDIA AI"),
+        (r"github|githubusercontent|githubassets", "GitHub"),
         (r"ollama", "Ollama"),
         (r"vllm", "vLLM"),
         (r"googleapis|gstatic|googleusercontent", "Google APIs"),
@@ -2155,7 +2156,7 @@ class SocxCollector:
         influx_db = cfg.get("SOCX_INFLUX_DB") or os.environ.get("SOCX_INFLUX_DB", "pfsense")
         window = os.environ.get("SOCX_NETFLOW_WINDOW", "10m")
         query = (
-            "SELECT src,dst,dst_port,protocol,in_bytes,in_packets "
+            "SELECT src,dst,src_port,dst_port,protocol,in_bytes,in_packets "
             f"FROM netflow WHERE time > now() - {window} "
             "ORDER BY time DESC LIMIT 1200"
         )
@@ -2177,13 +2178,15 @@ class SocxCollector:
                         continue
                     src = str(row.get("src") or "")
                     dst = str(row.get("dst") or "")
-                    port = str(row.get("dst_port") or "")
+                    src_port = str(row.get("src_port") or "")
+                    dst_port = str(row.get("dst_port") or "")
                     proto = str(row.get("protocol") or "").lower()
-                    key = (src, dst, port, proto)
+                    key = (src, dst, src_port, dst_port, proto)
                     item = grouped.setdefault(key, {
                         "src": src,
                         "dst": dst,
-                        "port": port,
+                        "src_port": src_port,
+                        "dst_port": dst_port,
                         "proto": proto,
                         "bytes": 0,
                         "packets": 0,
@@ -2193,7 +2196,9 @@ class SocxCollector:
             for item in grouped.values():
                 src = str(item.get("src") or "")
                 dst = str(item.get("dst") or "")
-                port = str(item.get("port") or "")
+                src_port = str(item.get("src_port") or "")
+                dst_port = str(item.get("dst_port") or "")
+                port = self.flow_service_port(src, dst, src_port, dst_port)
                 proto = str(item.get("proto") or "").lower()
                 direction = self.flow_direction(src, dst)
                 asset_ip = src if src.startswith("192.168.1.") else dst if dst.startswith("192.168.1.") else src
@@ -2207,6 +2212,8 @@ class SocxCollector:
                     "peer": self.pretty_host(peer_ip),
                     "direction": direction,
                     "port": port,
+                    "src_port": src_port,
+                    "dst_port": dst_port,
                     "proto": proto.upper() if proto else "--",
                     "service": service,
                     "app": app,
@@ -2216,6 +2223,8 @@ class SocxCollector:
                 })
         except Exception as exc:
             error = str(exc)[:180]
+        rows = self.collapse_nat_flow_rows(rows)
+        rows = self.apply_flow_baselines(rows)
         rows.sort(key=lambda row: int(row.get("bytes", 0) or 0), reverse=True)
 
         def rank(key: str, label_key: str = "") -> list[dict[str, Any]]:
@@ -2240,12 +2249,19 @@ class SocxCollector:
         status = "OK" if rows else ("WAITING" if not error else "WARN")
         summary = f"{len(rows)} flow groups, {human_bytes(total_bytes)} in {window}"
         if top_flow:
-            summary = f"top {top_flow.get('asset')} -> {top_flow.get('peer')} {top_flow.get('bytes_h')} via {top_flow.get('app')}"
+            top_path = top_flow.get("display_path") or f"{top_flow.get('asset')} -> {top_flow.get('peer')}"
+            summary = f"top {top_path} {top_flow.get('bytes_h')} via {top_flow.get('app')}"
         elif error:
             summary = f"netflow waiting: {error}"
         stories = []
         for row in rows[:5]:
-            stories.append(f"{row.get('asset')} -> {row.get('peer')} | {row.get('app')} | {row.get('bytes_h')} | {row.get('direction')}")
+            story_path = row.get("display_path") or f"{row.get('asset')} -> {row.get('peer')}"
+            stories.append(f"{story_path} | {row.get('app')} | {row.get('bytes_h')} | {row.get('baseline_state')}")
+        baseline_counts: dict[str, int] = {}
+        for row in rows:
+            state = str(row.get("baseline_state") or "unknown")
+            baseline_counts[state] = baseline_counts.get(state, 0) + 1
+        watch_rows = [row for row in rows if str(row.get("baseline_state")) in {"watch", "new"}][:8]
         return {
             "status": status,
             "summary": summary,
@@ -2258,9 +2274,115 @@ class SocxCollector:
             "total_bytes": total_bytes,
             "total_bytes_h": human_bytes(total_bytes),
             "stories": stories,
+            "baseline_counts": baseline_counts,
+            "watch_rows": watch_rows,
             "error": error,
             "updated_ms": now_ms(),
         }
+
+    def flow_service_port(self, src: str, dst: str, src_port: str, dst_port: str) -> str:
+        src_lan = src.startswith("192.168.1.")
+        dst_lan = dst.startswith("192.168.1.")
+        src_known = service_name(src_port)
+        dst_known = service_name(dst_port)
+        src_is_named = not src_known.startswith("port ") and src_known != "other"
+        dst_is_named = not dst_known.startswith("port ") and dst_known != "other"
+        if src_lan and not dst_lan:
+            return dst_port or src_port
+        if dst_lan and not src_lan:
+            return src_port if src_is_named or not dst_is_named else dst_port
+        if src == "WAN" or self.pretty_host(src) == "WAN":
+            return dst_port or src_port
+        if dst == "WAN" or self.pretty_host(dst) == "WAN":
+            return src_port if src_port else dst_port
+        if src_is_named and not dst_is_named:
+            return src_port
+        return dst_port or src_port
+
+    def collapse_nat_flow_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Prefer the LAN endpoint when IPFIX reports paired firewall/WAN and LAN legs."""
+        lan_by_peer: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for row in rows:
+            asset = str(row.get("asset") or "")
+            peer = str(row.get("peer") or "")
+            app = str(row.get("app") or "")
+            port = str(row.get("port") or "")
+            if asset.startswith("LAN.") or "192.168.1." in asset or asset.startswith("MIRANDA") or asset.startswith("Columbia") or asset.startswith("Pi"):
+                key = (peer, app, port)
+                best = lan_by_peer.get(key)
+                if not best or int(row.get("bytes", 0) or 0) > int(best.get("bytes", 0) or 0):
+                    lan_by_peer[key] = row
+        collapsed: list[dict[str, Any]] = []
+        seen_keys: set[tuple[str, str, str, str]] = set()
+        for original in rows:
+            row = dict(original)
+            asset = str(row.get("asset") or "")
+            peer = str(row.get("peer") or "")
+            app = str(row.get("app") or "")
+            port = str(row.get("port") or "")
+            replacement = lan_by_peer.get((peer, app, port))
+            if asset == "WAN" and replacement:
+                row["asset"] = replacement.get("asset")
+                row["src"] = replacement.get("src")
+                row["dst"] = replacement.get("dst")
+                row["direction"] = replacement.get("direction") or "LAN-WAN"
+                row["path_note"] = "via WAN"
+            row["display_path"] = self.flow_display_path(row)
+            key = (str(row.get("asset")), str(row.get("peer")), str(row.get("app")), str(row.get("port")))
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            collapsed.append(row)
+        return collapsed
+
+    def flow_display_path(self, row: dict[str, Any]) -> str:
+        asset = str(row.get("asset") or "--")
+        peer = str(row.get("peer") or "--")
+        path_note = str(row.get("path_note") or "")
+        if path_note:
+            return f"{asset} {path_note} -> {peer}"
+        return f"{asset} -> {peer}"
+
+    def flow_expected_apps(self, asset: str) -> tuple[str, set[str]]:
+        lower = asset.lower()
+        if "miranda" in lower or "workstation" in lower:
+            return "AI/research workstation", {"https", "dns", "OpenAI", "Anthropic", "Hugging Face", "IBM Quantum", "NVIDIA AI", "GitHub", "Microsoft", "Google APIs", "AWS/CloudFront"}
+        if "pi" in lower or "columbia" in lower or "192.168.1.121" in lower or "192.168.1.180" in lower:
+            return "SOCX/Pi AI node", {"https", "dns", "ssh", "Ollama", "vLLM", "pi-llm", "socx-web", "influx", "metrics", "node-exporter", "Google APIs"}
+        if "apple" in lower or "tv" in lower or "roku" in lower:
+            return "streaming/media device", {"https", "dns", "Netflix", "Prime Video", "YouTube", "Apple/iCloud", "Apple Push", "Disney+", "Hulu", "Max", "Peacock", "Roku"}
+        if asset.startswith("LAN."):
+            return "unknown LAN learner", {"https", "dns", "ntp", "Apple/iCloud", "Apple Push", "Google APIs", "Microsoft"}
+        if asset == "WAN":
+            return "firewall/WAN transit", {"https", "dns", "ntp", "ipsec-nat", "ike"}
+        return "known network device", {"https", "dns", "ntp", "ssh", "Microsoft", "Google APIs", "Apple/iCloud"}
+
+    def apply_flow_baselines(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        for row in rows:
+            asset = str(row.get("asset") or "")
+            app = str(row.get("app") or row.get("service") or "other")
+            profile, expected = self.flow_expected_apps(asset)
+            byte_count = int(row.get("bytes", 0) or 0)
+            is_expected = app in expected or str(row.get("service") or "") in expected
+            if is_expected:
+                state = "normal"
+                tone = "green"
+                why = f"{app} is expected for {profile}"
+            elif app.startswith("port ") or app in {"other", "unknown"}:
+                state = "watch" if byte_count > 1_000_000 else "new"
+                tone = "yellow"
+                why = f"{app} is not yet mapped for {profile}"
+            else:
+                state = "new"
+                tone = "yellow"
+                why = f"{app} is new for {profile}"
+            row["profile"] = profile
+            row["expected_apps"] = sorted(expected)[:8]
+            row["baseline_state"] = state
+            row["baseline_tone"] = tone
+            row["why"] = why
+            row["display_path"] = row.get("display_path") or self.flow_display_path(row)
+        return rows
 
     def flow_direction(self, src: str, dst: str) -> str:
         src_lan = src.startswith("192.168.1.")
@@ -2321,6 +2443,22 @@ class SocxCollector:
             if item["bytes"] > 2_000_000_000:
                 item["score"] = int(item["score"]) - 8
                 item["reason"] = f"heavy NetFlow usage {item['bytes_h']}"
+        for row in netflow.get("watch_rows", []) if isinstance(netflow.get("watch_rows"), list) else []:
+            asset = str(row.get("asset") or "device")
+            item = devices.setdefault(asset, {
+                "asset": asset,
+                "score": 74 if asset.startswith("LAN.") else 84,
+                "confidence": "likely" if not asset.startswith("LAN.") else "unknown",
+                "profile": row.get("profile") or "network-active",
+                "apps": [],
+                "unusual": [],
+                "bytes": 0,
+                "bytes_h": "--",
+                "reason": "active in NetFlow",
+            })
+            penalty = 10 if row.get("baseline_state") == "watch" else 5
+            item["score"] = max(0, int(item.get("score", 74)) - penalty)
+            item["reason"] = str(row.get("why") or "new flow outside learned baseline")
         blocked_lan = {str(x.get("name")) for x in incident.get("lan_hosts", [])} if isinstance(incident.get("lan_hosts"), list) else set()
         for asset, item in devices.items():
             if any(host and host in asset for host in blocked_lan):
@@ -3129,7 +3267,7 @@ class SocxCollector:
         phases = ["collected pfSense telemetry", f"classified request as {intent}"]
         local = self.local_chat_answer(text, intent, context)
         pi_answer: dict[str, Any] = {}
-        prefer_local_truth = bool(re.search(r"\b(bandwidth|top talker|top talkers|who is using|netflow|ipfix|flow|traffic)\b", text.lower()))
+        prefer_local_truth = bool(re.search(r"\b(weird|strange|unusual|anomal|normal|bandwidth|top talker|top talkers|who is using|netflow|ipfix|flow|traffic)\b", text.lower()))
         if intent in {"explain", "diagnose", "draft"} and not prefer_local_truth:
             pi_answer = self.ask_pi_operator_chat(text, intent, context)
             if pi_answer.get("ok"):
@@ -3207,6 +3345,8 @@ class SocxCollector:
                 "top_assets": (netflow_intel.get("top_assets") or [])[:5],
                 "top_apps": (netflow_intel.get("top_apps") or [])[:5],
                 "stories": (netflow_intel.get("stories") or [])[:5],
+                "watch_rows": (netflow_intel.get("watch_rows") or [])[:6],
+                "baseline_counts": netflow_intel.get("baseline_counts") or {},
                 "rows": (netflow_intel.get("rows") or [])[:8],
             },
             "device_trust": {
@@ -3288,11 +3428,16 @@ class SocxCollector:
             if watch:
                 lines.append("Power-user watch items: " + "; ".join(watch[:4]))
             lines.append("Safe buttons: Evidence preserves a hashed vault, Drift checks config.xml, IDS EVE summarizes Suricata, Flow checks softflowd, Topology checks LLDP, and Quarantine only drafts a plan.")
-        if any(word in q for word in ["bandwidth", "top talker", "top talkers", "who is using", "netflow", "ipfix", "flow", "app", "traffic"]):
+        if any(word in q for word in ["weird", "strange", "unusual", "anomaly", "anomalies", "normal", "bandwidth", "top talker", "top talkers", "who is using", "netflow", "ipfix", "flow", "app", "traffic"]):
             lines.append(f"NetFlow story is {netflow.get('status', 'UNKNOWN')}: {netflow.get('summary', 'waiting for Pi4 Influx flow data')}")
             stories = netflow.get("stories") or []
             if stories:
                 lines.append("Top flow story: " + " | ".join(str(story) for story in stories[:3]))
+            watch_rows = netflow.get("watch_rows") or []
+            if watch_rows:
+                lines.append("Unusual/new flow checks: " + " | ".join(f"{r.get('display_path') or r.get('asset')} {r.get('app')} {r.get('bytes_h')}: {r.get('why')}" for r in watch_rows[:3]))
+            else:
+                lines.append("No high-confidence flow anomaly is standing out in the current NetFlow window.")
             top_assets = netflow.get("top_assets") or []
             if top_assets:
                 lines.append("Top assets: " + ", ".join(f"{x.get('name')} {x.get('bytes_h')}" for x in top_assets[:4]))
@@ -3332,7 +3477,7 @@ class SocxCollector:
             commands.append("socx eve")
         if "dnsbl" in lower:
             commands.append("socx-doctor dnsbl-review")
-        if "power" in lower or "flow" in lower or "netflow" in lower or "ipfix" in lower:
+        if re.search(r"\b(power|flow|netflow|ipfix|bandwidth|top talker|weird|unusual|anomal)\b", lower):
             commands.append("socx flow-export status")
             commands.append("open /flows")
         if "lldp" in lower or "topology" in lower:
