@@ -14,6 +14,7 @@ import csv
 import hashlib
 import html
 import json
+import math
 import mimetypes
 import os
 import random
@@ -2383,6 +2384,112 @@ class SocxCollector:
             "affected": (mission.get("what_matters") or ["no critical affected asset identified"])[:3],
             "next": (mission.get("what_to_check") or ["open /mission", "open /evidence"])[:3],
             "tone": "yellow" if active else "green",
+            "updated_ms": now_ms(),
+        }
+
+    def collect_memory_system(self) -> dict[str, Any]:
+        snap = self.snapshot()
+        brain = snap.get("label_brain", {}) if isinstance(snap.get("label_brain"), dict) else {}
+        trust = snap.get("device_trust", {}) if isinstance(snap.get("device_trust"), dict) else {}
+        netflow = snap.get("netflow_intel", {}) if isinstance(snap.get("netflow_intel"), dict) else {}
+        incident = snap.get("incident", {}) if isinstance(snap.get("incident"), dict) else {}
+        history = self.label_history_cache if isinstance(self.label_history_cache, dict) else {}
+        devices = brain.get("devices") if isinstance(brain.get("devices"), list) else []
+        hist_devices = history.get("devices") if isinstance(history.get("devices"), dict) else {}
+        rows = []
+        for dev in devices[:16]:
+            asset = str(dev.get("asset") or "")
+            base = hist_devices.get(asset) if isinstance(hist_devices.get(asset), dict) else {}
+            rows.append({
+                "asset": asset,
+                "friendly_name": dev.get("friendly_name") or asset,
+                "profile": dev.get("profile") or base.get("profile") or "device",
+                "confidence": dev.get("identity_confidence") or dev.get("confidence") or "unknown",
+                "seen": int(base.get("seen", 0) or 0),
+                "normal_apps": (base.get("apps") if isinstance(base.get("apps"), list) else dev.get("normal_apps") or [])[:6],
+                "normal_services": (base.get("services") if isinstance(base.get("services"), list) else dev.get("normal_services") or [])[:6],
+                "current_apps": [x.get("name") for x in (dev.get("apps") or []) if isinstance(x, dict)][:6],
+                "current_services": [x.get("name") for x in (dev.get("services") or []) if isinstance(x, dict)][:6],
+                "unusual": dev.get("unusual") or [],
+                "summary": dev.get("summary") or "--",
+            })
+        anomalies = brain.get("anomalies") if isinstance(brain.get("anomalies"), list) else []
+        score = max(0, min(100, int(trust.get("score") or 60) + min(10, len(rows)) - len(anomalies) * 6))
+        return {
+            "title": "SOCX Memory System",
+            "label": "LEARNING" if rows else "WAITING",
+            "score": score,
+            "summary": f"{len(rows)} active devices, {len(hist_devices)} remembered devices, {len(anomalies)} learned-normal changes",
+            "devices": rows,
+            "profiles": brain.get("profiles", []),
+            "now_watching": brain.get("now_watching", []),
+            "top_apps": brain.get("top_apps", []),
+            "anomalies": anomalies,
+            "flow_memory": {
+                "summary": netflow.get("summary"),
+                "baseline_counts": netflow.get("baseline_counts") or {},
+                "watch_rows": (netflow.get("watch_rows") or [])[:8],
+            },
+            "incident_memory": {
+                "fw_sources": (incident.get("blocked_sources") or [])[:5],
+                "ports": (incident.get("blocked_ports") or [])[:5],
+                "dnsbl": (incident.get("dnsbl_domains") or [])[:5],
+            },
+            "next": [
+                "Use /device for any row with unusual app or service drift.",
+                "Keep learning passive unless a human confirms owner, app, or policy context.",
+                "Improve memory by keeping DHCP hostnames, DNS resolver logs, and NetFlow active.",
+            ],
+            "privacy": "local passive memory only: pf states, DNS/DNSBL, DHCP/host labels, and NetFlow summaries",
+            "read_only": True,
+            "updated_ms": now_ms(),
+        }
+
+    def collect_network_twin(self) -> dict[str, Any]:
+        snap = self.snapshot()
+        brain = snap.get("label_brain", {}) if isinstance(snap.get("label_brain"), dict) else {}
+        flows = snap.get("flows", []) if isinstance(snap.get("flows"), list) else []
+        pi = snap.get("pi_nodes", {}) if isinstance(snap.get("pi_nodes"), dict) else {}
+        netflow = snap.get("netflow_intel", {}) if isinstance(snap.get("netflow_intel"), dict) else {}
+        threat = snap.get("threat_pulse", {}) if isinstance(snap.get("threat_pulse"), dict) else {}
+        nodes = [
+            {"id": "pfsense", "label": "pfSense", "type": "gateway", "x": 50, "y": 50, "tone": "green", "detail": snap.get("hostname", "pfSense")},
+            {"id": "wan", "label": "WAN", "type": "internet", "x": 88, "y": 22, "tone": "yellow" if int(threat.get("fw_blocks", 0) or 0) else "green", "detail": f"FW {threat.get('fw_blocks', 0)}"},
+            {"id": "lan", "label": "LAN", "type": "network", "x": 14, "y": 78, "tone": "cyan", "detail": "home/lab assets"},
+        ]
+        for idx, node in enumerate((pi.get("nodes") or [])[:3]):
+            nodes.append({"id": f"pi{idx}", "label": node.get("name") or node.get("ip") or "Pi", "type": "ai", "x": 18 + idx * 18, "y": 22, "tone": "green" if node.get("status") == "online" else "red", "detail": node.get("role_h") or node.get("service_h") or "Pi AI"})
+        devices = brain.get("devices") if isinstance(brain.get("devices"), list) else []
+        for idx, dev in enumerate(devices[:10]):
+            angle = (idx / max(1, min(10, len(devices)))) * 6.283
+            x = round(50 + 34 * math.cos(angle), 1)
+            y = round(52 + 28 * math.sin(angle), 1)
+            tone = "yellow" if dev.get("unusual") else "cyan"
+            if str(dev.get("profile")) == "AI lab":
+                tone = "purple"
+            nodes.append({"id": f"dev{idx}", "label": dev.get("friendly_name") or dev.get("asset"), "type": dev.get("profile") or "device", "x": x, "y": y, "tone": tone, "detail": dev.get("summary") or ""})
+        links = [
+            {"source": "wan", "target": "pfsense", "label": "WAN blocks", "weight": int(threat.get("fw_blocks", 0) or 1), "tone": "yellow"},
+            {"source": "pfsense", "target": "lan", "label": "LAN routing", "weight": 4, "tone": "cyan"},
+        ]
+        for idx, flow in enumerate(flows[:12]):
+            source = "pfsense"
+            target = f"dev{idx % max(1, min(10, len(devices) or 1))}"
+            peer = str(flow.get("peer") or "")
+            if peer.startswith("EXT.") or not peer.startswith("LAN."):
+                links.append({"source": target, "target": "wan", "label": flow.get("service") or flow.get("app") or "flow", "weight": int(flow.get("count", 1) or 1), "tone": "purple" if str(flow.get("service", "")).lower() in {"openai", "hugging face", "ibm quantum"} else "cyan"})
+            else:
+                links.append({"source": source, "target": target, "label": flow.get("service") or "lan", "weight": int(flow.get("count", 1) or 1), "tone": "cyan"})
+        stories = netflow.get("stories") if isinstance(netflow.get("stories"), list) else []
+        return {
+            "title": "SOCX AI Network Twin",
+            "summary": f"{len(nodes)} nodes, {len(links)} links, {pi.get('online', 0)}/{pi.get('count', 0)} Pi nodes online",
+            "nodes": nodes,
+            "links": links[:20],
+            "stories": stories[:6],
+            "top_apps": brain.get("top_apps", [])[:8],
+            "memory": self.collect_memory_system(),
+            "read_only": True,
             "updated_ms": now_ms(),
         }
 
@@ -4991,6 +5098,12 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/mission-mode":
             self.send_json(self.collector.collect_mission_mode_signal())
             return
+        if parsed.path == "/api/memory-system":
+            self.send_json(self.collector.collect_memory_system())
+            return
+        if parsed.path == "/api/twin":
+            self.send_json(self.collector.collect_network_twin())
+            return
         if parsed.path == "/api/history":
             rows = self.collector.collect_history(240)
             self.send_json({"count": len(rows), "trend": self.collector.history_trend(rows), "rows": rows})
@@ -5110,7 +5223,7 @@ class SocxHandler(BaseHTTPRequestHandler):
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
+        if path in {"/speedtest", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/memory", "/twin", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"

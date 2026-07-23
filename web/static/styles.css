@@ -1613,6 +1613,105 @@ body.night-wall .ticker-shell {
   border-color: rgba(118, 242, 125, .5);
 }
 
+.twin-map {
+  position: relative;
+  min-height: clamp(360px, 42vh, 620px);
+  overflow: hidden;
+  border: 1px solid rgba(52, 215, 242, .18);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at center, rgba(52, 215, 242, .12), transparent 35%),
+    linear-gradient(135deg, rgba(52, 215, 242, .06), rgba(183, 140, 255, .06));
+}
+
+.twin-rings {
+  position: absolute;
+  inset: 12%;
+  border: 2px solid rgba(52, 215, 242, .28);
+  border-radius: 50%;
+  box-shadow: inset 0 0 44px rgba(52, 215, 242, .12), 0 0 30px rgba(52, 215, 242, .08);
+}
+
+.twin-rings::before,
+.twin-rings::after {
+  content: "";
+  position: absolute;
+  inset: 15%;
+  border: 1px solid rgba(118, 242, 125, .22);
+  border-radius: 50%;
+}
+
+.twin-rings::after {
+  inset: 31%;
+  border-color: rgba(183, 140, 255, .28);
+}
+
+.twin-node {
+  position: absolute;
+  z-index: 2;
+  min-width: 86px;
+  max-width: 160px;
+  transform: translate(-50%, -50%);
+  padding: 7px 9px;
+  border: 1px solid rgba(52, 215, 242, .42);
+  border-radius: 6px;
+  background: rgba(6, 12, 18, .9);
+  box-shadow: 0 0 22px rgba(52, 215, 242, .16);
+  animation: twinPulse 5.5s ease-in-out infinite;
+}
+
+.twin-node b,
+.twin-node span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.twin-node b {
+  color: var(--text);
+  font-size: clamp(12px, .86vw, 17px);
+}
+
+.twin-node span {
+  color: var(--muted);
+  font-size: clamp(9px, .66vw, 12px);
+  text-transform: uppercase;
+}
+
+.twin-node.green { border-color: rgba(118, 242, 125, .56); box-shadow: 0 0 24px rgba(118, 242, 125, .18); }
+.twin-node.yellow { border-color: rgba(255, 226, 103, .62); box-shadow: 0 0 24px rgba(255, 226, 103, .18); }
+.twin-node.red { border-color: rgba(255, 92, 122, .62); box-shadow: 0 0 24px rgba(255, 92, 122, .18); }
+.twin-node.purple { border-color: rgba(183, 140, 255, .68); box-shadow: 0 0 26px rgba(183, 140, 255, .22); }
+
+@keyframes twinPulse {
+  0%, 100% { filter: brightness(.92); }
+  50% { filter: brightness(1.18); }
+}
+
+.twin-links {
+  display: grid;
+  gap: 6px;
+}
+
+.twin-link-row {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 30px;
+  padding: 6px 8px;
+  border: 1px solid rgba(52, 215, 242, .12);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, .025);
+}
+
+.twin-link-row span { color: var(--muted); }
+.twin-link-row b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cyan); }
+.twin-link-row em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-style: normal; }
+.twin-link-row.yellow b { color: var(--yellow); }
+.twin-link-row.purple b { color: var(--purple); }
+
 .speed-row b,
 .memory-row b {
   font-weight: 950;

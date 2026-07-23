@@ -30,6 +30,8 @@ const pageName = () => {
   if (path.includes("notebook")) return "notebook";
   if (path.includes("actions")) return "actions";
   if (path.includes("mission-mode")) return "mission-mode";
+  if (path.includes("memory")) return "memory";
+  if (path.includes("twin")) return "twin";
   if (path.includes("incident")) return "incidents";
   if (path.includes("why")) return "why";
   if (path.includes("story")) return "story";
@@ -1230,6 +1232,75 @@ function renderMissionMode(state, mode) {
   ].join("");
 }
 
+function renderMemorySystem(state, memory) {
+  title.textContent = "SOCX MEMORY";
+  subtitle.textContent = `${state.hostname || "pfSense"} / learned normal / local passive`;
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Memory State", [
+      `<div class="detail-score ${memory.score >= 80 ? "green" : memory.score >= 60 ? "yellow" : "red"}">${esc(memory.label || "LEARNING")} ${esc(memory.score ?? "--")}/100</div>`,
+      `<div class="detail-reason">${esc(memory.summary || "SOCX memory is learning.")}</div>`,
+      kv("Privacy", memory.privacy || "--", "cyan"),
+    ].join("")),
+    card("Device Baselines", table(["Device", "Profile", "Seen", "Normal Apps", "Current Apps", "Unusual"], (memory.devices || []).map((d) => [
+      d.friendly_name || d.asset,
+      d.profile,
+      d.seen,
+      (d.normal_apps || []).join(", "),
+      (d.current_apps || []).join(", "),
+      (d.unusual || []).join(", ") || "--",
+    ]))),
+    card("Now Watching", table(["Group", "Apps"], (memory.now_watching || []).map((g) => [g.group, (g.apps || []).join(", ")]))),
+    card("Profiles", table(["Profile", "Devices"], (memory.profiles || []).map((p) => [p.name, p.count]))),
+    card("Flow Memory", [
+      `<div class="detail-reason">${esc(memory.flow_memory?.summary || "Flow memory waiting.")}</div>`,
+      table(["Path", "App", "Bytes", "State", "Why"], (memory.flow_memory?.watch_rows || []).map((r) => [
+        r.display_path || `${r.asset || "--"} -> ${r.peer || "--"}`,
+        r.app || r.service || "--",
+        r.bytes_h || "--",
+        r.baseline_state || "--",
+        r.why || "--",
+      ])),
+    ].join("")),
+    card("Safe Next Steps", table(["#", "Action"], (memory.next || []).map((x, idx) => [idx + 1, x]))),
+  ].join("");
+  wireAskButtons();
+}
+
+function renderTwin(state, twin) {
+  title.textContent = "SOCX AI NETWORK TWIN";
+  subtitle.textContent = `${state.hostname || "pfSense"} / live assets, Pi AI, flows / read-only`;
+  const nodeHtml = (twin.nodes || []).map((n) => `
+    <div class="twin-node ${esc(n.tone || "cyan")} ${esc(n.type || "device")}" style="left:${Number(n.x || 50)}%;top:${Number(n.y || 50)}%" title="${esc(n.detail || "")}">
+      <b>${esc(n.label || n.id)}</b>
+      <span>${esc(n.type || "node")}</span>
+    </div>`).join("");
+  const linkHtml = (twin.links || []).slice(0, 18).map((l, idx) => `
+    <div class="twin-link-row ${esc(l.tone || "cyan")}">
+      <span>${String(idx + 1).padStart(2, "0")}</span>
+      <b>${esc(l.source)} -> ${esc(l.target)}</b>
+      <em>${esc(l.label || "flow")} x${esc(l.weight || 1)}</em>
+    </div>`).join("");
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Twin Map", [
+      `<div class="detail-reason">${esc(twin.summary || "Network twin waiting.")}</div>`,
+      `<div class="twin-map"><div class="twin-rings"></div>${nodeHtml}</div>`,
+    ].join("")),
+    card("Live Links", `<div class="twin-links">${linkHtml || "<span class=\"muted\">No links ready.</span>"}</div>`),
+    card("Flow Stories", table(["#", "Story"], (twin.stories || []).map((x, idx) => [idx + 1, x]))),
+    card("Top Apps", table(["App", "Count"], (twin.top_apps || []).map((x) => [x.name, x.count]))),
+    card("Memory Summary", [
+      kv("State", `${twin.memory?.label || "--"} ${twin.memory?.score ?? "--"}/100`, "cyan"),
+      kv("Summary", twin.memory?.summary || "--", "cyan"),
+      `<div class="story-actions"><a href="/memory">Open Memory</a><a href="/flows">Open Flows</a><a href="/devices">Open Devices</a></div>`,
+    ].join("")),
+  ].join("");
+  wireAskButtons();
+}
+
 function renderFlowsPage(state, data) {
   title.textContent = "SOCX NETFLOW STORY";
   subtitle.textContent = `${state.hostname || "pfSense"} / NetFlow, top talkers, device trust / ${new Date().toLocaleTimeString()}`;
@@ -1484,6 +1555,12 @@ async function refresh() {
   const missionMode = page === "mission-mode"
     ? await fetch("/api/mission-mode", { cache: "no-store" }).then((r) => r.json())
     : null;
+  const memorySystem = page === "memory"
+    ? await fetch("/api/memory-system", { cache: "no-store" }).then((r) => r.json())
+    : null;
+  const twin = page === "twin"
+    ? await fetch("/api/twin", { cache: "no-store" }).then((r) => r.json())
+    : null;
   subtitle.textContent = `${state.hostname || "pfSense"} / ${state.mode || "live"} / ${new Date().toLocaleTimeString()}`;
   if (page === "cockpit") renderCockpit(state, cockpit || {});
   else if (page === "threat-story") renderThreatStory(state, threatStory || {});
@@ -1498,6 +1575,8 @@ async function refresh() {
   else if (page === "notebook") renderNotebook(state, notebook || {});
   else if (page === "actions") renderActions(state, actions || {});
   else if (page === "mission-mode") renderMissionMode(state, missionMode || {});
+  else if (page === "memory") renderMemorySystem(state, memorySystem || {});
+  else if (page === "twin") renderTwin(state, twin || {});
   else if (page === "flows") renderFlowsPage(state, flowsData || {});
   else if (page === "replay") renderReplay(state, replay || {});
   else if (page === "map") renderThreatMap(state, threatMap || {});

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added `/memory` and `/api/memory-system`, a local passive SOCX Memory System that summarizes learned-normal device baselines, current apps/services, unusual drift, flow memory, and incident memory.
+- Added `/twin` and `/api/twin`, an AI Network Twin view with pfSense, WAN, LAN, Pi nodes, devices, live flow links, top apps, and memory context.
 - Added ChatOps v2 evidence scaffolding: chat answers now include confidence, evidence used, what would improve certainty, and a safe action queue.
 - Added `/evidence`, `/api/evidence`, `/notebook`, `/api/notebook`, `/actions`, `/api/actions`, `/mission-mode`, and `/api/mission-mode`.
 - Added SOCX Analyst Notebook for recent changes, active hunt notes, and evidence-card notes.
