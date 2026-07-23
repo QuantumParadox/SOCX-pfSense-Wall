@@ -162,14 +162,14 @@ do {
         if (!$captureOk) {
             exit(3);
         }
-        echo terminal_atomic_write(terminal_full_redraw($screen, !empty($state['force_clear'])));
+        echo terminal_synchronized_write(terminal_atomic_write(terminal_full_redraw($screen, !empty($state['force_clear']))));
         $renderMs = (microtime(true) - $renderStart) * 1000;
         $state['force_clear'] = false;
         $state['ticker_changed'] = false;
     } else {
         $renderStart = microtime(true);
         if (($tickerConfig['mode'] ?? 'scroll') === 'scroll' || !empty($state['ticker_changed'])) {
-            echo terminal_atomic_write(render_ticker_update($frame, $cols, $rows, $color, $theme));
+            echo terminal_synchronized_write(terminal_atomic_write(render_ticker_update($frame, $cols, $rows, $color, $theme)));
             $state['ticker_changed'] = false;
         }
         $renderMs = (microtime(true) - $renderStart) * 1000;
@@ -186,6 +186,24 @@ function terminal_atomic_write(string $payload): string
         return '';
     }
     return "\033[?7l" . $payload . "\033[?7h";
+}
+
+function terminal_synchronized_write(string $payload): string
+{
+    if ($payload === '') {
+        return '';
+    }
+
+    /*
+     * Modern tmux/xterm terminals can hold screen writes until the matching
+     * end marker. This prevents an occasional half-painted frame from being
+     * visible on the physical SOCX monitor. Older terminals simply ignore
+     * these private mode markers and retain the existing atomic-write path.
+     */
+    if (getenv('SOCX_DISABLE_SYNC_OUTPUT') === 'true') {
+        return $payload;
+    }
+    return "\033[?2026h" . $payload . "\033[?2026l";
 }
 
 function terminal_full_redraw(string $screen, bool $clear): string

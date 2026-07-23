@@ -45,6 +45,11 @@ try:
     err_size = Path("/tmp/socx-wall.err").stat().st_size
 except OSError:
     pass
+restart_count = 0
+try:
+    restart_count = len([line for line in Path("/tmp/socx-wall-restarts.log").read_text(errors="ignore").splitlines() if line.strip()])
+except OSError:
+    pass
 
 pgrep = cmd(["pgrep", "-f", "socx-wall"])
 wall_pids = [x for x in pgrep.splitlines() if x.strip()]
@@ -68,6 +73,8 @@ if bad_hits:
     issues.append("renderer text warning: " + ", ".join(bad_hits))
 if err_size:
     issues.append(f"wall error log has {err_size} bytes")
+if restart_count:
+    issues.append(f"wall renderer restarted {restart_count} time(s)")
 if len(wall_pids) > 3:
     issues.append(f"many wall renderer pids: {len(wall_pids)}")
 if slow_loop >= 900:
@@ -90,6 +97,7 @@ result = {
     "wall_pids": wall_pids[:8],
     "wall_pid_count": len(wall_pids),
     "wall_error_bytes": err_size,
+    "wall_restart_count": restart_count,
     "slowest_loop_ms": round(slow_loop, 1) if slow_loop else 0,
     "missing_markers": missing,
     "issues": issues,

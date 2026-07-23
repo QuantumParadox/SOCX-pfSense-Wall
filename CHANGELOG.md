@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Stabilized terminal wall painting with synchronized-output markers so modern tmux terminals reveal a completed SOCX frame rather than a partially painted one.
+- Moved wall-renderer restart messages out of the visible pane and into a restart log; `socx glitch-watch` now reports real renderer restarts separately from ordinary frame health.
 - Added SOCX Autonomy With Guardrails: a live CARE score, autonomous watch mode, and lightweight auto-evidence markers for high-attention or stale-data conditions.
 - Expanded What Changed intelligence to track top app, Speedtest truth, VPN path state, top blocked port/source, learned-normal drift, data freshness, and rough network direction changes.
 - Safe Action Queue and Operator Chat now include CARE, watch-mode, and auto-evidence context so "should I care?" returns a clear score, reasons, and safe next command.

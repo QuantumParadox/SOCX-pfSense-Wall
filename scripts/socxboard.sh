@@ -5,7 +5,9 @@ MODE="${SOCX_MODE:-wall}"
 THEME="${SOCX_THEME:-modern-btop}"
 TOPR="pfbtop --interval 0.5 --top 24"
 if [ "$MODE" = "wall" ]; then
-    TOPR="/bin/sh -c 'while :; do /usr/local/sbin/socx-wall --mode wall --theme \"$THEME\" --ticker-smooth --interval 0.5 2>>/tmp/socx-wall.err; printf \"\\033[0m\\nSOCX wall renderer exited; restarting in 3s\\n\"; sleep 3; done'"
+    # Keep recovery messages out of the display pane. A visible shell message
+    # between frames looks like a random "weird screen" on the wall monitor.
+    TOPR="/bin/sh -c 'while :; do /usr/local/sbin/socx-wall --mode wall --theme \"$THEME\" --ticker-smooth --interval 0.5 2>>/tmp/socx-wall.err; echo \"socx-wall exited; retrying in 3s\" >>/tmp/socx-wall-restarts.log; sleep 3; done'"
 fi
 ZK=/var/spool/zeek/zeek
 SURI=$(ls -d /var/log/suricata/suricata_* 2>/dev/null | head -1)
@@ -92,6 +94,12 @@ if [ "$MODE" = "wall" ] && [ "$SOCX_PACKET_RADAR_ENABLED" = "true" ] && command 
     SOCX_PACKET_RADAR_IFACE="$SOCX_PACKET_RADAR_IFACE" SOCX_PACKET_RADAR_FILTER="$SOCX_PACKET_RADAR_FILTER" \
         /usr/local/sbin/socx-packet-radar-cache loop >/tmp/socx-packet-radar-cache.log 2>&1 &
     echo $! >/tmp/socx-packet-radar.pid
+fi
+
+# This log belongs to the current wall session. The glitch watcher can now
+# distinguish a paint artifact from an actual renderer restart.
+if [ "$MODE" = "wall" ]; then
+    : >/tmp/socx-wall-restarts.log
 fi
 
 # W1 NETX: full-screen SOCX wall. Command tools live in popups/COMMANDX so
