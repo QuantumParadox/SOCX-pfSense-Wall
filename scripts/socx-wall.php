@@ -85,6 +85,7 @@ $state = [
     'cols' => 0,
     'rows' => 0,
     'next_size_at' => 0.0,
+    'force_clear' => true,
 ];
 
 if (!$once) {
@@ -104,7 +105,9 @@ do {
             $oldRows = (int)$state['rows'];
             [$state['cols'], $state['rows']] = term_size($opts);
             $state['next_size_at'] = $now + 1.0;
-            $fullRedraw = $fullRedraw || $oldCols !== (int)$state['cols'] || $oldRows !== (int)$state['rows'];
+            $sizeChanged = $oldCols !== (int)$state['cols'] || $oldRows !== (int)$state['rows'];
+            $fullRedraw = $fullRedraw || $sizeChanged;
+            $state['force_clear'] = !empty($state['force_clear']) || $sizeChanged;
         }
         $cols = (int)$state['cols'];
         $rows = (int)$state['rows'];
@@ -159,8 +162,9 @@ do {
         if (!$captureOk) {
             exit(3);
         }
-        echo terminal_atomic_write("\033[H\033[J" . $screen);
+        echo terminal_atomic_write(terminal_full_redraw($screen, !empty($state['force_clear'])));
         $renderMs = (microtime(true) - $renderStart) * 1000;
+        $state['force_clear'] = false;
         $state['ticker_changed'] = false;
     } else {
         $renderStart = microtime(true);
@@ -182,6 +186,12 @@ function terminal_atomic_write(string $payload): string
         return '';
     }
     return "\033[?7l" . $payload . "\033[?7h";
+}
+
+function terminal_full_redraw(string $screen, bool $clear): string
+{
+    $prefix = $clear ? "\033[H\033[J" : "\033[H";
+    return $prefix . $screen;
 }
 
 function log_wall_error(Throwable $e): void

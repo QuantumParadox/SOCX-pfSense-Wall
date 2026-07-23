@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Changed the terminal wall redraw path to repaint in place after the first frame instead of clearing the whole pane every refresh, reducing brief flicker/weird-screen flashes on pfSense/tmux wall displays.
 - Added `/automation` and `/api/automation`, a read-only SOCX Automation Center for scheduled jobs, cache evidence, next-run hints, safe commands, and approval state.
 - Added `/timeline` and `/api/timeline`, a Unified Timeline that stitches Speedtest path changes, VPN/DNSBL/IDS/firewall events, Pi AI verdicts, notebook notes, and safe queued actions.
 - Added `/memory` and `/api/memory-system`, a local passive SOCX Memory System that summarizes learned-normal device baselines, current apps/services, unusual drift, flow memory, and incident memory.
