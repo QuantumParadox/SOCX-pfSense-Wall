@@ -1,0 +1,52 @@
+#!/bin/sh
+set -u
+
+DRAFT_DIR="${SOCX_DRAFT_DIR:-/root/socx-drafts}"
+CACHE="${SOCX_QUARANTINE_DRAFT_CACHE:-/tmp/socx-quarantine-draft.env}"
+target="${1:-}"
+
+if [ -z "$target" ]; then
+    echo "Usage: socx quarantine <LAN-IP-or-hostname>"
+    exit 2
+fi
+
+mkdir -p "$DRAFT_DIR"
+chmod 700 "$DRAFT_DIR" 2>/dev/null || true
+ts="$(date +%Y%m%d-%H%M%S)"
+file="$DRAFT_DIR/quarantine-$ts.json"
+
+cat > "$file" <<EOF
+{
+  "status": "PLAN",
+  "approval_required": true,
+  "target": "$target",
+  "summary": "Draft-only quarantine plan for $target. No pfSense rule, alias, VLAN, or service change was applied.",
+  "recommended_steps": [
+    "Preserve evidence first: socx vault",
+    "Confirm the host identity in DHCP leases, ARP, LLDP, and switch/AP logs",
+    "Create or reuse a quarantine alias for the host",
+    "Create a restricted firewall rule or move the host to a quarantine VLAN",
+    "Keep DNS/NTP/update access only if needed for remediation",
+    "Document the reason, start time, operator, and rollback condition"
+  ],
+  "pfSense_review_points": [
+    "Firewall > Aliases",
+    "Firewall > Rules",
+    "Services > DHCP Server static mapping",
+    "Diagnostics > States reset for target only if approved"
+  ],
+  "created": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+
+{
+    printf 'status=PLAN\n'
+    printf 'summary=draft-only quarantine plan created\n'
+    printf 'target=%s\n' "$target"
+    printf 'draft=%s\n' "$file"
+    printf 'updated=%s\n' "$(date +%s)"
+} > "$CACHE"
+
+echo "QUARANTINE PLAN READY: $file"
+echo "Target: $target"
+echo "No pfSense change was applied. Run 'socx vault' before any manual containment."

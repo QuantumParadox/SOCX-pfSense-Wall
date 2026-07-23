@@ -181,6 +181,30 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-metrics-intel "$@"
         ;;
+    flow-export|netflow|ipfix|flows-export)
+        shift
+        exec /usr/local/bin/socx-flow-export "$@"
+        ;;
+    eve|suricata-eve|ids-eve)
+        shift
+        exec /usr/local/bin/socx-suricata-eve "$@"
+        ;;
+    topology|lldp|lldp-map|map)
+        shift
+        exec /usr/local/bin/socx-lldp-map "$@"
+        ;;
+    config-drift|drift|config-backup)
+        shift
+        exec /usr/local/bin/socx-config-drift "$@"
+        ;;
+    vault|evidence-vault)
+        shift
+        exec /usr/local/bin/socx-evidence-vault "$@"
+        ;;
+    quarantine|quarantine-draft)
+        shift
+        exec /usr/local/bin/socx-quarantine-draft "$@"
+        ;;
     why-slow)
         exec /usr/local/bin/socx-doctor why-slow
         ;;

@@ -1,0 +1,150 @@
+#!/bin/sh
+set -u
+
+CONFIG="${SOCX_CONFIG_XML:-/cf/conf/config.xml}"
+STATE="${SOCX_CONFIG_DRIFT_STATE:-/var/db/socx-config-drift.env}"
+CACHE="${SOCX_CONFIG_DRIFT_CACHE:-/tmp/socx-config-drift.env}"
+VAULT="${SOCX_CONFIG_DRIFT_DIR:-/root/socx-config-vault}"
+CRON_FILE="${SOCX_CONFIG_DRIFT_CRON:-/etc/cron.d/socx-config-drift}"
+
+hash_file() {
+    if command -v sha256 >/dev/null 2>&1; then
+        sha256 -q "$1"
+    else
+        sha256sum "$1" | awk '{print $1}'
+    fi
+}
+
+mtime_file() {
+    stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0
+}
+
+load_key() {
+    key="$1"
+    [ -f "$STATE" ] || return 0
+    awk -F= -v k="$key" '$1 == k {print substr($0, length(k) + 2)}' "$STATE" | tail -1
+}
+
+write_env() {
+    status="$1"
+    summary="$2"
+    current="$3"
+    previous="$4"
+    changed="$5"
+    backup="$6"
+    now="$(date +%s)"
+    {
+        printf 'status=%s\n' "$status"
+        printf 'summary=%s\n' "$summary"
+        printf 'current_hash=%s\n' "$current"
+        printf 'previous_hash=%s\n' "$previous"
+        printf 'changed=%s\n' "$changed"
+        printf 'backup=%s\n' "$backup"
+        printf 'updated=%s\n' "$now"
+        printf 'config=%s\n' "$CONFIG"
+    } > "$CACHE"
+}
+
+status_cmd() {
+    if [ ! -r "$CONFIG" ]; then
+        write_env "UNKNOWN" "config.xml not readable" "" "" "unknown" ""
+        echo "CONFIG DRIFT UNKNOWN: $CONFIG is not readable"
+        exit 1
+    fi
+    current="$(hash_file "$CONFIG")"
+    previous="$(load_key baseline_hash)"
+    backup="$(load_key last_backup)"
+    if [ -z "$previous" ]; then
+        summary="no baseline yet; run socx drift backup"
+        write_env "WARN" "$summary" "$current" "" "unknown" "$backup"
+        echo "CONFIG DRIFT WARN: $summary"
+        echo "current hash: $current"
+        exit 0
+    fi
+    if [ "$current" = "$previous" ]; then
+        summary="config unchanged since last SOCX backup"
+        write_env "OK" "$summary" "$current" "$previous" "false" "$backup"
+        echo "CONFIG DRIFT OK: $summary"
+    else
+        summary="config changed since last SOCX backup"
+        write_env "WARN" "$summary" "$current" "$previous" "true" "$backup"
+        echo "CONFIG DRIFT WARN: $summary"
+        echo "current:  $current"
+        echo "baseline: $previous"
+    fi
+    [ -n "$backup" ] && echo "last backup: $backup"
+}
+
+backup_cmd() {
+    if [ ! -r "$CONFIG" ]; then
+        write_env "UNKNOWN" "config.xml not readable" "" "" "unknown" ""
+        echo "CONFIG BACKUP UNKNOWN: $CONFIG is not readable"
+        exit 1
+    fi
+    mkdir -p "$VAULT" "$(dirname "$STATE")"
+    chmod 700 "$VAULT" 2>/dev/null || true
+    ts="$(date +%Y%m%d-%H%M%S)"
+    dst="$VAULT/config-$ts.xml"
+    cp "$CONFIG" "$dst"
+    chmod 600 "$dst" 2>/dev/null || true
+    current="$(hash_file "$dst")"
+    {
+        printf 'baseline_hash=%s\n' "$current"
+        printf 'last_backup=%s\n' "$dst"
+        printf 'last_backup_mtime=%s\n' "$(mtime_file "$dst")"
+        printf 'updated=%s\n' "$(date +%s)"
+    } > "$STATE"
+    printf '%s  %s\n' "$current" "$dst" > "$dst.sha256"
+    write_env "OK" "config backup captured and baseline updated" "$current" "$current" "false" "$dst"
+    echo "CONFIG BACKUP OK: $dst"
+    echo "sha256: $current"
+}
+
+cron_cmd() {
+    action="${1:-status}"
+    case "$action" in
+        install)
+            mkdir -p "$(dirname "$CRON_FILE")"
+            {
+                echo "SHELL=/bin/sh"
+                echo "PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
+                echo "17 * * * * root /usr/local/bin/socx-config-drift status >/dev/null 2>&1"
+            } > "$CRON_FILE"
+            chmod 644 "$CRON_FILE" 2>/dev/null || true
+            echo "CONFIG DRIFT CRON installed: hourly status check"
+            ;;
+        remove)
+            rm -f "$CRON_FILE"
+            echo "CONFIG DRIFT CRON removed"
+            ;;
+        status)
+            if [ -f "$CRON_FILE" ]; then
+                echo "CONFIG DRIFT CRON installed: $CRON_FILE"
+                cat "$CRON_FILE"
+            else
+                echo "CONFIG DRIFT CRON not installed"
+            fi
+            ;;
+        *)
+            echo "Usage: socx drift cron [install|remove|status]"
+            exit 2
+            ;;
+    esac
+}
+
+case "${1:-status}" in
+    status|check)
+        status_cmd
+        ;;
+    backup|baseline)
+        backup_cmd
+        ;;
+    cron)
+        shift
+        cron_cmd "${1:-status}"
+        ;;
+    *)
+        echo "Usage: socx drift [status|backup|cron install|cron remove|cron status]"
+        exit 2
+        ;;
+esac

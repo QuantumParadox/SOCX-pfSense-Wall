@@ -1,0 +1,103 @@
+#!/bin/sh
+set -u
+
+CACHE="${SOCX_FLOW_EXPORT_CACHE:-/tmp/socx-flow-export.env}"
+CONF="${SOCX_OBSERVABILITY_CONF:-/usr/local/etc/socx_observability.conf}"
+DEFAULT_COLLECTOR="192.168.1.180"
+DEFAULT_PORT="2055"
+
+load_conf() {
+    key="$1"
+    [ -f "$CONF" ] || return 0
+    awk -F= -v k="$key" '$1 == k {gsub(/^"|"$/, "", $2); print $2}' "$CONF" | tail -1
+}
+
+url_host() {
+    value="$1"
+    printf '%s\n' "$value" | sed -E 's#^[a-zA-Z]+://##; s#/.*$##; s#:.*$##'
+}
+
+write_env() {
+    status="$1"
+    summary="$2"
+    collector="$3"
+    port="$4"
+    installed="$5"
+    running="$6"
+    {
+        printf 'status=%s\n' "$status"
+        printf 'summary=%s\n' "$summary"
+        printf 'collector=%s\n' "$collector"
+        printf 'port=%s\n' "$port"
+        printf 'softflowd_installed=%s\n' "$installed"
+        printf 'softflowd_running=%s\n' "$running"
+        printf 'updated=%s\n' "$(date +%s)"
+    } > "$CACHE"
+}
+
+influx_url="$(load_conf SOCX_INFLUX_URL)"
+grafana_url="$(load_conf SOCX_GRAFANA_URL)"
+collector="${SOCX_FLOW_COLLECTOR:-$(load_conf SOCX_FLOW_COLLECTOR)}"
+if [ -z "$collector" ] && [ -n "$influx_url" ]; then
+    collector="$(url_host "$influx_url")"
+fi
+if [ -z "$collector" ] && [ -n "$grafana_url" ]; then
+    collector="$(url_host "$grafana_url")"
+fi
+collector="${collector:-$(load_conf SOCX_OBSERVABILITY_HOST)}"
+collector="${collector:-$DEFAULT_COLLECTOR}"
+port="${SOCX_FLOW_PORT:-$(load_conf SOCX_FLOW_PORT)}"
+port="${port:-$DEFAULT_PORT}"
+
+installed="false"
+running="false"
+if command -v softflowd >/dev/null 2>&1 || pkg info 2>/dev/null | grep -qi '^softflowd'; then
+    installed="true"
+fi
+if pgrep -f 'softflowd' >/dev/null 2>&1; then
+    running="true"
+fi
+
+case "${1:-status}" in
+    status)
+        if [ "$installed" = "true" ] && [ "$running" = "true" ]; then
+            write_env "OK" "flow export process running" "$collector" "$port" "$installed" "$running"
+            echo "FLOW EXPORT OK: softflowd running"
+        elif [ "$installed" = "true" ]; then
+            write_env "WARN" "softflowd installed but not running" "$collector" "$port" "$installed" "$running"
+            echo "FLOW EXPORT WARN: softflowd installed but not running"
+        else
+            write_env "PLAN" "softflowd package is not installed; SOCX flow export plan is ready" "$collector" "$port" "$installed" "$running"
+            echo "FLOW EXPORT PLAN: softflowd is not installed on this pfSense box."
+            echo "Recommended target: $collector:$port (Pi observability host)"
+            echo "Install from pfSense Package Manager, then configure WAN/LAN export to the collector."
+        fi
+        echo "collector: $collector:$port"
+        ;;
+    plan)
+        write_env "PLAN" "review pfSense softflowd package install and export target" "$collector" "$port" "$installed" "$running"
+        cat <<EOF
+SOCX FLOW EXPORT PLAN
+
+Goal:
+  Export NetFlow/IPFIX-style flow summaries from pfSense to the Pi observability stack.
+
+Recommended target:
+  collector: $collector
+  port:      $port/udp
+
+pfSense-safe steps:
+  1. Install the pfSense softflowd package from System > Package Manager.
+  2. Enable export on LAN and WAN interfaces.
+  3. Point the collector to $collector:$port.
+  4. Keep packet capture disabled unless actively investigating.
+  5. Verify with: socx flow-export status
+
+SOCX does not auto-install or alter firewall policy from this command.
+EOF
+        ;;
+    *)
+        echo "Usage: socx flow-export [status|plan]"
+        exit 2
+        ;;
+esac

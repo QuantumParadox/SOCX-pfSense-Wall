@@ -1,0 +1,83 @@
+#!/bin/sh
+set -u
+
+VAULT="${SOCX_EVIDENCE_VAULT_DIR:-/root/socx-evidence-vault}"
+CACHE="${SOCX_EVIDENCE_VAULT_CACHE:-/tmp/socx-evidence-vault.env}"
+MODE="${1:-quick}"
+
+hash_file() {
+    if command -v sha256 >/dev/null 2>&1; then sha256 -q "$1"; else sha256sum "$1" | awk '{print $1}'; fi
+}
+
+mkdir -p "$VAULT"
+chmod 700 "$VAULT" 2>/dev/null || true
+ts="$(date +%Y%m%d-%H%M%S)"
+tmp="/tmp/socx-evidence-$ts.$$"
+mkdir -p "$tmp/files" "$tmp/commands" "$tmp/logs"
+
+copy_if() {
+    src="$1"
+    dst="$2"
+    if [ -r "$src" ]; then
+        cp "$src" "$tmp/$dst" 2>/dev/null || true
+    fi
+}
+
+run_capture() {
+    name="$1"
+    shift
+    "$@" > "$tmp/commands/$name.txt" 2>&1 || true
+}
+
+copy_if /cf/conf/config.xml files/config.xml
+for f in /tmp/socx-*.env /tmp/socx-*.json; do
+    [ -r "$f" ] && cp "$f" "$tmp/files/$(basename "$f")" 2>/dev/null || true
+done
+for f in /var/log/filter.log /var/log/resolver.log /var/log/system.log /var/log/suricata/eve.json /var/log/suricata/fast.log /var/log/suricata/*/eve.json /var/log/suricata/*/fast.log; do
+    [ -r "$f" ] || continue
+    base="$(echo "$f" | sed 's#/#_#g; s#^_##')"
+    tail -n 500 "$f" > "$tmp/logs/$base.tail" 2>/dev/null || true
+done
+
+run_capture pf_info pfctl -si
+run_capture pf_states sh -c 'pfctl -ss 2>/dev/null | head -200'
+run_capture gateways sh -c 'configctl interface gatewaystatus 2>/dev/null || pfSsh.php playback gatewaystatus 2>/dev/null'
+run_capture ifconfig ifconfig -a
+run_capture routes netstat -rn
+run_capture services service -e
+run_capture pkg pkg info
+if command -v socx >/dev/null 2>&1; then
+    run_capture socx_status socx status
+    run_capture socx_timeline socx timeline 90
+fi
+
+manifest="$tmp/MANIFEST.txt"
+{
+    echo "SOCX Evidence Vault"
+    echo "created=$(date)"
+    echo "host=$(hostname)"
+    echo "mode=$MODE"
+    echo
+    find "$tmp" -type f | sort | while read -r f; do
+        h="$(hash_file "$f" 2>/dev/null || echo unknown)"
+        printf '%s  %s\n' "$h" "${f#$tmp/}"
+    done
+} > "$manifest"
+
+bundle="$VAULT/socx-evidence-$ts.tgz"
+tar -czf "$bundle" -C "$tmp" . 2>/dev/null
+hash="$(hash_file "$bundle")"
+printf '%s  %s\n' "$hash" "$bundle" > "$bundle.sha256"
+rm -rf "$tmp"
+
+{
+    printf 'status=OK\n'
+    printf 'summary=evidence bundle captured\n'
+    printf 'bundle=%s\n' "$bundle"
+    printf 'sha256=%s\n' "$hash"
+    printf 'updated=%s\n' "$(date +%s)"
+} > "$CACHE"
+
+echo "EVIDENCE VAULT OK: $bundle"
+echo "sha256: $hash"
+echo "This is read-only evidence capture; no pfSense policy was changed."

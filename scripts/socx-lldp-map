@@ -1,0 +1,65 @@
+#!/bin/sh
+set -u
+
+CACHE="${SOCX_LLDP_MAP_CACHE:-/tmp/socx-lldp-map.env}"
+JSON="${SOCX_LLDP_MAP_JSON:-/tmp/socx-lldp-map.json}"
+
+raw=""
+if command -v lldpctl >/dev/null 2>&1; then
+    raw="$(lldpctl 2>/dev/null || true)"
+elif command -v lldpcli >/dev/null 2>&1; then
+    raw="$(lldpcli show neighbors 2>/dev/null || true)"
+fi
+
+running="false"
+if pgrep -f 'lldpd' >/dev/null 2>&1; then
+    running="true"
+fi
+
+neighbors="$(printf '%s\n' "$raw" | awk '
+    /Interface:/ {iface=$2; gsub(",", "", iface)}
+    /SysName:/ {name=$2; if (iface != "" && name != "") print iface ":" name}
+')"
+count="$(printf '%s\n' "$neighbors" | awk 'NF {c++} END {print c+0}')"
+summary="lldpd running; no neighbors advertised"
+status="WARN"
+if [ "$running" != "true" ]; then
+    summary="lldpd is not running"
+    status="DOWN"
+elif [ "$count" -gt 0 ]; then
+    summary="$count LLDP neighbors discovered"
+    status="OK"
+fi
+
+{
+    printf 'status=%s\n' "$status"
+    printf 'summary=%s\n' "$summary"
+    printf 'neighbors=%s\n' "$count"
+    printf 'running=%s\n' "$running"
+    printf 'updated=%s\n' "$(date +%s)"
+} > "$CACHE"
+
+{
+    printf '{\n  "status": "%s",\n  "summary": "%s",\n  "running": %s,\n  "neighbors": [\n' "$status" "$summary" "$running"
+    first="true"
+    printf '%s\n' "$neighbors" | while IFS=: read -r iface name; do
+        [ -n "${iface:-}" ] || continue
+        if [ "$first" = "true" ]; then first="false"; else printf ',\n'; fi
+        printf '    {"interface": "%s", "neighbor": "%s"}' "$iface" "$name"
+    done
+    printf '\n  ],\n  "updated": %s\n}\n' "$(date +%s)"
+} > "$JSON"
+
+case "${1:-status}" in
+    status|map)
+        echo "LLDP $status: $summary"
+        [ -n "$neighbors" ] && printf '%s\n' "$neighbors" | sed 's/:/ -> /'
+        ;;
+    json)
+        cat "$JSON"
+        ;;
+    *)
+        echo "Usage: socx lldp [status|json]"
+        exit 2
+        ;;
+esac

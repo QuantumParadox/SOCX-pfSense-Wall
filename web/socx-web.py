@@ -372,6 +372,7 @@ class SocxCollector:
         command_center = self.collect_command_center(hardware)
         observability = self.collect_observability()
         metrics_intel = self.collect_metrics_intel()
+        power_mods = self.collect_power_mods()
         autonomy_loop = self.collect_autonomy_loop()
         incident = self.collect_incident_light(command_center)
         pi_nodes = self.collect_pi_nodes()
@@ -435,6 +436,7 @@ class SocxCollector:
             "command_center": command_center,
             "observability": observability,
             "metrics_intel": metrics_intel,
+            "power_mods": power_mods,
             "autonomy_loop": autonomy_loop,
             "incident": incident,
             "pi_nodes": pi_nodes,
@@ -884,6 +886,41 @@ class SocxCollector:
         self.metrics_intel_cache = data
         self.metrics_intel_checked = now
         return data
+
+    def collect_power_mods(self) -> dict[str, Any]:
+        items: dict[str, dict[str, Any]] = {}
+        specs = {
+            "flow_export": Path("/tmp/socx-flow-export.env"),
+            "suricata_eve": Path("/tmp/socx-suricata-eve.env"),
+            "lldp": Path("/tmp/socx-lldp-map.env"),
+            "config_drift": Path("/tmp/socx-config-drift.env"),
+            "evidence_vault": Path("/tmp/socx-evidence-vault.env"),
+            "quarantine_draft": Path("/tmp/socx-quarantine-draft.env"),
+        }
+        for name, path in specs.items():
+            data = parse_env_file(path)
+            try:
+                updated = float(data.get("updated") or 0)
+            except (TypeError, ValueError):
+                updated = 0.0
+            items[name] = {
+                "status": data.get("status", "WAITING"),
+                "summary": data.get("summary", "waiting for first SOCX sample"),
+                "age_sec": int(max(0, time.time() - updated)) if updated else None,
+                "data": data,
+            }
+        stale = [name for name, item in items.items() if item["status"] in {"WAITING", "UNKNOWN"}]
+        watch = [name for name, item in items.items() if item["status"] in {"WARN", "PLAN", "STOPPED", "DOWN"}]
+        if watch:
+            status = "WATCH"
+            summary = f"{len(watch)} power-user checks need attention"
+        elif stale:
+            status = "WAITING"
+            summary = "power-user checks waiting for first run"
+        else:
+            status = "OK"
+            summary = "power-user checks are reporting"
+        return {"status": status, "summary": summary, "items": items, "updated": int(time.time())}
 
     def collect_autonomy_loop(self) -> dict[str, Any]:
         now = time.time()
@@ -3434,6 +3471,9 @@ class SocxHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/metrics-intel":
             self.send_json(self.collector.collect_metrics_intel())
+            return
+        if parsed.path == "/api/power-mods":
+            self.send_json(self.collector.collect_power_mods())
             return
         if parsed.path == "/api/autonomy-loop":
             self.send_json(self.collector.collect_autonomy_loop())

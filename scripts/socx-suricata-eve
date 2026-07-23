@@ -1,0 +1,154 @@
+#!/usr/local/bin/python3.11
+from __future__ import annotations
+
+import glob
+import json
+import os
+import time
+from collections import Counter
+from pathlib import Path
+
+
+OUT_JSON = Path(os.environ.get("SOCX_SURICATA_EVE_JSON", "/tmp/socx-suricata-eve.json"))
+OUT_ENV = Path(os.environ.get("SOCX_SURICATA_EVE_CACHE", "/tmp/socx-suricata-eve.env"))
+GLOBS = os.environ.get("SOCX_SURICATA_EVE_GLOBS", "/var/log/suricata/*/eve.json:/var/log/suricata/eve.json").split(":")
+LIMIT = int(os.environ.get("SOCX_SURICATA_EVE_LIMIT", "1200"))
+
+
+def recent_lines(path: str, limit: int) -> list[str]:
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - 1_500_000))
+            return fh.read().decode("utf-8", "replace").splitlines()[-limit:]
+    except OSError:
+        return []
+
+
+def severity(alert: dict) -> str:
+    sev = int(alert.get("severity") or 3)
+    if sev <= 1:
+        return "HIGH"
+    if sev == 2:
+        return "MED"
+    return "LOW"
+
+
+def service(event: dict) -> str:
+    proto = str(event.get("proto") or "").lower()
+    app = str(event.get("app_proto") or "").lower()
+    return app or proto or "unk"
+
+
+def main() -> int:
+    files: list[str] = []
+    for pattern in GLOBS:
+        files.extend(glob.glob(pattern))
+    files = sorted(set(files), key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0, reverse=True)
+
+    events = []
+    sigs: Counter[str] = Counter()
+    cats: Counter[str] = Counter()
+    srcs: Counter[str] = Counter()
+    dsts: Counter[str] = Counter()
+    svcs: Counter[str] = Counter()
+    sev_counts: Counter[str] = Counter()
+
+    for path in files[:4]:
+        for line in recent_lines(path, LIMIT):
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("event_type") != "alert":
+                continue
+            alert = event.get("alert") or {}
+            sev = severity(alert)
+            sig = str(alert.get("signature") or "unknown")
+            cat = str(alert.get("category") or "unknown")
+            src = str(event.get("src_ip") or "unknown")
+            dst = str(event.get("dest_ip") or "unknown")
+            svc = service(event)
+            sigs[sig] += 1
+            cats[cat] += 1
+            srcs[src] += 1
+            dsts[dst] += 1
+            svcs[svc] += 1
+            sev_counts[sev] += 1
+            events.append(
+                {
+                    "time": event.get("timestamp", ""),
+                    "severity": sev,
+                    "signature": sig[:160],
+                    "category": cat[:120],
+                    "src": src,
+                    "dst": dst,
+                    "service": svc,
+                }
+            )
+
+    running = os.system("pgrep -f suricata >/dev/null 2>&1") == 0
+    total = len(events)
+    high = sev_counts.get("HIGH", 0)
+    med = sev_counts.get("MED", 0)
+    low = sev_counts.get("LOW", 0)
+    if not files:
+        status = "UNKNOWN"
+        summary = "no Suricata EVE logs found"
+    elif not running:
+        status = "STOPPED"
+        summary = f"Suricata logs found but service is stopped; {total} recent alerts in logs"
+    elif high:
+        status = "HIGH"
+        summary = f"{high} high IDS alerts in recent EVE sample"
+    elif med:
+        status = "WATCH"
+        summary = f"{med} medium IDS alerts in recent EVE sample"
+    else:
+        status = "OK"
+        summary = f"{total} recent IDS alerts sampled"
+
+    payload = {
+        "status": status,
+        "summary": summary,
+        "running": running,
+        "files": files[:8],
+        "counts": {"total": total, "high": high, "medium": med, "low": low},
+        "top_signatures": sigs.most_common(8),
+        "top_categories": cats.most_common(8),
+        "top_sources": srcs.most_common(8),
+        "top_destinations": dsts.most_common(8),
+        "top_services": svcs.most_common(8),
+        "events": events[-12:],
+        "updated": int(time.time()),
+    }
+    OUT_JSON.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    OUT_ENV.write_text(
+        "\n".join(
+            [
+                f"status={status}",
+                f"summary={summary}",
+                f"running={'true' if running else 'false'}",
+                f"total={total}",
+                f"high={high}",
+                f"medium={med}",
+                f"low={low}",
+                f"updated={payload['updated']}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    if os.environ.get("SOCX_JSON") == "1" or (len(os.sys.argv) > 1 and os.sys.argv[1] == "json"):
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"SURICATA EVE {status}: {summary}")
+        print(f"alerts: total={total} high={high} medium={med} low={low}")
+        for sig, count in sigs.most_common(5):
+            print(f"- {count}x {sig[:90]}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

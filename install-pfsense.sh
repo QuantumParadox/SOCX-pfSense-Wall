@@ -48,6 +48,12 @@ install -m 0755 "$ROOT/scripts/socx-label-brain" /usr/local/bin/socx-label-brain
 install -m 0755 "$ROOT/scripts/socx-tmux-hub" /usr/local/bin/socx-tmux-hub
 install -m 0755 "$ROOT/scripts/socx-observability" /usr/local/bin/socx-observability
 install -m 0755 "$ROOT/scripts/socx-metrics-intel" /usr/local/bin/socx-metrics-intel
+install -m 0755 "$ROOT/scripts/socx-flow-export" /usr/local/bin/socx-flow-export
+install -m 0755 "$ROOT/scripts/socx-suricata-eve" /usr/local/bin/socx-suricata-eve
+install -m 0755 "$ROOT/scripts/socx-lldp-map" /usr/local/bin/socx-lldp-map
+install -m 0755 "$ROOT/scripts/socx-config-drift" /usr/local/bin/socx-config-drift
+install -m 0755 "$ROOT/scripts/socx-evidence-vault" /usr/local/bin/socx-evidence-vault
+install -m 0755 "$ROOT/scripts/socx-quarantine-draft" /usr/local/bin/socx-quarantine-draft
 install -m 0755 "$ROOT/scripts/socx-autonomy-loop" /usr/local/bin/socx-autonomy-loop
 install -m 0755 "$ROOT/scripts/socx-autonomy-cron" /usr/local/bin/socx-autonomy-cron
 install -m 0755 "$ROOT/scripts/socx-doctor" /usr/local/bin/socx-doctor
