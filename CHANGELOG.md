@@ -12,6 +12,10 @@
 - Added Threat Map Lite at `/map` and `/api/threat-map`, a local-context blocked-source radar with severity, port, geo-hint, and reputation-style summaries.
 - Added automatic browser Night Mode from 8 PM to 8 AM every day, with a manual `auto/on/off` button for temporary overrides.
 - Added `docs/socx-project-backlog.md`, a long-form project roadmap for future SOCX, pfSense, Pi, AI, and research-lab enhancements.
+- Added `/doctor` and `/api/doctor`, a cached read-only pfSense Doctor page for SOCX status, service parsing, WAN/VPN, DNSBL, IDS, vnStat, LLDP, Speedtest, and Pi LLM checks.
+- Added tiny wall-safe Why buttons for Threat Pulse, Data Truth, LAN Asset Watch, AI Verdict Timeline, Incident Cockpit, and Network top talkers.
+- Added a Network top-talker strip that reuses Flow Truth/asset intelligence to show who or what is using bandwidth without expanding the card.
+- Expanded Operator Chat with Doctor Review and Unknown Fixer prompts plus grounded local answers and safe commands.
 
 ## v1.5.0
 

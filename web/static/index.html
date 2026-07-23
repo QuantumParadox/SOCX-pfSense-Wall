@@ -28,6 +28,7 @@
         <a class="detail-link" href="/story" title="Daily SOC story and archive">Story</a>
         <a class="detail-link" href="/ai" title="Pi/MIRANDA AI verdict timeline and model health">AI</a>
         <a class="detail-link" href="/health" title="Release health and collector freshness">Health</a>
+        <a class="detail-link" href="/doctor" title="Read-only pfSense diagnostics and service health checks">Doctor</a>
         <a class="detail-link" href="/observability" title="Grafana, InfluxDB, and Telegraf status">Metrics</a>
         <a class="detail-link" href="/guide" title="How to read and use SOCX">Guide</a>
         <a class="detail-link" href="/chat" title="Full-screen SOCX Operator Chat">Chat</a>
@@ -66,6 +67,7 @@
           </div>
         </div>
         <canvas class="spark" id="net-spark"></canvas>
+        <div class="network-talkers" id="network-talkers"></div>
       </section>
 
       <section class="card pf-card" title="pf firewall state table size, search rate, and pass/block counters">
@@ -180,6 +182,8 @@
             <button data-question="Summarize Grafana and Influx metrics trends and tell me if anything is getting worse.">Metrics</button>
             <button data-question="Draft a safe read-only investigation plan for the current IDS and DNSBL activity.">IDS/DNSBL Plan</button>
             <button data-question="Explain the power-user pack: flow export, Suricata EVE, LLDP, config drift, vault, and quarantine draft status.">Power Mods</button>
+            <button data-question="Run a pfSense Doctor style review and explain the WARN items without changing anything.">Doctor Review</button>
+            <button data-question="What unknown devices, apps, services, or labels should I fix next, and what evidence would help?">Unknown Fixer</button>
           </div>
           <div class="chat-output" id="chat-output">Ask in plain English. Config requests return draft-only plans.</div>
           <div class="chat-cards" id="chat-cards"></div>

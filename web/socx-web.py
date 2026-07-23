@@ -1212,6 +1212,99 @@ class SocxCollector:
         self.release_health_checked = now
         return health
 
+    def collect_doctor(self) -> dict[str, Any]:
+        now = time.time()
+        ttl = env_int("SOCX_DOCTOR_TTL_SECONDS", 60)
+        cached = getattr(self, "doctor_cache", None)
+        checked = float(getattr(self, "doctor_checked", 0) or 0)
+        if cached and now - checked < ttl:
+            result = dict(cached)
+            result["cache_age_sec"] = int(now - checked)
+            return result
+        checks = [
+            ("SOCX Status", "Core wall, web, collectors, gateway, AI, and service overview.", ["socx", "status"], 24.0, "status"),
+            ("pfSense Services", "Reads pfSense service status safely and catches malformed service entries.", ["socx-doctor", "php-services"], 24.0, "services"),
+            ("WAN Quality", "Gateway/dpinger latency, loss, warnings, and Speedtest context.", ["socx-doctor", "wan-quality"], 24.0, "network"),
+            ("VPN Gateways", "Actual VPN gateway/interface truth, separate from WAN health.", ["socx-doctor", "gateways"], 24.0, "network"),
+            ("DNSBL Review", "pfBlockerNG/DNSBL pressure and false-positive review hints.", ["socx-doctor", "dnsbl-review"], 32.0, "security"),
+            ("IDS Review", "Suricata high-signal versus routine IDS noise.", ["socx-doctor", "ids"], 32.0, "security"),
+            ("vnStat", "Traffic Totals/vnstatd collection daemon health.", ["socx-doctor", "vnstat"], 24.0, "services"),
+            ("LLDP Topology", "Neighbor discovery and switch topology hints.", ["socx-doctor", "topology"], 24.0, "topology"),
+            ("Speedtest Profiles", "DIRECT/VPN/client/router Speedtest freshness and path truth.", ["socx-doctor", "speedtest-profiles"], 24.0, "speed"),
+            ("Pi LLM", "Pi discovery, Pi 3-LLM role health, and model-route status.", ["socx-doctor", "pi-llm"], 40.0, "ai"),
+        ]
+        rows = []
+        ok_count = warn_count = fail_count = 0
+        for label, why, args, timeout, group in checks:
+            exe = f"/usr/local/bin/{args[0]}"
+            result = run_cmd_capture([exe, *args[1:]], timeout=timeout)
+            output = result.get("output", "")
+            upper = output.upper()
+            summary_match = re.search(r"summary\s+OK=(\d+)\s+WARN=(\d+)\s+FAIL=(\d+)", output, re.I)
+            if summary_match:
+                row_warn = int(summary_match.group(2))
+                row_fail = int(summary_match.group(3))
+            else:
+                row_warn = -1
+                row_fail = -1
+            if not result.get("ok"):
+                status = "FAIL"
+                fail_count += 1
+            elif summary_match and row_fail > 0:
+                status = "FAIL"
+                fail_count += 1
+            elif summary_match and row_warn > 0:
+                status = "WARN"
+                warn_count += 1
+            elif summary_match:
+                status = "OK"
+                ok_count += 1
+            elif "FAIL" in upper or "CRITICAL" in upper or "FATAL" in upper:
+                status = "WARN"
+                warn_count += 1
+            elif "WARN" in upper or "ERROR" in upper or "STALE" in upper:
+                status = "WARN"
+                warn_count += 1
+            else:
+                status = "OK"
+                ok_count += 1
+            summary = ""
+            for raw in output.splitlines():
+                line = raw.strip()
+                if line and not line.startswith("===") and not line.lower().startswith("socx doctor:") and not line.lower().startswith("generated "):
+                    summary = line[:220]
+                    break
+            rows.append({
+                "label": label,
+                "group": group,
+                "status": status,
+                "why": why,
+                "elapsed_ms": result.get("elapsed_ms"),
+                "summary": summary or ("command completed" if result.get("ok") else "command failed"),
+                "command": " ".join(args),
+                "output": output[-2400:],
+                "ok": bool(result.get("ok")),
+            })
+        status = "FAIL" if fail_count else "WATCH" if warn_count else "OK"
+        doctor = {
+            "updated_ms": now_ms(),
+            "status": status,
+            "summary": f"{ok_count} OK / {warn_count} WARN / {fail_count} FAIL across {len(rows)} read-only checks",
+            "ok": ok_count,
+            "warn": warn_count,
+            "fail": fail_count,
+            "rows": rows,
+            "next": [
+                "Open the row output before applying any repair.",
+                "Use Bundle or Snapshot before changing pfSense services during an incident.",
+                "Ask SOCX to explain a WARN row if the command output is noisy.",
+            ],
+            "read_only": True,
+        }
+        self.doctor_cache = doctor
+        self.doctor_checked = now
+        return doctor
+
     def collect_intel_layer(
         self,
         incident: dict[str, Any],
@@ -3699,6 +3792,12 @@ class SocxCollector:
             if watch:
                 lines.append("Power-user watch items: " + "; ".join(watch[:4]))
             lines.append("Safe buttons: Evidence preserves a hashed vault, Drift checks config.xml, IDS EVE summarizes Suricata, Flow checks softflowd, Topology checks LLDP, and Quarantine only drafts a plan.")
+        if "doctor" in q or "vnstat" in q or "lldp" in q or "service" in q or "repair" in q:
+            lines.append("pfSense Doctor is the read-only troubleshooting path. Open /doctor to see SOCX status, pfSense service parsing, WAN quality, VPN gateway truth, DNSBL, IDS, vnStat, LLDP topology, Speedtest profiles, and Pi LLM checks in one place.")
+            lines.append("Treat WARN rows as review targets first. Preserve evidence with Bundle or Snapshot before changing service/package configuration.")
+        if "unknown" in q or "label" in q or "name" in q or "identify" in q:
+            lines.append("Unknown Fixer uses local DHCP, ARP, DNS/DNSBL, mDNS-style names, PF states, NetFlow, and SOCX host maps. Start with /devices, then run socx hosts audit and socx services to see which devices or ports need labels.")
+            lines.append("Best evidence to reduce unknowns: DHCP hostnames, DNS resolver logs, repeated flow apps, local service ports, and stable manual labels in SOCX host/service maps.")
         if any(word in q for word in ["weird", "strange", "unusual", "anomaly", "anomalies", "normal", "bandwidth", "top talker", "top talkers", "who is using", "netflow", "ipfix", "flow", "app", "traffic"]):
             lines.append(f"NetFlow story is {netflow.get('status', 'UNKNOWN')}: {netflow.get('summary', 'waiting for Pi4 Influx flow data')}")
             stories = netflow.get("stories") or []
@@ -3748,6 +3847,14 @@ class SocxCollector:
             commands.append("socx eve")
         if "dnsbl" in lower:
             commands.append("socx-doctor dnsbl-review")
+        if "doctor" in lower or "repair" in lower or "service" in lower:
+            commands.append("open /doctor")
+            commands.append("socx-doctor")
+            commands.append("socx-doctor php-services")
+        if "unknown" in lower or "label" in lower or "identify" in lower:
+            commands.append("open /devices")
+            commands.append("socx-hosts-audit")
+            commands.append("socx services")
         if re.search(r"\b(power|flow|netflow|ipfix|bandwidth|top talker|weird|unusual|anomal)\b", lower):
             commands.append("socx flow-export status")
             commands.append("open /flows")
@@ -4216,6 +4323,9 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/health":
             self.send_json(self.collector.collect_release_health())
             return
+        if parsed.path == "/api/doctor":
+            self.send_json(self.collector.collect_doctor())
+            return
         if parsed.path == "/api/observability":
             self.send_json(self.collector.collect_observability())
             return
@@ -4367,7 +4477,7 @@ class SocxHandler(BaseHTTPRequestHandler):
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/observability", "/metrics", "/guide", "/chat"}:
+        if path in {"/speedtest", "/devices", "/incidents", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/map", "/observability", "/metrics", "/guide", "/chat"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"

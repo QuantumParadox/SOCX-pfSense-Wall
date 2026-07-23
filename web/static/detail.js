@@ -28,6 +28,7 @@ const pageName = () => {
   if (path.includes("guide")) return "guide";
   if (path.includes("chat")) return "chat";
   if (path.includes("ai")) return "ai";
+  if (path.includes("doctor")) return "doctor";
   if (path.includes("health")) return "health";
   return "speedtest";
 };
@@ -366,6 +367,45 @@ function renderHealth(state, health) {
   ].join("");
 }
 
+function renderDoctor(state, doctor) {
+  title.textContent = "SOCX PFSENSE DOCTOR";
+  subtitle.textContent = `${state.hostname || "pfSense"} / read-only diagnostics / ${doctor.cache_age_sec !== undefined ? `cached ${doctor.cache_age_sec}s` : new Date().toLocaleTimeString()}`;
+  const rows = doctor.rows || [];
+  const checkRows = rows.map((r) => [
+    r.group || "--",
+    r.label || "--",
+    r.status || "--",
+    `${r.elapsed_ms ?? "--"}ms`,
+    r.summary || "--",
+  ]);
+  const askRows = rows
+    .filter((r) => String(r.status || "").toUpperCase() !== "OK")
+    .slice(0, 8)
+    .map((r) => ({
+      label: `${r.status || "--"} ${r.label || "--"}`,
+      detail: r.summary || r.why || "--",
+      question: `Explain this SOCX pfSense Doctor result. Check: ${r.label || "--"}. Status: ${r.status || "--"}. Why it exists: ${r.why || "--"}. Summary: ${r.summary || "--"}. Command: ${r.command || "--"}. Tell me what it means, whether it is urgent, and what safe next step I should take.`,
+    }));
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    askDock(),
+    card("Doctor Summary", [
+      `<div class="detail-score ${doctor.status === "OK" ? "green" : doctor.status === "FAIL" ? "red" : "yellow"}">${esc(doctor.status || "UNKNOWN")} ${esc(doctor.ok || 0)} OK / ${esc(doctor.warn || 0)} WARN / ${esc(doctor.fail || 0)} FAIL</div>`,
+      `<div class="detail-reason">${esc(doctor.summary || "waiting for read-only diagnostics")}</div>`,
+      table(["#", "Safe Next Step"], (doctor.next || []).map((step, idx) => [idx + 1, step])),
+    ].join("")),
+    card("Read-Only Checks", table(["Group", "Check", "State", "Time", "Summary"], checkRows)),
+    card("Check Output", `<div class="doctor-output-list">${rows.map((r) => `
+      <details class="doctor-output ${String(r.status || "").toLowerCase()}">
+        <summary><b>${esc(r.status || "--")}</b> ${esc(r.label || "--")} <span>${esc(r.command || "--")}</span></summary>
+        <div class="detail-reason">${esc(r.why || "--")}</div>
+        <pre class="why-output">${esc(r.output || "No output returned.")}</pre>
+      </details>`).join("")}</div>`),
+    card("Ask About Warnings", `<div class="ask-list">${askRows.map((item) => `<div><span title="${esc(item.detail)}">${esc(item.label)}: ${esc(item.detail)}</span>${askButton(item.question)}</div>`).join("") || "<span class=\"muted\">No WARN/FAIL doctor rows right now.</span>"}</div>`),
+  ].join("");
+  wireAskButtons();
+}
+
 function renderStory(state, story) {
   title.textContent = "SOCX DAILY STORY";
   const glance = story.at_a_glance || {};
@@ -630,6 +670,7 @@ function renderGuide(state) {
       ["Why", "Why an IP, port, or domain was blocked."],
       ["AI", "Pi/MIRANDA model health and verdict timeline."],
       ["Health", "Collector freshness and release readiness."],
+      ["Doctor", "Read-only pfSense service, package, WAN, VPN, DNSBL, IDS, Speedtest, and Pi health checks."],
     ])),
     card("Safety", [
       `<div class="detail-reason">SOCX is monitoring, explanation, and draft-only guidance. Keep the dashboard on your trusted admin LAN.</div>`,
@@ -682,6 +723,8 @@ function renderChatPage(state) {
     "Is my VPN healthy right now? Compare VPN state, latency, and speed truth.",
     "Draft a safe plan to quarantine a host.",
     "What should I check before tuning IDS?",
+    "Run a pfSense Doctor style review and explain the WARN items.",
+    "What unknown devices, apps, or services should I fix next?",
   ];
   root.innerHTML = [
     card("Operator Chat", [
@@ -1003,6 +1046,9 @@ async function refresh() {
   const health = page === "health"
     ? await fetch("/api/health", { cache: "no-store" }).then((r) => r.json())
     : null;
+  const doctor = page === "doctor"
+    ? await fetch("/api/doctor", { cache: "no-store" }).then((r) => r.json())
+    : null;
   const why = page === "why"
     ? await fetch(`/api/why${whyTarget ? `?target=${encodeURIComponent(whyTarget)}` : ""}`, { cache: "no-store" }).then((r) => r.json())
     : null;
@@ -1029,6 +1075,7 @@ async function refresh() {
   else if (page === "incidents") renderIncidents(state);
   else if (page === "ai") renderAi(state);
   else if (page === "health") renderHealth(state, health || {});
+  else if (page === "doctor") renderDoctor(state, doctor || {});
   else if (page === "why") renderWhy(state, why || {});
   else if (page === "story") renderStory(state, story || {});
   else if (page === "mission") renderMission(state, mission || state.mission || {});

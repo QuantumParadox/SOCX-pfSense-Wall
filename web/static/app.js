@@ -104,6 +104,10 @@ function row(cells, cls = "") {
   return `<div class="row ${cls}">${cells.map((cell) => `<span title="${escapeHtml(cell)}">${escapeHtml(cell)}</span>`).join("")}</div>`;
 }
 
+function whyButton(question, label = "Why?") {
+  return `<button class="why-mini" data-question="${escapeHtml(question)}" title="${escapeHtml(question)}">${escapeHtml(label)}</button>`;
+}
+
 function explainRow(question) {
   const input = $("chat-input");
   if (input) input.value = question;
@@ -179,13 +183,14 @@ function renderIncident(incident = {}) {
   const grid = $("incident-grid");
   if (grid) {
     grid.innerHTML = [
+      ["why", whyButton("Explain the Incident Cockpit. What are the top firewall, DNSBL, IDS, LAN, and repeated-memory signals, and do I need to investigate?", "Why?")],
       ["FW", counts.sources || 0],
       ["DNSBL", counts.dnsbl || 0],
       ["IDS sig", ids.signal || counts.ids_high || 0],
       ["IDS watch", ids.watch || 0],
       ["routine", ids.routine || 0],
       ["LAN", counts.lan || 0],
-    ].map(([label, value]) => `<div><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`).join("");
+    ].map(([label, value]) => label === "why" ? `<div class="mini-action-cell">${value}</div>` : `<div><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`).join("");
   }
   const table = $("incident-table");
   if (!table) return;
@@ -402,6 +407,7 @@ function renderThreatPulse(pulse = {}) {
   }
   if (!root) return;
   root.innerHTML = [
+    `<div class="mini-action-row">${whyButton("Why is SOCX showing this Threat Pulse state? Explain firewall blocks, DNSBL, IDS high/watch, top source, top port, what is probably noise, and what I should check next.", "Why Watch")}</div>`,
     metricBox("FW blocks", safe(pulse.fw_blocks, 0), pulse.fw_blocks > 120 ? "red" : pulse.fw_blocks > 0 ? "yellow" : "green"),
     metricBox("DNSBL", safe(pulse.dnsbl_hits, 0), pulse.dnsbl_hits > 250 ? "yellow" : "cyan"),
     metricBox("IDS high", safe(pulse.ids_high, 0), pulse.ids_high > 0 ? "red" : "green"),
@@ -425,6 +431,7 @@ function renderDataTruth(truth = {}) {
     return (rank[a.tone] ?? 4) - (rank[b.tone] ?? 4);
   }).slice(0, 5);
   root.innerHTML = [
+    `<div class="mini-action-row">${whyButton("Explain SOCX Data Truth. Which collectors are fresh, stale, unknown, or unreliable, and should I trust the wall right now?", "Why Truth")}</div>`,
     `<div class="truth-score ${escapeHtml(truth.tone || "cyan")}">${escapeHtml(truth.label || "UNKNOWN")} <b>${escapeHtml(truth.score ?? "--")}</b></div>`,
     `<div class="truth-reason" title="${escapeHtml(truth.reason || "")}">${escapeHtml(truth.reason || "waiting for collector freshness")}</div>`,
     ...priority.map((item) => `
@@ -453,6 +460,7 @@ function renderAssetWatch(asset = {}) {
   const anomalies = Array.isArray(asset.anomalies) ? asset.anomalies.slice(0, 2) : [];
   const profiles = Array.isArray(asset.profiles) ? asset.profiles.slice(0, 3) : [];
   const boxes = [
+    `<div class="mini-action-row">${whyButton("Explain LAN Asset Watch. What are the top devices/apps, unknowns, Pi nodes, and any unusual device changes I should fix?", "Why Assets")}</div>`,
     metricBox("Pi nodes", `${safe(asset.pi_online, 0)}/${safe(asset.pi_count, 0)}`, asset.pi_online === asset.pi_count ? "green" : "red"),
     metricBox("Unknown log", safe(asset.unknown_h, "--"), asset.unknown_bytes > 50000 ? "yellow" : "green"),
     metricBox("Top LAN", `${safe(topAsset.name, "--")} x${safe(topAsset.count, 0)}`, "cyan"),
@@ -483,13 +491,29 @@ function renderAssetWatch(asset = {}) {
   root.innerHTML = boxes + nowLine + anomalyLine + profileLine + (rows ? `<div class="identity-list">${rows}</div>` : "");
 }
 
+function renderNetworkTalkers(state = {}) {
+  const root = $("network-talkers");
+  if (!root) return;
+  const nf = state.netflow_intel || {};
+  const assets = Array.isArray(nf.top_assets) ? nf.top_assets.slice(0, 2) : [];
+  const apps = Array.isArray(nf.top_apps) ? nf.top_apps.slice(0, 2) : [];
+  const flow = (state.flows || [])[0] || {};
+  const parts = [];
+  if (assets[0]) parts.push(`top ${assets[0].name || "--"} ${assets[0].bytes_h || assets[0].count || ""}`.trim());
+  if (assets[1]) parts.push(`${assets[1].name || "--"} ${assets[1].bytes_h || assets[1].count || ""}`.trim());
+  if (apps[0]) parts.push(`app ${apps[0].name || "--"}`);
+  if (!parts.length && flow.asset) parts.push(`${flow.asset} -> ${flow.peer || "--"} ${flow.service || flow.app || ""}`.trim());
+  const question = "Who is using bandwidth right now? Explain the current Network card, top upload/download clients, top apps, and whether any flow is unusual.";
+  root.innerHTML = `<span title="${escapeHtml(parts.join(" | ") || "Flow Truth warming up")}">${escapeHtml(parts.join(" | ") || "top talkers learning")}</span>${whyButton(question, "Who?")}`;
+}
+
 function renderAiTimeline(ai = {}) {
   const root = $("ai-timeline");
   const state = $("ai-state");
   const rows = Array.isArray(ai.rows) ? ai.rows : [];
   if (state) state.textContent = `${rows.length} signals`;
   if (!root) return;
-  root.innerHTML = rows.slice(0, 4).map((item) => {
+  root.innerHTML = `<div class="mini-action-row">${whyButton("Explain the AI Verdict Timeline. What are the Pi and MIRANDA models saying, how confident are they, and what should I trust?", "Why AI")}</div>` + rows.slice(0, 4).map((item) => {
     const sev = String(item.severity || "").toUpperCase();
     const cls = sev.includes("HIGH") || sev.includes("INCIDENT") ? "red" : sev.includes("WARN") || sev.includes("WATCH") ? "yellow" : "green";
     return `
@@ -724,6 +748,7 @@ function render(state) {
   setText("lan-rx", lan.rx_h);
   setText("lan-tx", lan.tx_h);
   drawSparkline($("net-spark"), [...(wan.history_rx || []), ...(lan.history_tx || [])], { stroke: "#34d7f2", fill: "rgba(52, 215, 242, .18)" });
+  renderNetworkTalkers(state);
 
   const ups = state.ups || {};
   setText("ups-status", `${safe(ups.status).toUpperCase()}${ups.stale ? " stale" : ""}`);
@@ -994,9 +1019,9 @@ document.querySelectorAll(".commander-buttons button").forEach((button) => {
 });
 
 document.addEventListener("click", (event) => {
-  const row = event.target.closest(".explainable");
+  const row = event.target.closest(".explainable, .why-mini");
   if (!row) return;
-  const question = row.dataset.question || "";
+  const question = row.dataset.question || row.getAttribute("title") || "";
   if (question) explainRow(question);
 });
 

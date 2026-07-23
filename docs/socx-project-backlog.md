@@ -13,7 +13,7 @@ This is the standing roadmap for SOCX, pfSense, the Pi 5 AI node, the Pi 4 obser
 ## 2. Packet And Flow Intelligence
 
 - Build Packet Radar v2 with TCP flag summaries, direction, service, reason, and one-line human descriptions.
-- Add top download/upload clients inside the Network card with mini bars and friendly names.
+- Extend the Network top-talker strip into tiny directional download/upload bars once reliable per-flow byte deltas are available.
 - Add long-lived connection detection for streaming, VPN, backup, cloud sync, and unusual idle sessions.
 - Add protocol confidence labels: confirmed, inferred from port, inferred from DNS, or unknown.
 - Add flow replay comparison: what changed in the last 15 minutes versus the previous 15 minutes.
@@ -28,7 +28,7 @@ This is the standing roadmap for SOCX, pfSense, the Pi 5 AI node, the Pi 4 obser
 
 ## 4. Safe AI Operator Console
 
-- Add a bigger SOCX chatbox with evidence tabs: Summary, Evidence, Why, Plan, Commands, and Risks.
+- Add evidence tabs to the full SOCX Chat page: Summary, Evidence, Why, Plan, Commands, and Risks.
 - Stream LLM role reasoning as visible stages: triage, evidence, action, safety review, final answer.
 - Add "explain this row" everywhere: packets, flows, devices, IDS, DNSBL, Speedtest, VPN, UPS, and replay bookmarks.
 - Add approval cards for draft firewall aliases, DNSBL allowlist candidates, IDS threshold changes, and quarantine plans.
@@ -56,7 +56,7 @@ This is the standing roadmap for SOCX, pfSense, the Pi 5 AI node, the Pi 4 obser
 - Add package crash parsing for PHP errors and recent package logs, with human-readable root-cause guesses.
 - Add config-drift diff summaries with "expected", "new", and "needs review" groupings.
 - Add backup health checks for config history, ZFS boot environments, and exported evidence bundles.
-- Add a read-only pfSense doctor page that lists checks, evidence, and safe repair commands separately.
+- Extend the read-only pfSense Doctor page with clickable repair-plan cards that remain approval-gated and never run automatically.
 
 ## 8. Network Asset Identity
 

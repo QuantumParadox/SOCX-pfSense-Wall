@@ -104,6 +104,9 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds SOCX ATT&CK / D3FEND / KEV Intelligence through `/api/intel`, Mission cards, and `socx intel`. It maps current firewall/DNSBL/IDS/asset-drift evidence to conservative ATT&CK context, defensive countermeasure names, CISA KEV status, priority, disposition, and a compact kill-chain story. It is read-only and never changes pfSense policy.
 - Adds SOCX Operator Chat through the browser Command Center, `/api/chat`, and `socx chat`. Ask plain-English questions about firewall blocks, DNSBL, IDS/Suricata, VPN, Speedtest, Pi AI, devices, or draft-only pfSense configuration plans. Chat can delegate to the Pi 5 LLM endpoint when available, shows visible operational steps, and never applies pfSense changes from chat.
 - Adds the full-size `/chat` Operator Chat page with suggested questions, current signal context, readable action cards, and safety mode descriptions. Live Flow and Packet Story rows on the wall can be clicked to ask SOCX to explain that exact row.
+- Adds wall-safe Why buttons for Threat Pulse, Data Truth, LAN Asset Watch, AI Verdict Timeline, Incident Cockpit, and Network top talkers. Each button sends a focused question into Operator Chat.
+- Adds `/doctor` and `/api/doctor`, a cached read-only pfSense Doctor view for SOCX status, service parsing, WAN quality, VPN gateways, DNSBL, IDS, vnStat, LLDP, Speedtest profiles, and Pi LLM health.
+- Adds Doctor Review and Unknown Fixer prompts to Operator Chat so service WARN rows and unlabeled devices/apps can be explained without changing pfSense.
 - Adds SOCX Answer Dock and Ask SOCX buttons across Replay, Speedtest, Devices, Flows, and Incidents drilldowns, so an operator can click evidence rows and get plain-English read-only context in place.
 - Adds richer Device Cards with profile, identity confidence, likely apps, learned-normal warnings, and one-click device explanation.
 - Adds one-click Operator Chat prompts for Morning Brief, Why Watch, Top Block, VPN Truth, Metrics, and IDS/DNSBL planning.
@@ -162,6 +165,7 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds a background Speedtest cache for scheduled Frontier/VPN path checks without blocking the 500 ms wall renderer.
 - Shows scheduled Speedtest results with latency, stable/stale state, and countdown to the next test.
 - Adds live WAN/LAN download/upload bars and a top-talker line in the NETWORK card.
+- Adds a browser Network top-talker strip using Flow Truth/asset intelligence so the wall can show who or what is using bandwidth beside the live rates.
 - Rotates top upload/download and top-device summaries through the Event Feed so `LAN.148` style traffic becomes easier to understand.
 - Learns friendly host names from `/usr/local/etc/socx_hosts.conf` and cached DHCP leases when available.
 - Tracks known vs unknown LAN devices and logs unknown service ports to `/var/db/socx_unknown_services.log` so the wall gets smarter over time.
