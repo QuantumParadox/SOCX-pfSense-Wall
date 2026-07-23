@@ -7,7 +7,7 @@ This is the standing roadmap for SOCX, pfSense, the Pi 5 AI node, the Pi 4 obser
 - Build a per-room readability calibration page for font size, ticker speed, glow, contrast, and card density.
 - Add a wall photo checklist so screenshots and phone photos can be scored for clipping, blur, crowding, and color balance.
 - Add a terminal/browser style parity pass so friendly names, severity colors, and Packet Radar wording match between both walls.
-- Add a quiet-night schedule that can automatically enable Night Mode during chosen hours.
+- Extend quiet-night scheduling with configurable operator hours, per-display profiles, and saved room presets.
 - Add a manual "big incident" view that hides low-value cards and enlarges VPN, IDS, packet, flow, and AI verdict panels.
 
 ## 2. Packet And Flow Intelligence

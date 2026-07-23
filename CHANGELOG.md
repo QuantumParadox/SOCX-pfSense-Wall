@@ -10,7 +10,7 @@
 - Added Replay time-window controls for 15m, 1h, 6h, and 24h after-action review without changing the live wall layout.
 - Added Replay incident bookmarks for the biggest security, speed, flow, thermal, and UPS moments, each with a safe Ask SOCX prompt.
 - Added Threat Map Lite at `/map` and `/api/threat-map`, a local-context blocked-source radar with severity, port, geo-hint, and reputation-style summaries.
-- Added a browser Night Mode toggle that dims the wall, softens glow, and slows ticker motion for late-night readability.
+- Added automatic browser Night Mode from 8 PM to 8 AM every day, with a manual `auto/on/off` button for temporary overrides.
 - Added `docs/socx-project-backlog.md`, a long-form project roadmap for future SOCX, pfSense, Pi, AI, and research-lab enhancements.
 
 ## v1.5.0

@@ -661,13 +661,30 @@ function renderTicker(events = []) {
   document.documentElement.style.setProperty("--ticker-duration", `${duration}s`);
 }
 
+function isAutoNightNow(now = new Date()) {
+  const hour = now.getHours();
+  return hour >= 20 || hour < 8;
+}
+
+function nightModeState() {
+  const mode = localStorage.getItem("socxNightWallMode") || "auto";
+  if (mode === "on") return { mode, enabled: true };
+  if (mode === "off") return { mode, enabled: false };
+  return { mode: "auto", enabled: isAutoNightNow() };
+}
+
 function applyWallPrefs() {
+  const night = nightModeState();
   document.body.classList.toggle("big-wall", localStorage.getItem("socxBigWall") === "1");
-  document.body.classList.toggle("night-wall", localStorage.getItem("socxNightWall") === "1");
+  document.body.classList.toggle("night-wall", night.enabled);
   const button = $("ticker-speed");
   if (button) button.textContent = tickerMode;
   const nightButton = $("night-mode");
-  if (nightButton) nightButton.textContent = localStorage.getItem("socxNightWall") === "1" ? "day" : "night";
+  if (nightButton) {
+    nightButton.textContent = night.mode === "auto" ? (night.enabled ? "auto night" : "auto day") : `night ${night.mode}`;
+    nightButton.title = "Night mode: auto 8 PM-8 AM. Click for on/off/auto.";
+    nightButton.setAttribute("aria-label", nightButton.title);
+  }
 }
 
 function render(state) {
@@ -944,9 +961,11 @@ $("big-mode")?.addEventListener("click", () => {
 });
 
 $("night-mode")?.addEventListener("click", () => {
-  const next = localStorage.getItem("socxNightWall") === "1" ? "0" : "1";
-  localStorage.setItem("socxNightWall", next);
-  if (next === "1" && tickerMode === "fast") {
+  const current = localStorage.getItem("socxNightWallMode") || "auto";
+  const next = current === "auto" ? "on" : current === "on" ? "off" : "auto";
+  localStorage.setItem("socxNightWallMode", next);
+  localStorage.removeItem("socxNightWall");
+  if (nightModeState().enabled && tickerMode === "fast") {
     tickerMode = "slow";
     localStorage.setItem("socxTickerMode", tickerMode);
   }
@@ -987,6 +1006,7 @@ $("command-output-close")?.addEventListener("click", () => {
 });
 
 setInterval(updateClock, 500);
+setInterval(applyWallPrefs, 60000);
 setInterval(() => drawCluster($("cluster-canvas"), latestState?.pi_nodes?.nodes || []), 650);
 applyWallPrefs();
 updateClock();
