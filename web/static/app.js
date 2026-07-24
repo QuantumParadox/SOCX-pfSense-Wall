@@ -540,17 +540,24 @@ function renderAssetWatch(asset = {}) {
 function renderNetworkTalkers(state = {}) {
   const root = $("network-talkers");
   if (!root) return;
+  const bandwidthd = state.bandwidthd || {};
+  const dailyHosts = Array.isArray(bandwidthd.hosts) ? bandwidthd.hosts.slice(0, 2) : [];
   const nf = state.netflow_intel || {};
   const assets = Array.isArray(nf.top_assets) ? nf.top_assets.slice(0, 2) : [];
   const apps = Array.isArray(nf.top_apps) ? nf.top_apps.slice(0, 2) : [];
   const flow = (state.flows || [])[0] || {};
   const parts = [];
-  if (assets[0]) parts.push(`top ${assets[0].name || "--"} ${assets[0].bytes_h || assets[0].count || ""}`.trim());
-  if (assets[1]) parts.push(`${assets[1].name || "--"} ${assets[1].bytes_h || assets[1].count || ""}`.trim());
-  if (apps[0]) parts.push(`app ${apps[0].name || "--"}`);
-  if (!parts.length && flow.asset) parts.push(`${flow.asset} -> ${flow.peer || "--"} ${flow.service || flow.app || ""}`.trim());
+  if (dailyHosts.length) {
+    parts.push(`daily ${dailyHosts.map((host) => `${host.name || host.ip} ${host.total_h || "--"}`).join(" | ")}`);
+  } else {
+    if (assets[0]) parts.push(`top ${assets[0].name || "--"} ${assets[0].bytes_h || assets[0].count || ""}`.trim());
+    if (assets[1]) parts.push(`${assets[1].name || "--"} ${assets[1].bytes_h || assets[1].count || ""}`.trim());
+    if (apps[0]) parts.push(`app ${apps[0].name || "--"}`);
+    if (!parts.length && flow.asset) parts.push(`${flow.asset} -> ${flow.peer || "--"} ${flow.service || flow.app || ""}`.trim());
+  }
   const question = "Who is using bandwidth right now? Explain the current Network card, top upload/download clients, top apps, and whether any flow is unusual.";
-  root.innerHTML = `<span title="${escapeHtml(parts.join(" | ") || "Flow Truth warming up")}">${escapeHtml(parts.join(" | ") || "top talkers learning")}</span>${whyButton(question, "Who?")}`;
+  const report = bandwidthd.status === "ok" ? `<a class="bandwidthd-link" href="https://${escapeHtml(location.hostname)}${escapeHtml(bandwidthd.report_path || "/status_bandwidthd.php")}" target="_blank" rel="noopener" title="Open full BandwidthD daily graphs">graphs</a>` : "";
+  root.innerHTML = `<span title="${escapeHtml(parts.join(" | ") || "Flow Truth warming up")}">${escapeHtml(parts.join(" | ") || "top talkers learning")}</span>${report}${whyButton(question, "Who?")}`;
 }
 
 function renderAiTimeline(ai = {}) {

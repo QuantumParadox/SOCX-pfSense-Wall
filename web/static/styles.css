@@ -951,6 +951,19 @@ body.incident-focus .mark {
   flex: 0 0 auto;
 }
 
+.bandwidthd-link {
+  flex: 0 0 auto;
+  color: var(--magenta);
+  font-weight: 850;
+  text-decoration: none;
+}
+
+.bandwidthd-link:hover,
+.bandwidthd-link:focus-visible {
+  color: var(--yellow);
+  text-decoration: underline;
+}
+
 .stat-line {
   display: flex;
   align-items: center;

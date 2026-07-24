@@ -26,6 +26,7 @@ import sys
 import threading
 import time
 from collections import OrderedDict, deque
+from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -319,6 +320,35 @@ def is_high_signal_ids(text: str) -> bool:
     return bool(re.search(r"malware|trojan|ransom|command.?and.?control|c2 beacon|cnc|callback|exploit|shellcode|botnet|coinminer|credential|phish|blacklist|known.?bad", text, re.I))
 
 
+class BandwidthDTableParser(HTMLParser):
+    """Read the small, local BandwidthD daily table without extra dependencies."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.rows: list[list[str]] = []
+        self.current_row: list[str] | None = None
+        self.current_cell: list[str] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "tr":
+            self.current_row = []
+        elif tag == "td" and self.current_row is not None:
+            self.current_cell = []
+
+    def handle_data(self, data: str) -> None:
+        if self.current_cell is not None:
+            self.current_cell.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "td" and self.current_cell is not None and self.current_row is not None:
+            self.current_row.append(" ".join("".join(self.current_cell).split()))
+            self.current_cell = None
+        elif tag == "tr" and self.current_row is not None:
+            if self.current_row:
+                self.rows.append(self.current_row)
+            self.current_row = None
+
+
 class SocxCollector:
     def __init__(self, interval_ms: int = 500, demo: bool = False) -> None:
         self.interval = max(0.2, interval_ms / 1000.0)
@@ -332,6 +362,8 @@ class SocxCollector:
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
         self.net_prev: dict[str, tuple[float, int, int]] = {}
+        self.bandwidthd_checked = 0.0
+        self.bandwidthd_cache: dict[str, Any] = {"status": "unknown", "hosts": [], "age_sec": None}
         self.histories: dict[str, deque[float]] = {
             "cpu": deque(maxlen=180),
             "mem": deque(maxlen=180),
@@ -475,6 +507,7 @@ class SocxCollector:
         mem = self.collect_memory(top)
         pf = self.collect_pf()
         net = self.collect_network()
+        bandwidthd = self.collect_bandwidthd()
         ups = self.collect_ups()
         hardware = self.collect_hardware_health(cpu)
         processes = self.collect_processes()
@@ -552,6 +585,7 @@ class SocxCollector:
                     "history_tx": list(self.histories["lan_tx"]),
                 },
             },
+            "bandwidthd": bandwidthd,
             "ups": ups | {"history": list(self.histories["ups_watts"])},
             "processes": processes,
             "command_center": command_center,
@@ -771,6 +805,55 @@ class SocxCollector:
             "wan": self.collect_interface(self.wan_if),
             "lan": self.collect_interface(self.lan_if),
         }
+
+    def collect_bandwidthd(self) -> dict[str, Any]:
+        """Expose BandwidthD's daily host totals as secondary, slower-moving truth."""
+        now = time.time()
+        if self.bandwidthd_cache and now - self.bandwidthd_checked < 3:
+            cached = dict(self.bandwidthd_cache)
+            updated = float(cached.get("updated") or 0)
+            cached["age_sec"] = max(0, int(now - updated)) if updated else None
+            return cached
+
+        report = Path("/usr/local/bandwidthd/htdocs/index.html")
+        result: dict[str, Any] = {
+            "status": "unknown",
+            "hosts": [],
+            "age_sec": None,
+            "updated": 0,
+            "report_path": "/status_bandwidthd.php",
+        }
+        try:
+            stat = report.stat()
+            parser = BandwidthDTableParser()
+            parser.feed(report.read_text(errors="ignore"))
+            hosts: list[dict[str, str]] = []
+            for row in parser.rows:
+                if len(row) < 4:
+                    continue
+                match = re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", row[0])
+                if not match:
+                    continue
+                ip = row[0]
+                hosts.append({
+                    "ip": ip,
+                    "name": self.hosts.get(ip, f"LAN.{ip.rsplit('.', 1)[-1]}"),
+                    "total_h": row[1] or "--",
+                    "sent_h": row[2] or "--",
+                    "received_h": row[3] or "--",
+                })
+            result.update({
+                "status": "ok",
+                "hosts": hosts[:3],
+                "updated": stat.st_mtime,
+                "age_sec": max(0, int(now - stat.st_mtime)),
+                "fresh": now - stat.st_mtime <= 420,
+            })
+        except Exception as exc:
+            result["error"] = str(exc)[:120]
+        self.bandwidthd_checked = now
+        self.bandwidthd_cache = result
+        return dict(result)
 
     def collect_interface(self, name: str) -> dict[str, Any]:
         out = run_cmd(f"netstat -ibdn -I {name} 2>/dev/null | head -4", timeout=0.7)
