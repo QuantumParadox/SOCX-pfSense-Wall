@@ -863,7 +863,7 @@ SOCX_UPS_SHOW_SPARKLINE=true
 SOCX_UPS_NOMINAL_WATTS=1950
 SOCX_UPS_SNMP_HOST=192.168.1.114
 SOCX_UPS_SNMP_COMMUNITY=public
-SOCX_UPS_SNMP_VERSION=v2c
+SOCX_UPS_SNMP_VERSION=v1
 ```
 
 `SOCX_UPS_SOURCE=auto` tries NUT/`upsc` first and falls back to direct Schneider/APC UPS-MIB SNMP polling, which keeps wattage, load, battery, runtime, voltage, amps, battery voltage, and battery temperature fresh even if `upsd` is not listening. When APC environmental probes are present, SOCX also caches two probe temperatures and humidity, then rotates the UPS card footer through temperature, humidity, and load/headroom.

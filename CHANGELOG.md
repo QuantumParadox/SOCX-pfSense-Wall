@@ -4,6 +4,9 @@
 
 - Added `socx vault-cron` for daily, hashed, read-only Evidence Vault captures with fourteen-day retention and readiness-gate coverage.
 - Fixed periodic SOCX wall flicker caused by a false-positive pfSense Service Watchdog `socx` entry restarting a healthy wall every minute. Added a backup-first helper that removes only that entry and retains SOCX endpoint and readiness checks.
+- Added a backup-first NUT repair helper for the APC Network Management Card 3. It consolidates stale duplicate driver entries into one read-only `snmp-ups` definition for the Smart-UPS 2200.
+- Corrected the SOCX APC environmental-sensor fallback to SNMPv1 so temperature and humidity probes follow the active APC access-control configuration.
+- Aligned the SOCX wall launcher with the APC SNMPv1 setting so its one-second UPS collector retains the environmental-probe data.
 
 ## Unreleased
 

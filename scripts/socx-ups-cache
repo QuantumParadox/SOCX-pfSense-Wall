@@ -23,7 +23,7 @@ UPS_SNMP_HOST=${SOCX_UPS_SNMP_HOST:-$(nut_conf_value port)}
 [ -n "$UPS_SNMP_HOST" ] || UPS_SNMP_HOST=192.168.1.114
 UPS_SNMP_COMMUNITY=${SOCX_UPS_SNMP_COMMUNITY:-$(nut_conf_value community)}
 [ -n "$UPS_SNMP_COMMUNITY" ] || UPS_SNMP_COMMUNITY=public
-UPS_SNMP_VERSION=${SOCX_UPS_SNMP_VERSION:-v2c}
+UPS_SNMP_VERSION=${SOCX_UPS_SNMP_VERSION:-v1}
 
 sleep_interval() {
     awk -v ms="$INTERVAL_MS" 'BEGIN { if (ms < 250) ms = 250; printf "%.3f", ms / 1000 }'
