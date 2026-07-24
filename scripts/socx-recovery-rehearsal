@@ -1,0 +1,45 @@
+#!/bin/sh
+# Read-only recovery rehearsal. It validates backup integrity but never restores it.
+set -eu
+
+VAULT="${SOCX_CONFIG_DRIFT_DIR:-/root/socx-config-vault}"
+OUTDIR="${SOCX_RECOVERY_REHEARSAL_DIR:-/root/socx-recovery-rehearsals}"
+mkdir -p "$OUTDIR"
+OUT="$OUTDIR/rehearsal-$(date +%Y%m%d-%H%M%S).txt"
+candidate="${1:-$(find "$VAULT" -maxdepth 1 -type f -name 'config-*.xml' | sort | tail -1)}"
+
+pass=0
+watch=0
+check() {
+    label="$1"
+    shift
+    if "$@" >> "$OUT" 2>&1; then
+        printf 'PASS  %s\n' "$label" | tee -a "$OUT"
+        pass=$((pass + 1))
+    else
+        printf 'WATCH %s\n' "$label" | tee -a "$OUT"
+        watch=$((watch + 1))
+    fi
+}
+
+{
+    echo "SOCX Recovery Rehearsal"
+    echo "Generated: $(date)"
+    echo "Safety: validates backup artifacts only; no restore, reboot, rule, route, DNS, or shutdown action is performed."
+    echo "Candidate: ${candidate:-missing}"
+} > "$OUT"
+
+check "Backup exists" test -r "$candidate"
+check "Backup XML parses" php -r 'libxml_use_internal_errors(true); $x=@simplexml_load_file($argv[1]); exit($x === false ? 1 : 0);' "$candidate"
+check "Backup has pfSense root" sh -c 'grep -q "<pfsense>" "$1"' sh "$candidate"
+check "Backup hash sidecar" sh -c 'test -r "$1.sha256" && (cd "$(dirname "$1")" && sha256 -c "$(basename "$1").sha256")' sh "$candidate"
+check "Current config readable" test -r /cf/conf/config.xml
+check "SOCX readiness" socx v1-check
+check "Resilience drill" socx resilience
+
+{
+    echo
+    echo "Summary: PASS=$pass WATCH=$watch"
+    echo "Next manual step: restore this file only on spare hardware or a disposable copy, then rerun this rehearsal and socx detection-validate."
+} >> "$OUT"
+echo "$OUT"

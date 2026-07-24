@@ -1,0 +1,41 @@
+#!/bin/sh
+# Builds a source/freshness review for AI-assisted SOCX explanations. Read-only.
+set -eu
+
+OUTDIR="${SOCX_EVIDENCE_REVIEW_DIR:-/root/socx-evidence-reviews}"
+mkdir -p "$OUTDIR"
+OUT="$OUTDIR/evidence-review-$(date +%Y%m%d-%H%M%S).txt"
+
+age_file() {
+    [ -f "$1" ] || { echo missing; return; }
+    now="$(date +%s)"
+    then="$(stat -f %m "$1" 2>/dev/null || echo 0)"
+    echo "$((now - then))s"
+}
+
+{
+    echo "SOCX Evidence Quality Review"
+    echo "Generated: $(date)"
+    echo "Safety: read-only review. Model summaries are not treated as proof and no policy is changed."
+    echo
+    echo "## Source Freshness"
+    echo "- pfSense config: $(age_file /cf/conf/config.xml)"
+    echo "- Pi analysis cache: $(age_file /tmp/socx-pi-llm-analysis.env)"
+    echo "- Path probes: $(age_file /tmp/socx-path-probes.env)"
+    echo "- BandwidthD daily report: $(age_file /usr/local/bandwidthd/htdocs/index.html)"
+    echo "- NetFlow export: $(socx flow-export status 2>&1 | tail -1)"
+    echo
+    echo "## Model Availability"
+    cat /tmp/socx-pi-llm-analysis.env 2>/dev/null || echo "Pi analysis cache unavailable"
+    echo
+    echo "## Policy Review"
+    socx rules 2>&1 || true
+    echo
+    echo "## Interpretation Guardrails"
+    echo "- Treat WAN scans and DNSBL matches as evidence to investigate, not proof of compromise."
+    echo "- Require a source, timestamp, and repeatable observation before policy changes."
+    echo "- Preserve an incident bundle before changing IDS, DNSBL, firewall, VLAN, routing, or UPS behavior."
+    echo "- AI output may explain and rank evidence; it cannot apply policy without operator approval."
+} > "$OUT"
+
+echo "$OUT"

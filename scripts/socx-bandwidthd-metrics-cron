@@ -1,0 +1,33 @@
+#!/bin/sh
+set -eu
+
+CRON_FILE="${SOCX_BANDWIDTHD_METRICS_CRON:-/etc/cron.d/socx-bandwidthd-metrics}"
+
+case "${1:-status}" in
+    install)
+        mkdir -p "$(dirname "$CRON_FILE")"
+        {
+            echo 'SHELL=/bin/sh'
+            echo 'PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin'
+            echo '*/5 * * * * root /usr/local/bin/socx-bandwidthd-metrics >/dev/null 2>&1'
+        } > "$CRON_FILE"
+        chmod 644 "$CRON_FILE"
+        echo "BandwidthD metrics cron installed: every 5 minutes"
+        ;;
+    remove)
+        rm -f "$CRON_FILE"
+        echo "BandwidthD metrics cron removed"
+        ;;
+    status)
+        if [ -f "$CRON_FILE" ]; then
+            echo "BandwidthD metrics cron installed: $(tail -1 "$CRON_FILE")"
+        else
+            echo "BandwidthD metrics cron not installed"
+            exit 1
+        fi
+        ;;
+    *)
+        echo "Usage: socx-bandwidthd-metrics-cron {install|remove|status}"
+        exit 2
+        ;;
+esac

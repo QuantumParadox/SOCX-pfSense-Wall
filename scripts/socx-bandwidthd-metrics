@@ -1,0 +1,112 @@
+#!/usr/bin/env python3.11
+"""Export BandwidthD daily host totals to the configured SOCX InfluxDB target."""
+
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import sys
+import time
+from html.parser import HTMLParser
+from pathlib import Path
+
+
+REPORT = Path(os.environ.get("SOCX_BANDWIDTHD_REPORT", "/usr/local/bandwidthd/htdocs/index.html"))
+CONF = Path(os.environ.get("SOCX_OBSERVABILITY_CONF", "/usr/local/etc/socx_observability.conf"))
+CACHE = Path(os.environ.get("SOCX_BANDWIDTHD_METRICS_CACHE", "/tmp/socx-bandwidthd-metrics.env"))
+
+
+class DailyTable(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.rows: list[list[str]] = []
+        self.row: list[str] | None = None
+        self.cell: list[str] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "tr":
+            self.row = []
+        elif tag == "td" and self.row is not None:
+            self.cell = []
+
+    def handle_data(self, data: str) -> None:
+        if self.cell is not None:
+            self.cell.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "td" and self.cell is not None and self.row is not None:
+            self.row.append(" ".join("".join(self.cell).split()))
+            self.cell = None
+        elif tag == "tr" and self.row is not None:
+            if self.row:
+                self.rows.append(self.row)
+            self.row = None
+
+
+def config_value(key: str, default: str) -> str:
+    try:
+        for raw in CONF.read_text(errors="ignore").splitlines():
+            match = re.fullmatch(rf"\s*{re.escape(key)}\s*=\s*[\"']?([^\"'#]+)[\"']?\s*", raw)
+            if match:
+                return match.group(1).strip()
+    except OSError:
+        pass
+    return os.environ.get(key, default)
+
+
+def as_bytes(value: str) -> int:
+    match = re.fullmatch(r"\s*([0-9.]+)\s*([KMGT]?)\s*", value, re.I)
+    if not match:
+        return 0
+    scale = {"": 1, "K": 1024, "M": 1024**2, "G": 1024**3, "T": 1024**4}
+    return int(float(match.group(1)) * scale[match.group(2).upper()])
+
+
+def line_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace(",", "\\,").replace(" ", "\\ ").replace("=", "\\=")
+
+
+def write_cache(status: str, detail: str, count: int = 0) -> None:
+    CACHE.write_text(
+        f"updated={int(time.time())}\nstatus={status}\nhosts={count}\ndetail={detail[:180]}\n",
+        encoding="ascii",
+    )
+
+
+def main() -> int:
+    if not REPORT.is_file():
+        write_cache("error", "BandwidthD daily report is missing")
+        return 1
+    parser = DailyTable()
+    parser.feed(REPORT.read_text(errors="ignore"))
+    lines: list[str] = []
+    timestamp_ns = time.time_ns()
+    for row in parser.rows:
+        if len(row) < 4 or not re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", row[0]):
+            continue
+        total, sent, received = (as_bytes(row[1]), as_bytes(row[2]), as_bytes(row[3]))
+        lines.append(
+            f"socx_bandwidthd_daily,host={line_escape(row[0])} total_bytes={total}i,sent_bytes={sent}i,received_bytes={received}i {timestamp_ns}"
+        )
+    if not lines:
+        write_cache("error", "No host rows found in BandwidthD daily report")
+        return 1
+    base = config_value("SOCX_INFLUX_URL", "http://192.168.1.180:8086").rstrip("/")
+    database = config_value("SOCX_INFLUX_DB", "pfsense")
+    proc = subprocess.run(
+        ["curl", "-fsS", "--max-time", "8", "-X", "POST", f"{base}/write?db={database}", "--data-binary", "\n".join(lines)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode:
+        write_cache("error", (proc.stderr or proc.stdout or "Influx write failed").strip(), len(lines))
+        return proc.returncode
+    write_cache("ok", f"exported {len(lines)} daily BandwidthD host totals", len(lines))
+    print(f"BandwidthD metrics exported: {len(lines)} hosts -> {base} db={database}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -167,6 +167,8 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds a browser `Bundle` action and `/api/incident-bundle` for one-click, evidence-preserving incident capture.
 - Adds `socx brief`, `socx morning`, and `socx morning-brief`, which write a timestamped SOCX Morning Brief to `/root/socx-briefs/`.
 - Adds `socx rules`, an approval-only recommendation view for firewall, DNSBL, IDS, and device-profile review. It does not change firewall rules automatically.
+- Adds `socx evidence-review` and `socx recovery-rehearsal` for source-freshness/AI guardrail review and backup-integrity rehearsal. Both are read-only and never restore configuration or change policy.
+- Adds five-minute BandwidthD daily host-total export to the Pi 4 InfluxDB target through `socx bandwidthd-metrics`; `grafana/socx-bandwidthd-daily.json` is an import-ready, read-only dashboard template.
 - Adds `socx v1-check`, a readiness gate that verifies the terminal wall, browser API, Daily Story, renderer log, Speedtest paths, incident memory, Label Brain, host naming, Pi fleet, Pi 3-LLM roles, and pfSense service visibility.
 - Adds `socx snapshot`, a read-only evidence bundle for status, why-now, history, timeline, Speedtest paths, topology, unknown services, and web API JSON.
 - Adds `socx snapshot-cron`, a nightly read-only evidence snapshot schedule with retention cleanup.
@@ -258,6 +260,9 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - `scripts/socx-incident-memory` - rolling repeated-event memory for top scanner, top port, DNSBL domain, and IDS pressure.
 - `scripts/socx-brief` - daily SOC brief generator with Autopilot, Label Brain, timeline, Speedtest, and Pi AI context.
 - `scripts/socx-mission` - terminal operator-intelligence summary from `/api/mission`.
+- `scripts/socx-evidence-review` - source freshness, model availability, and guardrail report for AI-assisted SOCX explanations.
+- `scripts/socx-recovery-rehearsal` - validates the latest hashed pfSense backup and SOCX readiness without restoring it.
+- `scripts/socx-bandwidthd-metrics` - exports BandwidthD daily host totals to the configured InfluxDB target; `socx-bandwidthd-metrics-cron` installs its five-minute schedule.
 - `scripts/socx-story` - Daily Story viewer and archiver for browser evidence, repeated-event memory, Speedtest path truth, and Pi AI context.
 - `scripts/socx-rule-assistant` - approval-only rule recommendation assistant for evidence-backed policy review.
 - `scripts/socx-repair` - safe collector repair for SOCX wall helpers, vnstatd, LLDP, and Pi discovery without changing firewall policy.

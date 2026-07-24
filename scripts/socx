@@ -43,6 +43,10 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-resilience-drill "$@"
         ;;
+    recovery-rehearsal|rehearse-recovery)
+        shift
+        exec /usr/local/bin/socx-recovery-rehearsal "$@"
+        ;;
     range-plan|cyber-range|lab-vlan-plan)
         shift
         exec /usr/local/bin/socx-cyber-range-plan "$@"
@@ -58,6 +62,10 @@ case "${1:-}" in
     brief|daily-brief|soc-brief|morning-brief|morning)
         shift
         exec /usr/local/bin/socx-brief "$@"
+        ;;
+    evidence-review|ai-evidence|evidence-quality)
+        shift
+        exec /usr/local/bin/socx-evidence-review "$@"
         ;;
     mission|operator|intelligence)
         shift
@@ -196,6 +204,14 @@ case "${1:-}" in
     observability|grafana|influx|metrics-stack)
         shift
         exec /usr/local/bin/socx-observability "$@"
+        ;;
+    bandwidthd-metrics|bandwidth-metrics|host-history)
+        shift
+        exec /usr/local/bin/socx-bandwidthd-metrics "$@"
+        ;;
+    bandwidthd-metrics-cron|bandwidth-metrics-cron|host-history-cron)
+        shift
+        exec /usr/local/bin/socx-bandwidthd-metrics-cron "$@"
         ;;
     metrics-intel|metrics-ai|why-metrics|metrics-why)
         shift
