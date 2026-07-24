@@ -39,6 +39,14 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-path-probes "$@"
         ;;
+    resilience|resilience-drill|recovery-drill)
+        shift
+        exec /usr/local/bin/socx-resilience-drill "$@"
+        ;;
+    range-plan|cyber-range|lab-vlan-plan)
+        shift
+        exec /usr/local/bin/socx-cyber-range-plan "$@"
+        ;;
     menu|command|commands)
         shift
         exec /usr/local/bin/socx-menu "$@"

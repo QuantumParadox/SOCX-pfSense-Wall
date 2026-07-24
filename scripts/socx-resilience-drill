@@ -1,0 +1,48 @@
+#!/bin/sh
+# Read-only recovery-readiness drill. It never restores configuration or changes policy.
+set -u
+
+OUT_DIR="${SOCX_RESILIENCE_DIR:-/root/socx-resilience-drills}"
+STAMP="$(date +%Y%m%d-%H%M%S)"
+OUT="$OUT_DIR/socx-resilience-$STAMP.txt"
+mkdir -p "$OUT_DIR" 2>/dev/null || true
+
+ok=0; warn=0
+check() {
+    name="$1"; command="$2"; guidance="$3"
+    result="$(sh -c "$command" 2>&1 || true)"
+    if printf '%s' "$result" | grep -Eqi '(OK|READY|PASS|LIVE|RUNNING)'; then
+        printf 'PASS  %-24s %s\n' "$name" "$(printf '%s' "$result" | tr '\n' ' ' | cut -c1-180)" >> "$OUT"
+        ok=$((ok + 1))
+    else
+        printf 'WATCH %-24s %s | next: %s\n' "$name" "$(printf '%s' "$result" | tr '\n' ' ' | cut -c1-140)" "$guidance" >> "$OUT"
+        warn=$((warn + 1))
+    fi
+}
+
+{
+    echo "SOCX Resilience Drill"
+    echo "Generated: $(date)"
+    echo "Safety: read-only verification; no restore, firewall, VLAN, or shutdown action is performed."
+    echo
+} > "$OUT"
+
+check "SOCX wall" "service socx status" "restart only after reviewing /tmp/socx-wall.err"
+check "SOCX web" "service socxweb status" "check http://127.0.0.1:8094/api/health"
+check "Path probes" "socx probes status | grep -q '^state=OK$' && echo OK" "review /tmp/socx-path-probes.env"
+check "Config baseline" "socx drift status" "capture a named backup only after reviewing intended changes"
+check "Snapshot schedule" "socx snapshot-cron status | grep -q installed && echo OK" "verify the most recent snapshot before an upgrade"
+check "Evidence vault" "grep -q '^status=OK$' /tmp/socx-evidence-vault.env 2>/dev/null && echo OK" "run socx vault before a major change"
+check "UPS telemetry" "upsc APCSmartUPS2200SMT 2>/dev/null | grep -q '^ups.status:' && echo OK" "check NUT/APC connectivity"
+check "Pi fleet" "socx pi-nodes 2>/dev/null | grep -Eq '\"online\": ?[1-9]' && echo OK" "review Pi 4/Pi 5 reachability"
+check "Flow collector" "socx flow-export status" "verify Pi 4 collector and IPFIX receiver"
+
+{
+    echo
+    echo "Summary: PASS=$ok WATCH=$warn"
+    echo "Restore rehearsal: use a disposable copy or spare hardware; this drill deliberately does not restore config.xml on the live firewall."
+    echo "Recommended evidence: retain this report with the matching config drift backup and nightly snapshot."
+} >> "$OUT"
+
+find "$OUT_DIR" -type f -name 'socx-resilience-*.txt' -mtime +90 -delete 2>/dev/null || true
+cat "$OUT"

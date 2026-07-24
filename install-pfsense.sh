@@ -63,6 +63,8 @@ install -m 0755 "$ROOT/scripts/socx-autonomy-loop" /usr/local/bin/socx-autonomy-
 install -m 0755 "$ROOT/scripts/socx-autonomy-cron" /usr/local/bin/socx-autonomy-cron
 install -m 0755 "$ROOT/scripts/socx-recorder-cron" /usr/local/bin/socx-recorder-cron
 install -m 0755 "$ROOT/scripts/socx-path-probes" /usr/local/bin/socx-path-probes
+install -m 0755 "$ROOT/scripts/socx-resilience-drill" /usr/local/bin/socx-resilience-drill
+install -m 0755 "$ROOT/scripts/socx-cyber-range-plan" /usr/local/bin/socx-cyber-range-plan
 install -m 0755 "$ROOT/scripts/socx-doctor" /usr/local/bin/socx-doctor
 install -m 0755 "$ROOT/scripts/socx-v1-check" /usr/local/bin/socx-v1-check
 install -m 0755 "$ROOT/scripts/socx-ai-explain" /usr/local/bin/socx-ai-explain

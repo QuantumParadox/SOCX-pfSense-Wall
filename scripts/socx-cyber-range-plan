@@ -1,0 +1,42 @@
+#!/bin/sh
+# Approval-only cyber-range VLAN plan. This script never creates interfaces, VLANs, rules, or DHCP scopes.
+set -u
+
+OUT_DIR="${SOCX_RANGE_PLAN_DIR:-/root/socx-range-plans}"
+STAMP="$(date +%Y%m%d-%H%M%S)"
+OUT="$OUT_DIR/socx-cyber-range-plan-$STAMP.txt"
+mkdir -p "$OUT_DIR" 2>/dev/null || true
+
+interfaces="$(ifconfig -l 2>/dev/null || true)"
+{
+    echo "SOCX Isolated Cyber Range Plan"
+    echo "Generated: $(date)"
+    echo "Mode: DRAFT ONLY / approval required / no pfSense change applied"
+    echo
+    echo "Observed interfaces: $interfaces"
+    echo
+    echo "Required operator decisions before deployment:"
+    echo "1. Parent interface or managed-switch trunk port dedicated to the lab."
+    echo "2. Unused VLAN ID and a non-overlapping IPv4 subnet."
+    echo "3. Whether the lab has no WAN access, update-only egress, or controlled Internet egress."
+    echo "4. Which disposable VM or physical test host belongs in the lab."
+    echo
+    echo "Recommended security boundary:"
+    echo "- Separate OPT/VLAN interface with DHCP scope only for lab clients."
+    echo "- Explicit block rules from LAB to LAN, management, NAS, Pi nodes, MIRANDA, and UPS."
+    echo "- No inbound WAN NAT or port forwards."
+    echo "- Optional one-way DNS/NTP and update allow rules, each logged."
+    echo "- Capture logs/flows to SOCX before running any validation traffic."
+    echo
+    echo "SOCX validation sequence after human approval:"
+    echo "1. Capture a named config backup and evidence vault."
+    echo "2. Create the interface/VLAN and DHCP scope."
+    echo "3. Verify LAN isolation with harmless ping/DNS tests."
+    echo "4. Run socx detection-validate; do not use real malware or unapproved scans."
+    echo "5. Review /hunts, /flows, /replay, and the Evidence Vault."
+    echo
+    echo "This plan intentionally omits commands because the required VLAN topology values are not yet approved."
+} > "$OUT"
+
+find "$OUT_DIR" -type f -name 'socx-cyber-range-plan-*.txt' -mtime +90 -delete 2>/dev/null || true
+cat "$OUT"
