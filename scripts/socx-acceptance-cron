@@ -1,0 +1,34 @@
+#!/bin/sh
+# Schedules a weekly, read-only SOCX operator acceptance report.
+set -eu
+
+CRON=/etc/cron.d/socx-acceptance
+OUTDIR=/root/socx-acceptance
+case "${1:-status}" in
+    install)
+        mkdir -p "$OUTDIR"
+        cat > "$CRON" <<'EOF'
+SHELL=/bin/sh
+PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+# Weekly read-only operator acceptance report, Monday 08:00 local time.
+0 8 * * 1 root /usr/local/bin/socx acceptance > /root/socx-acceptance/acceptance-$(date +\%Y\%m\%d-\%H\%M\%S).txt 2>&1
+EOF
+        echo "SOCX acceptance schedule installed: Monday 08:00 local time"
+        ;;
+    remove)
+        rm -f "$CRON"
+        echo "SOCX acceptance schedule removed"
+        ;;
+    status)
+        if [ -r "$CRON" ]; then
+            cat "$CRON"
+        else
+            echo "SOCX acceptance schedule is not installed"
+            exit 1
+        fi
+        ;;
+    *)
+        echo "Usage: socx-acceptance-cron {install|remove|status}" >&2
+        exit 2
+        ;;
+esac

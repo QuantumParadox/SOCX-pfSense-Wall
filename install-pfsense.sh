@@ -64,6 +64,7 @@ install -m 0755 "$ROOT/scripts/socx-autonomy-cron" /usr/local/bin/socx-autonomy-
 install -m 0755 "$ROOT/scripts/socx-recorder-cron" /usr/local/bin/socx-recorder-cron
 install -m 0755 "$ROOT/scripts/socx-path-probes" /usr/local/bin/socx-path-probes
 install -m 0755 "$ROOT/scripts/socx-acceptance" /usr/local/bin/socx-acceptance
+install -m 0755 "$ROOT/scripts/socx-acceptance-cron" /usr/local/bin/socx-acceptance-cron
 install -m 0755 "$ROOT/scripts/socx-resilience-drill" /usr/local/bin/socx-resilience-drill
 install -m 0755 "$ROOT/scripts/socx-recovery-rehearsal" /usr/local/bin/socx-recovery-rehearsal
 install -m 0755 "$ROOT/scripts/socx-evidence-review" /usr/local/bin/socx-evidence-review

@@ -20,6 +20,10 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-acceptance "$@"
         ;;
+    acceptance-cron|acceptance-schedule)
+        shift
+        exec /usr/local/bin/socx-acceptance-cron "$@"
+        ;;
     autopilot|auto)
         shift
         /usr/local/bin/socx-doctor autopilot "$@"
