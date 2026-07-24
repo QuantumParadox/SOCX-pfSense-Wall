@@ -500,7 +500,8 @@ class SocxCollector:
         speedtest_history = self.collect_speedtest_history()
         incident_memory = self.collect_incident_memory()
         self.maybe_append_incident_memory()
-        data_truth = self.collect_data_truth(command_center, pi_nodes, ups, incident_memory, label_brain, observability)
+        path_probes = self.collect_path_probes()
+        data_truth = self.collect_data_truth(command_center, pi_nodes, ups, incident_memory, label_brain, observability, path_probes)
         what_changed = self.collect_what_changed(command_center, incident, label_brain, pi_nodes, net, ups, data_truth, flows)
         intel = self.collect_intel_layer(incident, label_brain, flows, hardware)
         mission = self.collect_mission(command_center, incident, label_brain, pi_nodes, ai_timeline, hardware, data_truth, what_changed, flows, intel)
@@ -572,6 +573,7 @@ class SocxCollector:
             "rule_assistant": rule_assistant,
             "speedtest_history": speedtest_history,
             "incident_memory": incident_memory,
+            "path_probes": path_probes,
             "data_truth": data_truth,
             "confidence_meter": confidence,
             "incident_focus": incident_focus,
@@ -1409,6 +1411,7 @@ class SocxCollector:
         incident_memory: dict[str, Any],
         label_brain: dict[str, Any],
         observability: dict[str, Any] | None = None,
+        path_probes: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         signals: list[dict[str, Any]] = []
         active = center.get("router") if isinstance(center.get("router"), dict) else {}
@@ -1439,6 +1442,11 @@ class SocxCollector:
         if obs:
             obs_state = "ready" if obs.get("label") == "LIVE" else ("warn" if obs.get("label") == "WATCH" else "down")
             signals.append(self.truth_signal("Grafana/Influx", obs_state, obs.get("age_sec"), obs.get("host", "Pi metrics"), obs.get("summary", "")))
+        probes = path_probes or {}
+        if probes:
+            probe_state = str(probes.get("state") or "waiting").lower()
+            probe_age = probes.get("age_sec")
+            signals.append(self.truth_signal("Path Probes", probe_state, probe_age, "SOCX 30s probes", probes.get("summary") or "probe cache warming up"))
 
         ok = sum(1 for item in signals if item["tone"] == "green")
         warn = sum(1 for item in signals if item["tone"] == "yellow")
@@ -1459,6 +1467,22 @@ class SocxCollector:
         else:
             reason = "LIVE because all primary SOCX collectors are fresh or ready"
         return {"label": label, "tone": tone, "score": score, "ok": ok, "warn": warn, "red": red, "reason": reason, "signals": signals, "updated_ms": now_ms()}
+
+    def collect_path_probes(self) -> dict[str, Any]:
+        path = Path(os.environ.get("SOCX_PATH_PROBE_CACHE", "/tmp/socx-path-probes.env"))
+        data = parse_env_file(path)
+        if not data:
+            return {"state": "waiting", "summary": "SOCX path probes have not sampled yet.", "age_sec": None, "rows": []}
+        age = self.file_age_seconds(path)
+        rows = []
+        for key, label in [("direct", "Direct Internet"), ("dns", "Local DNS"), ("pi5", "Pi 5 AI"), ("pi4", "Pi 4 Telemetry"), ("miranda", "MIRANDA"), ("ups", "UPS Telemetry"), ("vpn", "VPN Truth")]:
+            rows.append({"name": label, "state": data.get(f"{key}_state", "waiting"), "detail": data.get(f"{key}_detail", "--"), "rtt_ms": data.get(f"{key}_rtt_ms", "")})
+        data["age_sec"] = age
+        data["rows"] = rows
+        if age is not None and age > 90:
+            data["state"] = "stale"
+            data["summary"] = f"Path probe cache is {human_duration(age)} old."
+        return data
 
     def collect_release_health(self) -> dict[str, Any]:
         now = time.time()
@@ -5610,7 +5634,9 @@ class SocxCollector:
         local = self.local_chat_answer(text, intent, context)
         pi_answer: dict[str, Any] = {}
         prefer_local_truth = bool(re.search(r"\b(care|should i care|autonomy|autonomous|watch mode|auto evidence|first action|weird|strange|unusual|anomal|normal|bandwidth|top talker|top talkers|who is using|netflow|ipfix|flow|traffic)\b", text.lower()))
-        if intent in {"explain", "diagnose", "draft"} and not prefer_local_truth:
+        # Configuration drafts must return promptly from measured local evidence.
+        # They stay approval-gated and never wait on an optional Pi model route.
+        if intent in {"explain", "diagnose"} and not prefer_local_truth:
             pi_answer = self.ask_pi_operator_chat(text, intent, context)
             if pi_answer.get("ok"):
                 phases.extend(pi_answer.get("phases") or ["Pi LLM answered"])

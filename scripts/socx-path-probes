@@ -1,0 +1,148 @@
+#!/bin/sh
+# Compact read-only path probes for SOCX. This never edits pfSense policy.
+set -u
+
+ACTION="${1:-once}"
+INTERVAL="${SOCX_PATH_PROBE_INTERVAL_SECONDS:-30}"
+CACHE="${SOCX_PATH_PROBE_CACHE:-/tmp/socx-path-probes.env}"
+HISTORY="${SOCX_PATH_PROBE_HISTORY:-/var/db/socx-path-probes.jsonl}"
+DIRECT_HOST="${SOCX_PATH_PROBE_DIRECT_HOST:-1.1.1.1}"
+PI5_HOST="${SOCX_PATH_PROBE_PI5_HOST:-192.168.1.121}"
+PI4_HOST="${SOCX_PATH_PROBE_PI4_HOST:-192.168.1.180}"
+MIRANDA_HOST="${SOCX_PATH_PROBE_MIRANDA_HOST:-192.168.1.116}"
+UPS_NAME="${SOCX_PATH_PROBE_UPS_NAME:-APCSmartUPS2200SMT}"
+
+case "$INTERVAL" in ''|*[!0-9]*|0) INTERVAL=30 ;; esac
+
+state_line() {
+    key="$1"; state="$2"; detail="$3"; rtt="${4:-}"
+    printf '%s_state=%s\n' "$key" "$state" >> "$tmp"
+    printf '%s_detail=%s\n' "$key" "$(printf '%s' "$detail" | tr '\n=' '  ' | cut -c1-140)" >> "$tmp"
+    [ -n "$rtt" ] && printf '%s_rtt_ms=%s\n' "$key" "$rtt" >> "$tmp"
+    case "$state" in
+        NA) ;;
+        OK) total=$((total + 1)); ok=$((ok + 1)) ;;
+        WARN|DOWN) total=$((total + 1)); bad=$((bad + 1)) ;;
+    esac
+}
+
+probe_ping() {
+    key="$1"; host="$2"; label="$3"
+    output="$(ping -c 1 -W 1000 "$host" 2>&1 || true)"
+    rtt="$(printf '%s\n' "$output" | sed -n 's/.*time[=<]\([0-9.][0-9.]*\).*/\1/p' | head -1)"
+    if [ -n "$rtt" ]; then
+        state_line "$key" OK "$label reachable" "$rtt"
+    else
+        state_line "$key" DOWN "$label did not answer ICMP" ""
+    fi
+}
+
+probe_http() {
+    key="$1"; url="$2"; label="$3"
+    started="$(date +%s)"
+    if fetch -qo /dev/null -T 3 "$url" 2>/dev/null; then
+        elapsed=$(( ($(date +%s) - started) * 1000 ))
+        state_line "$key" OK "$label HTTP healthy" "$elapsed"
+    else
+        state_line "$key" DOWN "$label HTTP check failed" ""
+    fi
+}
+
+probe_tcp() {
+    key="$1"; host="$2"; port="$3"; label="$4"
+    if command -v nc >/dev/null 2>&1 && nc -z -w 3 "$host" "$port" >/dev/null 2>&1; then
+        state_line "$key" OK "$label TCP/$port reachable" ""
+    else
+        state_line "$key" DOWN "$label TCP/$port unavailable" ""
+    fi
+}
+
+probe_dns() {
+    dns_host="${SOCX_DNS_PROBE_HOST:-}"
+    if [ -z "$dns_host" ]; then
+        dns_host="$(sockstat -4 -l 2>/dev/null | awk '/unbound/ && /:53/ {split($6, parts, ":"); print parts[1]; exit}')"
+    fi
+    [ -n "$dns_host" ] || dns_host="127.0.0.1"
+    if command -v drill >/dev/null 2>&1 && drill "@$dns_host" cloudflare.com A 2>/dev/null | grep -q 'IN[[:space:]]\+A'; then
+        state_line dns OK "Unbound@$dns_host resolved cloudflare.com" ""
+    else
+        state_line dns DOWN "Unbound@$dns_host resolution failed" ""
+    fi
+}
+
+probe_ups() {
+    if command -v upsc >/dev/null 2>&1 && upsc "$UPS_NAME" 2>/dev/null | grep -q '^ups.status:'; then
+        state_line ups OK "NUT UPS telemetry fresh" ""
+    else
+        state_line ups WARN "NUT UPS telemetry unavailable" ""
+    fi
+}
+
+probe_vpn() {
+    cache="${SOCX_VPN_STATUS_CACHE:-/tmp/socx-wall-vpn-status.env}"
+    if [ -r "$cache" ]; then
+        status="$(sed -n 's/^status=//p' "$cache" | tail -1 | tr '[:lower:]' '[:upper:]')"
+        count="$(sed -n 's/^total=//p' "$cache" | tail -1)"
+        online="$(sed -n 's/^online=//p' "$cache" | tail -1)"
+        case "$status" in
+            UP|OK) state_line vpn OK "VPN $online/$count online" "" ;;
+            PARTIAL|WARN) state_line vpn WARN "VPN $online/$count online" "" ;;
+            DOWN) state_line vpn DOWN "VPN $online/$count online" "" ;;
+            *) state_line vpn NA "VPN runtime truth unavailable" "" ;;
+        esac
+    else
+        state_line vpn NA "no configured VPN runtime cache" ""
+    fi
+}
+
+once() {
+    mkdir -p "$(dirname "$CACHE")" "$(dirname "$HISTORY")" 2>/dev/null || true
+    tmp="$CACHE.tmp.$$"
+    : > "$tmp"
+    total=0; ok=0; bad=0
+    now="$(date +%s)"
+    printf 'updated=%s\n' "$now" >> "$tmp"
+    printf 'interval_seconds=%s\n' "$INTERVAL" >> "$tmp"
+
+    probe_ping direct "$DIRECT_HOST" "direct internet"
+    probe_dns
+    probe_http pi5 "http://$PI5_HOST:8095/health" "Pi 5 AI"
+    probe_http pi4 "http://$PI4_HOST:8096/health" "Pi 4 telemetry"
+    probe_tcp miranda "$MIRANDA_HOST" 8093 "MIRANDA"
+    probe_ups
+    probe_vpn
+
+    state=OK
+    [ "$bad" -eq 0 ] || state=WARN
+    printf 'state=%s\n' "$state" >> "$tmp"
+    printf 'total=%s\n' "$total" >> "$tmp"
+    printf 'ok=%s\n' "$ok" >> "$tmp"
+    printf 'attention=%s\n' "$bad" >> "$tmp"
+    printf 'summary=%s/%s primary paths healthy; %s need attention; read-only probes\n' "$ok" "$total" "$bad" >> "$tmp"
+    mv "$tmp" "$CACHE"
+
+    printf '{"ts":%s,"state":"%s","total":%s,"ok":%s,"attention":%s,"direct":"%s","dns":"%s","pi5":"%s","pi4":"%s","miranda":"%s","ups":"%s","vpn":"%s"}\n' \
+        "$now" "$state" "$total" "$ok" "$bad" \
+        "$(sed -n 's/^direct_state=//p' "$CACHE")" "$(sed -n 's/^dns_state=//p' "$CACHE")" \
+        "$(sed -n 's/^pi5_state=//p' "$CACHE")" "$(sed -n 's/^pi4_state=//p' "$CACHE")" \
+        "$(sed -n 's/^miranda_state=//p' "$CACHE")" "$(sed -n 's/^ups_state=//p' "$CACHE")" \
+        "$(sed -n 's/^vpn_state=//p' "$CACHE")" >> "$HISTORY"
+    tail -20160 "$HISTORY" > "$HISTORY.tmp" 2>/dev/null && mv "$HISTORY.tmp" "$HISTORY"
+}
+
+case "$ACTION" in
+    once) once ;;
+    loop)
+        while :; do
+            once || true
+            sleep "$INTERVAL"
+        done
+        ;;
+    status)
+        [ -f "$CACHE" ] && cat "$CACHE" || echo "SOCX path probes have not run yet."
+        ;;
+    *)
+        echo "Usage: socx-path-probes [once|loop|status]" >&2
+        exit 2
+        ;;
+esac

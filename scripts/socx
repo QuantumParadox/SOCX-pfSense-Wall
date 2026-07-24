@@ -35,6 +35,10 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-recorder-cron "$@"
         ;;
+    probes|path-probes|synthetic-probes)
+        shift
+        exec /usr/local/bin/socx-path-probes "$@"
+        ;;
     menu|command|commands)
         shift
         exec /usr/local/bin/socx-menu "$@"

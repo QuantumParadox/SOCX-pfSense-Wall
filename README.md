@@ -101,6 +101,7 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds a browser Daily Story page, `/api/story`, `/api/story-archive`, and `socx story` so SOCX can explain the day in plain English and preserve a timestamped narrative under `/root/socx-stories/`.
 - Adds hardware-health visibility for pfSense appliance upgrades such as the Lenovo ThinkCentre M910t i7-7700: CPU profile, core/thread count, hottest core, AES-NI, powerd, and thermal thresholds appear in `/health` and `/story`.
 - Adds `socx hardware`, `socx stability-watch`, and `socx baseline` for thermal headroom, UPS watt trend, short/overnight stability evidence, and appliance performance baselines.
+- Adds `socx probes`: a read-only 30-second path-health cache for direct Internet, local DNS, Pi 5, Pi 4, MIRANDA, UPS telemetry, and available VPN truth. It is exposed in Data Truth and never changes pfSense policy.
 - Adds VPN crypto headroom on the browser Speedtest page so DIRECT/VPN throughput can be read beside current CPU temperature and thermal headroom.
 - Adds SOCX Mission / Operator Intelligence through `/mission`, `/api/mission`, and `socx mission`, summarizing what changed, what matters, what to check, and what is probably noise.
 - Adds SOCX Operator Cockpit through `/cockpit` and `/api/cockpit`, a mobile/tablet-friendly view with current mode, threat story, mission checks, devices/apps, AI/Pi status, metrics context, and safe next actions.
