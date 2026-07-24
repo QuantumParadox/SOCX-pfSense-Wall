@@ -54,6 +54,9 @@ export SOCX_TICKER_STEP="${SOCX_TICKER_STEP:-1}"
 export SOCX_TICKER_INTERVAL_MS="${SOCX_TICKER_INTERVAL_MS:-75}"
 export SOCX_TICKER_MAX_EVENTS="${SOCX_TICKER_MAX_EVENTS:-25}"
 export SOCX_TICKER_DEDUPE_SECONDS="${SOCX_TICKER_DEDUPE_SECONDS:-10}"
+# The wall evaluates this setting from local pfSense time on every render.
+# auto is night from 20:00 through 07:59; on/off are useful for a temporary override.
+export SOCX_NIGHT_MODE="${SOCX_NIGHT_MODE:-auto}"
 /sbin/conscontrol mute on 2>/dev/null
 mesg n 2>/dev/null || true
 chmod go-w /dev/ttyv0 /dev/pts/* 2>/dev/null || true

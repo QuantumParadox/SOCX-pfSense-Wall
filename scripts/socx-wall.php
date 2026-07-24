@@ -100,6 +100,14 @@ do {
     $loopStart = $now;
     $fullRedraw = false;
     try {
+        $nightActive = terminal_night_active();
+        if (!array_key_exists('night_active', $state) || $state['night_active'] !== $nightActive) {
+            $tickerConfig = ticker_config($opts);
+            $state['ticker_config'] = $tickerConfig;
+            $state['night_active'] = $nightActive;
+            $state['ticker_changed'] = true;
+            $fullRedraw = true;
+        }
         if ((int)$state['cols'] <= 0 || $now >= (float)$state['next_size_at']) {
             $oldCols = (int)$state['cols'];
             $oldRows = (int)$state['rows'];
@@ -483,7 +491,11 @@ function ticker_config(array $opts): array
         $mode = $defaultMode;
     }
 
+    $nightActive = terminal_night_active();
     $speed = strtolower((string)($opts['ticker_speed'] ?: getenv('SOCX_TICKER_SPEED') ?: 'fast'));
+    if ($nightActive && empty($opts['ticker_speed'])) {
+        $speed = strtolower((string)(getenv('SOCX_NIGHT_TICKER_SPEED') ?: 'slow'));
+    }
     $speedSteps = ['slow' => 1, 'normal' => 2, 'fast' => 4, 'turbo' => 6];
     $step = $speedSteps[$speed] ?? $speedSteps['fast'];
 
@@ -500,6 +512,9 @@ function ticker_config(array $opts): array
         ? (((bool)($opts['ticker_smooth'] ?? false) || getenv('SOCX_TICKER_SMOOTH') === 'true') ? 75 : 25)
         : 500;
     $intervalMs = (int)$opts['ticker_interval_ms'] > 0 ? (int)$opts['ticker_interval_ms'] : (is_numeric($envInterval) ? (int)$envInterval : $defaultInterval);
+    if ($nightActive && (int)$opts['ticker_interval_ms'] <= 0) {
+        $intervalMs = max($intervalMs, 150);
+    }
     if (tmux_detected()) {
         $intervalMs = max(50, $intervalMs);
     }
@@ -525,6 +540,12 @@ function ticker_config(array $opts): array
     $critSeconds = (int)$opts['event_crit_seconds'] > 0 ? (int)$opts['event_crit_seconds'] : (is_numeric($envCrit) ? (int)$envCrit : 8);
     $critSeconds = max(1, min(10, $critSeconds));
 
+    if ($nightActive) {
+        $rotateSeconds = max($rotateSeconds, 5);
+        $highSeconds = max($highSeconds, 8);
+        $critSeconds = max($critSeconds, 10);
+    }
+
     return [
         'mode' => $mode,
         'speed' => $speed,
@@ -538,6 +559,19 @@ function ticker_config(array $opts): array
         'crit_seconds' => $critSeconds,
         'separator' => '   ◆   ',
     ];
+}
+
+function terminal_night_active(): bool
+{
+    $mode = strtolower(trim((string)(getenv('SOCX_NIGHT_MODE') ?: 'auto')));
+    if (in_array($mode, ['on', 'true', '1', 'yes'], true)) {
+        return true;
+    }
+    if (in_array($mode, ['off', 'false', '0', 'no'], true)) {
+        return false;
+    }
+    $hour = (int)date('G');
+    return $hour >= 20 || $hour < 8;
 }
 
 function wall_theme(array $opts): string
@@ -1742,16 +1776,17 @@ function modern_header_status_line(array $f, int $w): string
     $speed = header_speedtest_texts($f['speedtest'] ?? []);
     $live = header_data_text($f);
     $uptime = header_uptime_texts($f, $live);
+    $night = terminal_night_active() ? 'NIGHT' : '';
 
     $title = 'SOCX';
     $candidates = [
-        [$title, '[' . $time . ']', $uptime['full'], 'WAN:' . $wanState, $vpn['full'], 'DNS:' . $dnsState, $ups['full'], $speed['full']],
-        ['[' . $time . ']', $uptime['full'], 'WAN:' . $wanState, $vpn['full'], 'DNS:' . $dnsState, $ups['full'], $speed['full']],
-        [$time, $uptime['full'], 'WAN:' . $wanState, $vpn['full'], 'DNS:' . $dnsState, $ups['full'], $speed['full']],
-        [$time, $uptime['full'], 'WAN:' . $wanState, $vpn['full'], 'DNS:' . $dnsState, $ups['compact'], $speed['compact']],
-        [$time, $uptime['full'], 'WAN:' . $wanState, $vpn['full'], 'DNS:' . $dnsState, $ups['compact'], $speed['tiny']],
-        [$time, $uptime['full'], 'WAN:' . $wanState, 'VPN:' . $vpn['medium'], 'DNS:' . $dnsState, $ups['compact'], $speed['tiny']],
-        [$time, $uptime['full'], 'WAN:' . $wanState, 'VPN:' . $vpn['medium'], $ups['compact'], $speed['tiny']],
+        [$title, '[' . $time . ']', $uptime['full'], $night, 'WAN:' . $wanState, $vpn['full'], 'DNS:' . $dnsState, $ups['full'], $speed['full']],
+        ['[' . $time . ']', $uptime['full'], $night, 'WAN:' . $wanState, $vpn['full'], 'DNS:' . $dnsState, $ups['full'], $speed['full']],
+        [$time, $uptime['full'], $night, 'WAN:' . $wanState, $vpn['full'], 'DNS:' . $dnsState, $ups['full'], $speed['full']],
+        [$time, $uptime['full'], $night, 'WAN:' . $wanState, $vpn['full'], 'DNS:' . $dnsState, $ups['compact'], $speed['compact']],
+        [$time, $uptime['full'], $night, 'WAN:' . $wanState, $vpn['full'], 'DNS:' . $dnsState, $ups['compact'], $speed['tiny']],
+        [$time, $uptime['full'], $night, 'WAN:' . $wanState, 'VPN:' . $vpn['medium'], 'DNS:' . $dnsState, $ups['compact'], $speed['tiny']],
+        [$time, $uptime['full'], $night, 'WAN:' . $wanState, 'VPN:' . $vpn['medium'], $ups['compact'], $speed['tiny']],
         [$time, $uptime['compact'], 'WAN:' . $wanState, $vpn['full'], 'DNS:' . $dnsState, $ups['full'], $speed['full']],
         [$time, $uptime['compact'], 'WAN:' . $wanState, $vpn['full'], 'DNS:' . $dnsState, $ups['compact'], $speed['full']],
         [$time, $uptime['compact'], 'WAN:' . $wanState, $vpn['full'], 'DNS:' . $dnsState, $ups['compact'], $speed['compact']],
@@ -1766,13 +1801,14 @@ function modern_header_status_line(array $f, int $w): string
     ];
 
     foreach ($candidates as $fields) {
+        $fields = array_values(array_filter($fields, static fn($field): bool => $field !== ''));
         $line = header_join_fit($fields, $w);
         if ($line !== null) {
             return pad_or_clip($line, $w);
         }
     }
 
-    $core = [$time, $uptime['tiny'], 'WAN:' . $wanState, $vpn['tiny'], $speed['tiny']];
+    $core = array_values(array_filter([$time, $uptime['tiny'], $night, 'WAN:' . $wanState, $vpn['tiny'], $speed['tiny']], static fn($field): bool => $field !== ''));
     $line = header_join_shortest($core, $w);
     return pad_or_clip($line, $w);
 }
@@ -9762,6 +9798,16 @@ function colorize_line($line, bool $color): string
         'white' => "\033[38;5;255;1m",
         'crit' => "\033[5;7;38;5;196;1m",
     ];
+    if (terminal_night_active()) {
+        $c['cyan'] = "\033[38;5;38m";
+        $c['green'] = "\033[38;5;71m";
+        $c['yellow'] = "\033[38;5;179m";
+        $c['red'] = "\033[38;5;167m";
+        $c['blue'] = "\033[38;5;68m";
+        $c['purple'] = "\033[38;5;134m";
+        $c['white'] = "\033[38;5;252m";
+        $c['crit'] = "\033[7;38;5;160m";
+    }
     $line = color_replace('/(-{2,})/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/([+=|])/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/([┌┐└┘─│├┤┬┴┼])/', $c['cyan'] . '$1' . $c['reset'], $line);
@@ -9776,7 +9822,7 @@ function colorize_line($line, bool $color): string
     $line = color_replace('/(\[FW\]|\[VPN\]|\[WAN\]|\[DHCP\]|\[ARP\]|\[FLOW\]|\[RADAR\]|\[PF\]|\[UPS\]|\[SYS\]|\[DNS\]|\[IFACE\]|\[DEVICE\]|\[PULSE\]|\[INC\]|\[SOCX\]|\[DOCTOR\]|\[BACKUP\]|\[CHANGE\]|\[AI\]|\[AUTO\]|\[LAB\]|\[INTEL\]|\[TTP\]|\[DETECT\]|\[EVID\]|\[CLOUD\]|\[SRC\])/', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[DNSBL\]|\[IDS\]|\[IPS\])|\b(DNS BLOCK|DNS SINK|DNSBL HIT|SINKHOLE|DNSBL|Suricata|suricata|Sigma|YARA|CVE|CPE|CWE|CAPEC|CVSS|EPSS|KEV|ATT&CK|D3FEND|OpenAI|Anthropic|Gemini|xAI|Grok|NVIDIA Build|Hugging Face|Ollama|vLLM|MIRANDA|Local LLM|reputation|threat-intel|known-bad|known bad|malware|botnet|C2|abuse:high|abuse high|tor\?)\b/i', $c['purple'] . '$0' . $c['reset'], $line);
     $line = color_replace('/\b(contain|quarantine|preserve|evidence|pcap|pfctl|config\.xml|CloudTrail|AzureActivity|VPC Flow|Windows|Linux|macOS|memory)\b/i', $c['yellow'] . '$0' . $c['reset'], $line);
-    $line = color_replace('/\b(CPU|RAM|ARC|SWAP|PF|LAN|WAN|IN|OUT|VPN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|PACKET RADAR|PFTOP|LIVE STATES|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES|THREAT PULSE|INCIDENT|SPEEDTEST|SPD|CLIENT|ROUTER|DIRECT|NYC|RCN-DE|RCN-VA|PATH|PATHS|AUTO|BASE|DOCTOR|BACKUP|CHANGE|PI|Mbps|STATES|SEARCH|TRAFFIC|TCP|UDP|ICMP|DIR|APP|PATH|TYPE|STAT|STATE|LEFT|PRO|SVC|RATE|FLOW|RADAR|AGE|EXP|PROTO|TEMP|HUMID|LOAD)\b/i', $c['cyan'] . '$1' . $c['reset'], $line);
+    $line = color_replace('/\b(CPU|RAM|ARC|SWAP|PF|LAN|WAN|IN|OUT|VPN|UPS|NETWORK|MEMORY|TOTAL|IFTOPX|TCPDUMPX|PACKET RADAR|PFTOP|LIVE STATES|SOCX MODERN WALL|SOCX WALL|EVENT FEED|LIVE PACKETS|PROCESS TREE|PF STATES|THREAT PULSE|INCIDENT|SPEEDTEST|SPD|CLIENT|ROUTER|DIRECT|NYC|RCN-DE|RCN-VA|PATH|PATHS|AUTO|NIGHT|BASE|DOCTOR|BACKUP|CHANGE|PI|Mbps|STATES|SEARCH|TRAFFIC|TCP|UDP|ICMP|DIR|APP|PATH|TYPE|STAT|STATE|LEFT|PRO|SVC|RATE|FLOW|RADAR|AGE|EXP|PROTO|TEMP|HUMID|LOAD)\b/i', $c['cyan'] . '$1' . $c['reset'], $line);
     $line = color_replace('/\b(tls|web|dns|dnsblk|ssh|vpn|ntp|smb|sysl|rip|snmp|ssdp|rtmp|stun|nut|olma|vllm|llm|tgi|grad|jupy|ray|mlfl|trtn|graf|oai|xai|ngc|anth|gemi|hf|rdis|metr|ping|plex|dhcp|mdns|mail|apns|gcm|team|rdp|vnc|irc|ftp|dot|mux|oth|block|p\d{1,5})\b/i', $c['blue'] . '$1' . $c['reset'], $line);
     $line = color_replace('/(\[[#!.]+\])/', $c['green'] . '$1' . $c['reset'], $line);
     $line = color_replace('/([█▇▆▅▄▃▂▁▓]+)/u', $c['green'] . '$1' . $c['reset'], $line);
