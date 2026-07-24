@@ -168,6 +168,7 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds `socx brief`, `socx morning`, and `socx morning-brief`, which write a timestamped SOCX Morning Brief to `/root/socx-briefs/`.
 - Adds `socx rules`, an approval-only recommendation view for firewall, DNSBL, IDS, and device-profile review. It does not change firewall rules automatically.
 - Adds `socx evidence-review` and `socx recovery-rehearsal` for source-freshness/AI guardrail review and backup-integrity rehearsal. Both are read-only and never restore configuration or change policy.
+- Adds `socx assurance-cron install` for a daily evidence-quality report and a weekly recovery rehearsal. The schedule creates reports only; it never restores a backup or changes firewall policy.
 - Adds five-minute BandwidthD daily host-total export to the Pi 4 InfluxDB target through `socx bandwidthd-metrics`; `grafana/socx-bandwidthd-daily.json` is an import-ready, read-only dashboard template.
 - Adds `socx v1-check`, a readiness gate that verifies the terminal wall, browser API, Daily Story, renderer log, Speedtest paths, incident memory, Label Brain, host naming, Pi fleet, Pi 3-LLM roles, and pfSense service visibility.
 - Adds `socx snapshot`, a read-only evidence bundle for status, why-now, history, timeline, Speedtest paths, topology, unknown services, and web API JSON.
@@ -262,6 +263,7 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - `scripts/socx-mission` - terminal operator-intelligence summary from `/api/mission`.
 - `scripts/socx-evidence-review` - source freshness, model availability, and guardrail report for AI-assisted SOCX explanations.
 - `scripts/socx-recovery-rehearsal` - validates the latest hashed pfSense backup and SOCX readiness without restoring it.
+- `scripts/socx-assurance-cron` - installs or removes the read-only daily/weekly SOCX assurance-report schedule.
 - `scripts/socx-bandwidthd-metrics` - exports BandwidthD daily host totals to the configured InfluxDB target; `socx-bandwidthd-metrics-cron` installs its five-minute schedule.
 - `scripts/socx-story` - Daily Story viewer and archiver for browser evidence, repeated-event memory, Speedtest path truth, and Pi AI context.
 - `scripts/socx-rule-assistant` - approval-only rule recommendation assistant for evidence-backed policy review.
@@ -696,13 +698,13 @@ SOCX_PI_LLM_TRIAGE_MODEL=llama3.2:3b
 SOCX_PI_LLM_EVIDENCE_MODEL=qwen2.5-instruct:1.5b
 SOCX_PI_LLM_ACTION_MODEL=qwen2.5-coder:1.5b
 SOCX_PI_HAILO_CHAT_URL=http://127.0.0.1:8000/api/chat
-SOCX_PI_HAILO_TIMEOUT=3
+SOCX_PI_HAILO_TIMEOUT=8
 SOCX_PI_CPU_TRIAGE_MODEL=llama3.2:1b
 SOCX_PI_CPU_EVIDENCE_MODEL=qwen2.5:1.5b
 SOCX_PI_CPU_ACTION_MODEL=qwen2.5-coder:1.5b
-SOCX_PI_LLM_TIMEOUT=25
+SOCX_PI_LLM_TIMEOUT=15
 SOCX_PI_ROLE_MAX_SECONDS=28
-SOCX_PI_TOTAL_TIMEOUT=90
+SOCX_PI_TOTAL_TIMEOUT=80
 SOCX_PI_LLM_NUM_PREDICT=32
 SOCX_PI_LLM_NUM_CTX=768
 SOCX_PI_OLLAMA_KEEP_ALIVE=6h

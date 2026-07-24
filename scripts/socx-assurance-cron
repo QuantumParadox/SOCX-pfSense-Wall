@@ -1,0 +1,33 @@
+#!/bin/sh
+# Schedules read-only evidence review and recovery-rehearsal reports.
+set -eu
+
+CRON=/etc/cron.d/socx-assurance
+case "${1:-status}" in
+    install)
+        cat > "$CRON" <<'EOF'
+SHELL=/bin/sh
+PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+# Read-only SOCX assurance reports: daily evidence quality and weekly backup rehearsal.
+15 7 * * * root /usr/local/bin/socx-evidence-review >/dev/null 2>&1
+30 7 * * 0 root /usr/local/bin/socx-recovery-rehearsal >/dev/null 2>&1
+EOF
+        echo "SOCX assurance schedule installed: evidence review daily 07:15; recovery rehearsal Sunday 07:30"
+        ;;
+    remove)
+        rm -f "$CRON"
+        echo "SOCX assurance schedule removed"
+        ;;
+    status)
+        if [ -r "$CRON" ]; then
+            cat "$CRON"
+        else
+            echo "SOCX assurance schedule is not installed"
+            exit 1
+        fi
+        ;;
+    *)
+        echo "Usage: socx-assurance-cron {install|remove|status}" >&2
+        exit 2
+        ;;
+esac

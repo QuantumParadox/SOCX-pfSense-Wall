@@ -67,6 +67,10 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-evidence-review "$@"
         ;;
+    assurance-cron|assurance-schedule)
+        shift
+        exec /usr/local/bin/socx-assurance-cron "$@"
+        ;;
     mission|operator|intelligence)
         shift
         exec /usr/local/bin/socx-mission "$@"

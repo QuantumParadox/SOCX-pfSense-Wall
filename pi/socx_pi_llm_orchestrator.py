@@ -998,7 +998,7 @@ def call_ollama_generate(url: str, model: str, prompt: str, timeout: float) -> d
         "prompt": prompt,
         "stream": False,
         "format": "json",
-        "keep_alive": os.getenv("SOCX_PI_OLLAMA_KEEP_ALIVE", "6h"),
+        "keep_alive": os.getenv("SOCX_PI_OLLAMA_KEEP_ALIVE", "15m"),
         "options": {
             "temperature": float(os.getenv("SOCX_PI_LLM_TEMPERATURE", "0.2")),
             "num_predict": int(os.getenv("SOCX_PI_LLM_NUM_PREDICT", "32")),
@@ -1088,8 +1088,8 @@ async def run_role(role: str, payload: dict[str, Any]) -> dict[str, Any]:
     hailo_available = bool(preferred.get("available"))
     attempts = []
     if hailo_available:
-        attempts.append((HAILO_CHAT_URL, preferred["preferred"]["model"], "hailo", float(os.getenv("SOCX_PI_HAILO_TIMEOUT", "3"))))
-    attempts.append((role_url(role), CPU_FALLBACK_MODELS[role], "cpu-ollama", float(os.getenv("SOCX_PI_LLM_TIMEOUT", "25"))))
+        attempts.append((HAILO_CHAT_URL, preferred["preferred"]["model"], "hailo", float(os.getenv("SOCX_PI_HAILO_TIMEOUT", "8"))))
+    attempts.append((role_url(role), CPU_FALLBACK_MODELS[role], "cpu-ollama", float(os.getenv("SOCX_PI_LLM_TIMEOUT", "15"))))
     prompt = build_prompt(role, payload)
     errors: list[str] = []
     low_signal_result: dict[str, Any] | None = None
@@ -1150,7 +1150,7 @@ async def run_role(role: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 async def run_roles(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
     concurrency = max(1, int(os.getenv("SOCX_PI_LLM_CONCURRENCY", "1")))
-    total_timeout = float(os.getenv("SOCX_PI_TOTAL_TIMEOUT", "90"))
+    total_timeout = float(os.getenv("SOCX_PI_TOTAL_TIMEOUT", "80"))
     started = time.time()
     if concurrency <= 1:
         results: dict[str, dict[str, Any]] = {}
