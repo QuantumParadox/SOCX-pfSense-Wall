@@ -1,0 +1,60 @@
+#!/usr/bin/env python3.11
+"""Record a daily, read-only IDS/DNSBL signal-quality baseline for SOCX."""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import time
+from pathlib import Path
+
+
+OUT = Path("/var/db/socx_signal_baseline.jsonl")
+KEEP = 30
+
+
+def run(topic: str) -> str:
+    try:
+        proc = subprocess.run(["/usr/local/bin/socx-doctor", topic], capture_output=True, text=True, timeout=45, check=False)
+        return ((proc.stdout or "") + (proc.stderr or ""))[-6000:]
+    except Exception as exc:
+        return str(exc)
+
+
+def summary(text: str) -> str:
+    for line in reversed(text.splitlines()):
+        if line.lower().startswith("summary "):
+            return line.strip()
+    return "summary unavailable"
+
+
+def main() -> int:
+    now = int(time.time())
+    ids = run("ids")
+    dnsbl = run("dnsbl-review")
+    row = {
+        "ts": now,
+        "iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+        "ids_summary": summary(ids),
+        "dnsbl_summary": summary(dnsbl),
+        "ids_top": [line.strip() for line in ids.splitlines() if line.startswith("       ")][:6],
+        "dnsbl_candidates": [line.strip() for line in dnsbl.splitlines() if line.startswith("      ")][:8],
+        "read_only": True,
+    }
+    rows: list[str] = []
+    try:
+        rows = [line for line in OUT.read_text(errors="ignore").splitlines() if line.strip()][-KEEP + 1 :]
+    except OSError:
+        pass
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    OUT.write_text("\n".join(rows + [json.dumps(row, separators=(",", ":"))]) + "\n", encoding="utf-8")
+    sample_count = len(rows) + 1
+    phase = "BASELINE READY" if sample_count >= 7 else f"LEARNING {sample_count}/7"
+    print(f"SOCX signal baseline: {phase}")
+    print(f"IDS: {row['ids_summary']}")
+    print(f"DNSBL: {row['dnsbl_summary']}")
+    print(f"file: {OUT}")
+
+
+if __name__ == "__main__":
+    main()

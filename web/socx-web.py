@@ -1606,6 +1606,33 @@ class SocxCollector:
         self.release_health_checked = now
         return health
 
+    def collect_acceptance(self) -> dict[str, Any]:
+        """Expose the operator go-live checklist without making any changes."""
+        now = time.time()
+        cached = getattr(self, "acceptance_cache", None)
+        checked = float(getattr(self, "acceptance_checked", 0) or 0)
+        if cached and now - checked < env_int("SOCX_ACCEPTANCE_TTL_SECONDS", 45):
+            result = dict(cached)
+            result["cache_age_sec"] = int(now - checked)
+            return result
+        probe = run_cmd_capture(["/usr/local/bin/socx-acceptance", "--json"], timeout=45.0)
+        try:
+            result = json.loads(probe.get("output") or "{}")
+        except json.JSONDecodeError:
+            result = {}
+        if not isinstance(result, dict) or not result.get("checks"):
+            result = {
+                "label": "NOT READY",
+                "pass": 0,
+                "watch": 0,
+                "fail": 1,
+                "checks": [{"name": "Acceptance collector", "state": "FAIL", "detail": str(probe.get("output") or "acceptance command returned no JSON")[-300:]}],
+            }
+        result["elapsed_ms"] = probe.get("elapsed_ms", 0)
+        self.acceptance_cache = result
+        self.acceptance_checked = now
+        return result
+
     def collect_doctor(self) -> dict[str, Any]:
         now = time.time()
         ttl = env_int("SOCX_DOCTOR_TTL_SECONDS", 60)
@@ -6601,6 +6628,9 @@ class SocxHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/health":
             self.send_json(self.collector.collect_release_health())
             return
+        if parsed.path == "/api/acceptance":
+            self.send_json(self.collector.collect_acceptance())
+            return
         if parsed.path == "/api/doctor":
             self.send_json(self.collector.collect_doctor())
             return
@@ -6896,7 +6926,7 @@ class SocxHandler(BaseHTTPRequestHandler):
         return {"action": action, "title": title, **result}
 
     def serve_static(self, path: str) -> None:
-        if path in {"/speedtest", "/gateway-truth", "/validation", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/memory", "/twin", "/automation", "/timeline", "/movie", "/projects", "/glitches", "/wall-health", "/review-queue", "/owner-map", "/owner-editor", "/packet-noise", "/confidence", "/incident-focus", "/maintenance", "/mission-console", "/config-sim", "/baseline", "/since-yesterday", "/daily-brief", "/ai", "/health", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/flight-recorder", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
+        if path in {"/speedtest", "/gateway-truth", "/validation", "/devices", "/device", "/incidents", "/incident-report", "/coverage", "/hunts", "/rules-lab", "/soc-score", "/model-tournament", "/research-soc", "/evidence", "/notebook", "/actions", "/mission-mode", "/memory", "/twin", "/automation", "/timeline", "/movie", "/projects", "/glitches", "/wall-health", "/review-queue", "/owner-map", "/owner-editor", "/packet-noise", "/confidence", "/incident-focus", "/maintenance", "/mission-console", "/config-sim", "/baseline", "/since-yesterday", "/daily-brief", "/ai", "/health", "/acceptance", "/doctor", "/why", "/story", "/mission", "/flows", "/replay", "/flight-recorder", "/map", "/threat-story", "/cockpit", "/observability", "/metrics", "/guide", "/chat"}:
             target = STATIC_DIR / "detail.html"
         elif path in {"", "/"}:
             target = STATIC_DIR / "index.html"

@@ -10,9 +10,10 @@ SHELL=/bin/sh
 PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
 # Read-only SOCX assurance reports: daily evidence quality and weekly backup rehearsal.
 15 7 * * * root /usr/local/bin/socx-evidence-review >/dev/null 2>&1
+20 7 * * * root /usr/local/bin/socx-signal-baseline >/dev/null 2>&1
 30 7 * * 0 root /usr/local/bin/socx-recovery-rehearsal >/dev/null 2>&1
 EOF
-        echo "SOCX assurance schedule installed: evidence review daily 07:15; recovery rehearsal Sunday 07:30"
+        echo "SOCX assurance schedule installed: evidence review daily 07:15; signal baseline 07:20; recovery rehearsal Sunday 07:30"
         ;;
     remove)
         rm -f "$CRON"

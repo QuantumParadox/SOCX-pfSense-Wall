@@ -1,0 +1,109 @@
+#!/usr/bin/env python3.11
+"""Read-only SOCX operator acceptance check for the complete monitoring stack."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import time
+from pathlib import Path
+from urllib.request import urlopen
+
+
+def command(args: list[str], timeout: float = 20.0) -> tuple[bool, str]:
+    try:
+        proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
+        return proc.returncode == 0, ((proc.stdout or "") + (proc.stderr or ""))[-1200:]
+    except Exception as exc:
+        return False, str(exc)
+
+
+def http_json(url: str, timeout: float = 5.0) -> tuple[bool, dict[str, object] | str]:
+    try:
+        with urlopen(url, timeout=timeout) as response:
+            return True, json.loads(response.read().decode("utf-8", "replace"))
+    except Exception as exc:
+        return False, str(exc)
+
+
+def age_seconds(pattern: str) -> int | None:
+    files = sorted(Path("/").glob(pattern.lstrip("/")), key=lambda item: item.stat().st_mtime if item.exists() else 0)
+    if not files:
+        return None
+    return max(0, int(time.time() - files[-1].stat().st_mtime))
+
+
+def env_value(path: Path, key: str) -> str:
+    try:
+        for raw in path.read_text(errors="ignore").splitlines():
+            if raw.startswith(f"{key}="):
+                return raw.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return ""
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--json", action="store_true", help="emit structured JSON")
+    args = parser.parse_args()
+    checks: list[dict[str, object]] = []
+
+    def add(name: str, state: str, detail: str) -> None:
+        checks.append({"name": name, "state": state, "detail": detail[:280]})
+
+    ok, _ = command(["tmux", "has-session", "-t", "socx"], timeout=3)
+    add("Terminal Wall", "PASS" if ok else "WATCH", "tmux SOCX wall session is running" if ok else "SOCX tmux wall is not running")
+
+    ok, state = http_json("http://127.0.0.1:8094/api/state")
+    add("Browser Wall", "PASS" if ok else "FAIL", "SOCX browser state API reachable" if ok else f"state API unavailable: {state}")
+
+    ok, replay = http_json("http://127.0.0.1:8094/api/replay?window=3600")
+    if ok and isinstance(replay, dict):
+        add("Timeline Replay", "PASS", f"{replay.get('samples', 0)} samples / {replay.get('status', 'UNKNOWN')} over the last hour")
+    else:
+        add("Timeline Replay", "FAIL", f"replay API unavailable: {replay}")
+
+    ok, observability = command(["/usr/local/bin/socx", "observability"], timeout=20)
+    obs_ok = ok and "InfluxDB ping healthy" in observability and "Telegraf service running" in observability
+    add("Metrics Pipeline", "PASS" if obs_ok else "WATCH", "Grafana, InfluxDB, and Telegraf verified" if obs_ok else observability.splitlines()[-1] if observability else "observability command failed")
+
+    bandwidth_cron = Path("/etc/cron.d/socx-bandwidthd-metrics")
+    add("BandwidthD History", "PASS" if bandwidth_cron.is_file() else "WATCH", "five-minute host-total export is scheduled" if bandwidth_cron.is_file() else "run socx bandwidthd-metrics-cron install")
+
+    assurance_cron = Path("/etc/cron.d/socx-assurance")
+    add("Assurance Schedule", "PASS" if assurance_cron.is_file() else "WATCH", "daily evidence review and weekly recovery rehearsal scheduled" if assurance_cron.is_file() else "run socx assurance-cron install")
+
+    evidence_age = age_seconds("root/socx-evidence-reviews/evidence-review-*.txt")
+    evidence_state = "PASS" if evidence_age is not None and evidence_age <= 30 * 3600 else "WATCH"
+    add("Evidence Review", evidence_state, f"latest report age {evidence_age // 60}m" if evidence_age is not None else "no report found")
+
+    rehearsal_age = age_seconds("root/socx-recovery-rehearsals/rehearsal-*.txt")
+    rehearsal_state = "PASS" if rehearsal_age is not None and rehearsal_age <= 8 * 86400 else "WATCH"
+    add("Recovery Rehearsal", rehearsal_state, f"latest report age {rehearsal_age // 3600}h" if rehearsal_age is not None else "no rehearsal report found")
+
+    pi_roles = env_value(Path("/tmp/socx-pi-llm-analysis.env"), "roles")
+    add("Pi AI Roles", "PASS" if pi_roles == "3/3" else "WATCH", f"roles online: {pi_roles or 'unknown'}")
+
+    ok, readiness = command(["/usr/local/bin/socx", "v1-check"], timeout=35)
+    ready = ok and "READY FOR SOCX" in readiness
+    summary = next((line for line in readiness.splitlines() if line.startswith("summary ")), "readiness command did not return a summary")
+    add("Release Readiness", "PASS" if ready else "WATCH", summary)
+
+    failures = sum(1 for item in checks if item["state"] == "FAIL")
+    watches = sum(1 for item in checks if item["state"] == "WATCH")
+    label = "READY" if failures == 0 and watches == 0 else "READY WITH WATCH" if failures == 0 else "NOT READY"
+    result = {"generated": int(time.time()), "label": label, "pass": len(checks) - failures - watches, "watch": watches, "fail": failures, "checks": checks}
+    if args.json:
+        print(json.dumps(result, separators=(",", ":")))
+    else:
+        print(f"SOCX Operator Acceptance: {label}")
+        for item in checks:
+            print(f"{item['state']:<5} {item['name']}: {item['detail']}")
+        print(f"summary PASS={result['pass']} WATCH={watches} FAIL={failures}")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

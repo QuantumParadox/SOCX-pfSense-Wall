@@ -16,6 +16,10 @@ case "${1:-}" in
         shift
         exec /usr/local/bin/socx-v1-check "$@"
         ;;
+    acceptance|operator-acceptance|go-live)
+        shift
+        exec /usr/local/bin/socx-acceptance "$@"
+        ;;
     autopilot|auto)
         shift
         /usr/local/bin/socx-doctor autopilot "$@"
@@ -70,6 +74,10 @@ case "${1:-}" in
     assurance-cron|assurance-schedule)
         shift
         exec /usr/local/bin/socx-assurance-cron "$@"
+        ;;
+    signal-baseline|baseline-signals)
+        shift
+        exec /usr/local/bin/socx-signal-baseline "$@"
         ;;
     mission|operator|intelligence)
         shift

@@ -67,6 +67,7 @@ const pageName = () => {
   if (path.includes("ai")) return "ai";
   if (path.includes("doctor")) return "doctor";
   if (path.includes("health")) return "health";
+  if (path.includes("acceptance")) return "acceptance";
   return "speedtest";
 };
 
@@ -676,6 +677,28 @@ function renderReplay(state, replay) {
     button.addEventListener("click", () => setReplayWindow(button.getAttribute("data-replay-window")));
   });
   wireAskButtons();
+}
+
+function renderAcceptance(state, acceptance) {
+  title.textContent = "SOCX OPERATOR ACCEPTANCE";
+  subtitle.textContent = `${state.hostname || "pfSense"} / read-only go-live checklist`;
+  const label = acceptance.label || "NOT READY";
+  const tone = label === "READY" ? "green" : label === "READY WITH WATCH" ? "yellow" : "red";
+  root.innerHTML = [
+    ...renderTruthCards(state),
+    card("Acceptance Readout", [
+      `<div class="detail-score ${tone}">${esc(label)}</div>`,
+      `<div class="detail-reason">This check observes the wall, timeline, metrics, schedules, evidence freshness, Pi roles, and readiness. It never applies a repair or policy change.</div>`,
+      kv("Pass / Watch / Fail", `${acceptance.pass ?? 0} / ${acceptance.watch ?? 0} / ${acceptance.fail ?? 0}`, tone),
+      kv("Check Time", `${acceptance.elapsed_ms || "--"}ms`, "cyan"),
+    ].join("")),
+    card("Readiness Checks", table(["Component", "State", "Detail"], (acceptance.checks || []).map((row) => [row.name || "--", row.state || "--", row.detail || "--"]))),
+    card("Operator Actions", table(["Action", "Purpose"], [
+      ["Open Replay", "Review correlated firewall, DNSBL, flow, UPS, thermal, Speedtest, and AI evidence."],
+      ["Open Doctor", "Review the exact source behind any WATCH condition before changing anything."],
+      ["Preserve Evidence", "Capture a bundle before policy, IDS, DNSBL, or routing changes."],
+    ])),
+  ].join("");
 }
 
 function renderFlightRecorder(state, recorder) {
@@ -2194,6 +2217,9 @@ async function refresh() {
   const health = page === "health"
     ? await fetch("/api/health", { cache: "no-store" }).then((r) => r.json())
     : null;
+  const acceptance = page === "acceptance"
+    ? await fetch("/api/acceptance", { cache: "no-store" }).then((r) => r.json())
+    : null;
   const doctor = page === "doctor"
     ? await fetch("/api/doctor", { cache: "no-store" }).then((r) => r.json())
     : null;
@@ -2367,6 +2393,7 @@ async function refresh() {
   else if (page === "incidents") renderIncidents(state);
   else if (page === "ai") renderAi(state);
   else if (page === "health") renderHealth(state, health || {});
+  else if (page === "acceptance") renderAcceptance(state, acceptance || {});
   else if (page === "doctor") renderDoctor(state, doctor || {});
   else if (page === "why") renderWhy(state, why || {});
   else if (page === "story") renderStory(state, story || {});

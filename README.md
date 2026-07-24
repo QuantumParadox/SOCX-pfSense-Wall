@@ -169,6 +169,8 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Adds `socx rules`, an approval-only recommendation view for firewall, DNSBL, IDS, and device-profile review. It does not change firewall rules automatically.
 - Adds `socx evidence-review` and `socx recovery-rehearsal` for source-freshness/AI guardrail review and backup-integrity rehearsal. Both are read-only and never restore configuration or change policy.
 - Adds `socx assurance-cron install` for a daily evidence-quality report and a weekly recovery rehearsal. The schedule creates reports only; it never restores a backup or changes firewall policy.
+- Adds `socx signal-baseline`, a daily seven-sample IDS/DNSBL quality baseline used to distinguish repeatable routine noise from items that deserve review. It never suppresses or allowlists anything.
+- Adds `socx acceptance`, a single read-only acceptance checklist for the terminal/browser wall, timeline replay, Grafana/Influx/Telegraf, BandwidthD history, assurance reports, Pi roles, and release readiness.
 - Adds five-minute BandwidthD daily host-total export to the Pi 4 InfluxDB target through `socx bandwidthd-metrics`; `grafana/socx-bandwidthd-daily.json` is an import-ready, read-only dashboard template.
 - Adds `socx v1-check`, a readiness gate that verifies the terminal wall, browser API, Daily Story, renderer log, Speedtest paths, incident memory, Label Brain, host naming, Pi fleet, Pi 3-LLM roles, and pfSense service visibility.
 - Adds `socx snapshot`, a read-only evidence bundle for status, why-now, history, timeline, Speedtest paths, topology, unknown services, and web API JSON.
@@ -264,6 +266,8 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - `scripts/socx-evidence-review` - source freshness, model availability, and guardrail report for AI-assisted SOCX explanations.
 - `scripts/socx-recovery-rehearsal` - validates the latest hashed pfSense backup and SOCX readiness without restoring it.
 - `scripts/socx-assurance-cron` - installs or removes the read-only daily/weekly SOCX assurance-report schedule.
+- `scripts/socx-signal-baseline` - retains the last thirty daily IDS/DNSBL review summaries for evidence-based tuning.
+- `scripts/socx-acceptance` - prints or returns JSON for the complete read-only operator acceptance checklist.
 - `scripts/socx-bandwidthd-metrics` - exports BandwidthD daily host totals to the configured InfluxDB target; `socx-bandwidthd-metrics-cron` installs its five-minute schedule.
 - `scripts/socx-story` - Daily Story viewer and archiver for browser evidence, repeated-event memory, Speedtest path truth, and Pi AI context.
 - `scripts/socx-rule-assistant` - approval-only rule recommendation assistant for evidence-backed policy review.
