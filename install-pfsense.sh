@@ -36,6 +36,7 @@ install -m 0755 "$ROOT/scripts/socx-history" /usr/local/bin/socx-history
 install -m 0755 "$ROOT/scripts/socx-hardware" /usr/local/bin/socx-hardware
 install -m 0755 "$ROOT/scripts/socx-stability-watch" /usr/local/bin/socx-stability-watch
 install -m 0755 "$ROOT/scripts/socx-glitch-watch" /usr/local/bin/socx-glitch-watch
+install -m 0755 "$ROOT/scripts/socx-remove-socx-watchdog.php" /usr/local/sbin/socx-remove-socx-watchdog.php
 install -m 0755 "$ROOT/scripts/socx-baseline" /usr/local/bin/socx-baseline
 install -m 0755 "$ROOT/scripts/socx-notify" /usr/local/bin/socx-notify
 install -m 0755 "$ROOT/scripts/socx-notify-cron" /usr/local/bin/socx-notify-cron

@@ -115,6 +115,7 @@ The main screen shows WAN/VPN/DNS/UPS/Speedtest truth, live PF states, top flows
 - Owner Map can use local read-only overrides from `/usr/local/etc/socx_owner_overrides.json` or `SOCX_OWNER_OVERRIDES` when you want persistent friendly names and owners without changing pfSense rules.
 - Adds `socx glitch-watch`, a read-only diagnostic sampler for brief wall glitches. It captures tmux wall markers, pane size, renderer count, timing hints, and `/tmp/socx-wall.err` size into `/tmp/socx-glitch-watch.json`.
 - Adds `/glitches` and `/wall-health`, readable browser views for glitch samples, renderer/tmux/API/log checks, likely causes, and safe follow-up commands.
+- Adds `socx-remove-socx-watchdog.php`, a backup-first repair for the pfSense Service Watchdog false-positive restart loop. Use it only when the watchdog repeatedly restarts a healthy SOCX wall; it removes only the `socx` watchdog item and leaves SOCX's own service, tmux, API, and readiness checks intact.
 - Upgrades Operator Chat so weird-screen, wall health, and glitch questions cite current wall checks, confidence, evidence used, and safe commands.
 - Expands friendly device/app recognition for smart TVs, streaming, STUN/RTMP, local AI lab services, quantum/research sites, gaming platforms, CDNs, and telemetry.
 - Adds Replay time controls, incident bookmarks, and safe Ask SOCX prompts so after-action review can jump to the exact security, speed, flow, thermal, or UPS moment.

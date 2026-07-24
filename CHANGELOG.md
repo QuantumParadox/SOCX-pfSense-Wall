@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Added `socx vault-cron` for daily, hashed, read-only Evidence Vault captures with fourteen-day retention and readiness-gate coverage.
+- Fixed periodic SOCX wall flicker caused by a false-positive pfSense Service Watchdog `socx` entry restarting a healthy wall every minute. Added a backup-first helper that removes only that entry and retains SOCX endpoint and readiness checks.
 
 ## Unreleased
 
