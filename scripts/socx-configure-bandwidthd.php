@@ -1,8 +1,14 @@
 <?php
 /* Configure pfSense BandwidthD as a low-overhead LAN host-usage view. */
+require_once("globals.inc");
 require_once("config.inc");
 require_once("service-utils.inc");
 require_once("/usr/local/pkg/bandwidthd.inc");
+
+if (!function_exists("write_rcfile") || !function_exists("bandwidthd_install_config")) {
+    fwrite(STDERR, "BandwidthD service API is unavailable; no configuration changes were made.\n");
+    exit(1);
+}
 
 $backup = "/cf/conf/backup/socx-config-before-bandwidthd-" . date("Ymd-His") . ".xml";
 if (!@copy("/cf/conf/config.xml", $backup)) {
